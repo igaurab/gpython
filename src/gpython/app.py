@@ -240,7 +240,7 @@ class GPython(App):
         self.update_status()
 
     async def on_unmount(self) -> None:
-        await asyncio.gather(*(pane.kernel.shutdown() for pane in self.workspace.panes()), return_exceptions=True)
+        await asyncio.gather(*(pane.kernel.shutdown() for pane in self.workspace.buffers), return_exceptions=True)
 
     # ── the active notebook (tests and scripts use these) ────────────────
 
@@ -322,8 +322,11 @@ class GPython(App):
         self.editor_theme_pair = pair
         variables = self.get_css_variables()
         self.bar_colors = {role: variables[role] for role in ("panel", "accent", "warning", "primary", "error")}
-        if Color.parse(self.bar_colors["panel"]).a == 0:  # "terminal": panel is the terminal's own background
-            self.bar_colors["panel"] = "ansi_bright_black"
+        try:  # the "terminal" (ANSI) theme has a transparent $panel: the idle bar must still show
+            if Color.parse(self.bar_colors["panel"]).a == 0:
+                self.bar_colors["panel"] = "ansi_bright_black" if self.current_theme.ansi else variables["foreground-muted"]
+        except Exception:
+            pass
         if self.is_running:
             for editor in self.query(VimTextArea):
                 editor.set_editor_theme(*pair)
@@ -344,9 +347,10 @@ class GPython(App):
     def workspace_changed(self) -> None:
         """Tabs or windows changed: redraw the tab line and the header."""
         tabs = self.workspace.tabs
-        self.set_class(len(tabs) > 1, "-tabs")
+        hidden = [(self.workspace.number(p), p) for p in self.workspace.hidden()]
+        self.set_class(len(tabs) > 1 or bool(hidden), "-tabs")
         if tabs:
-            self._tabbar.show(tabs, self.workspace.index)
+            self._tabbar.show(tabs, self.workspace.index, hidden)
         self._status_key = None
         self.update_status()
 
@@ -394,28 +398,37 @@ class GPython(App):
     # ── files, windows and tabs ──────────────────────────────────────────
 
     def find_open(self, path: Path) -> NotebookPane | None:
+        """The buffer (shown or hidden) for `path`, if the file is open."""
         target = path.resolve()
-        for pane in self.workspace.panes():
+        for pane in self.workspace.buffers:
             if pane.path is not None and pane.path.resolve() == target:
                 return pane
         return None
 
-    async def open_file(self, path: Path | str, how: str = "here", force: bool = False) -> NotebookPane | None:
-        """Open a notebook: in the current window ("here"), a "split", a "vsplit" or a "tab".
+    async def open_file(self, path: Path | str, how: str = "tab", force: bool = False) -> NotebookPane | None:
+        """Open a notebook in a new "tab" (the default, also for the explorer), in the
+        current window ("here", vim's :edit), a "split" or a "vsplit".
 
-        A file that is already open is shown instead of being opened twice (it would need
-        a second kernel). "here" replaces the current notebook, like vim's :edit; it
-        refuses when that notebook has unsaved changes unless `force`.
+        Every notebook is a buffer with its own kernel, so a file that is already open is
+        shown (its tab focused, or a hidden buffer brought back) instead of opened twice.
+        A blank untitled window is reused rather than left behind. "here" refuses to
+        replace a notebook with unsaved changes unless `force` (:e!).
         """
         path = Path(path).expanduser()
         if path.is_dir():
             await self.show_explorer(path)
             return None
+        current = self.workspace.active
         if (existing := self.find_open(path)) is not None:
-            self.workspace.set_active(existing)
+            if existing in self.workspace.panes():
+                self.workspace.set_active(existing)
+                if existing is not current:
+                    self.notify(f"{path.name} is already open")
+            elif how == "here" and current is not None:
+                await self.workspace.show(existing, current)
+            else:
+                await self.workspace.add(existing, how if how in ("split", "vsplit") else "tab", current)
             existing.focus_pane()
-            if existing is not self.pane:
-                self.notify(f"{path.name} is already open")
             return existing
         if path.exists() and not path.is_file():
             self.notify(f"Not a file: {path}", severity="error")
@@ -424,8 +437,7 @@ class GPython(App):
             self.notify(f"New notebooks need a .py or .ipynb name: {path}", severity="error")
             return None
         pane = NotebookPane(path)
-        current = self.workspace.active
-        if how == "here" and current is not None:
+        if current is not None and (how == "here" or current.is_blank):
             if current.dirty and not force:
                 self.notify(f"No write since last change for {current.name} (:e! {path} discards, or :w first)", severity="warning")
                 return None
@@ -437,6 +449,56 @@ class GPython(App):
         pane.focus_pane()
         return pane
 
+    # ── buffers (vim's :ls, :b, :bn, :bp, :bd) ───────────────────────────
+
+    def buffer_lines(self) -> list[str]:
+        """One line per buffer, vim style: number, %a current / a shown / h hidden, + dirty, name."""
+        shown = set(self.workspace.panes())
+        current = self.pane
+        lines = []
+        for n, pane in enumerate(self.workspace.buffers, 1):
+            flag = "%a" if pane is current else (" a" if pane in shown else " h")
+            tab = self.workspace.tab_of(pane)
+            where = f"tab {tab + 1}" if tab is not None else "hidden"
+            lines.append(f"{n:3d} {flag}{'+' if pane.dirty else ' '} {pane.name:<24} {where}")
+        return lines
+
+    async def show_buffer(self, key: str | int) -> None:
+        """:b N / :b name: show that buffer in the current window."""
+        pane = self.workspace.buffer(str(key))
+        if pane is None:
+            self.notify(f"No buffer {key} (:ls lists them)", severity="warning")
+            return
+        await self.workspace.show(pane, self.workspace.active)
+        pane.focus_pane()
+
+    async def cycle_buffer(self, step: int) -> None:
+        """:bn / :bp: the next / previous buffer in the current window."""
+        buffers = self.workspace.buffers
+        if len(buffers) < 2:
+            return
+        current = self.pane
+        index = buffers.index(current) if current in buffers else 0
+        await self.show_buffer(str((index + step) % len(buffers) + 1))
+
+    async def delete_buffer(self, key: str = "", force: bool = False) -> None:
+        """:bd[!] [N | name]: close the buffer (asks when it has unsaved changes) and its kernel."""
+        pane = self.workspace.buffer(key) if key.strip() else self.pane
+        if pane is None:
+            self.notify(f"No buffer {key} (:ls lists them)", severity="warning")
+            return
+        if pane.dirty and not force:
+            self.push_screen(
+                Prompt(f"Unsaved changes in {pane.name}. Delete the buffer anyway? (y/n) "),
+                lambda answer: self._confirm(answer, lambda: self.delete_buffer(key, force=True)),
+            )
+            return
+        nxt = await self.workspace.delete(pane)
+        if nxt is None:
+            await self.new_pane("tab")
+        else:
+            nxt.focus_pane()
+
     async def new_pane(self, how: str) -> NotebookPane:
         """An untitled notebook in a split or tab."""
         pane = NotebookPane(None)
@@ -445,21 +507,19 @@ class GPython(App):
         return pane
 
     async def close_window(self, force: bool = False, save: bool = False) -> None:
-        """vim's :q / :wq / :q!: close the current window; closing the last one quits."""
+        """vim's :q / :wq / :q!: close the current window (its notebook stays a hidden
+        buffer); closing the last window quits, asking first about any unsaved buffer."""
         pane = self.pane
         if save:
             if pane.path is None:
                 self.notify("No file name. Use :wq name.py", severity="warning")
                 return
             pane.write_file()
-        if pane.dirty and not force:
-            self.push_screen(
-                Prompt(f"Unsaved changes in {pane.name}. Close anyway? (y/n) "),
-                lambda answer: self._confirm(answer, lambda: self.close_window(force=True)),
-            )
-            return
         if len(self.workspace.panes()) == 1:
-            self.exit()
+            if force:
+                self.exit()
+            else:
+                await self.action_quit()
             return
         nxt = await self.workspace.close(pane)
         if nxt is None:
@@ -524,15 +584,10 @@ class GPython(App):
             self.pane.focus_pane()
 
     async def tab_close(self, force: bool = False) -> None:
+        """:tabclose: the tab's notebooks stay open as hidden buffers (:ls)."""
         panes = self.workspace.tab_panes()
         if len(self.workspace.tabs) == 1:
             await self.action_quit() if not force else self.exit()
-            return
-        if any(p.dirty for p in panes) and not force:
-            self.push_screen(
-                Prompt("This tab has unsaved changes. Close it anyway? (y/n) "),
-                lambda answer: self._confirm(answer, lambda: self.tab_close(force=True)),
-            )
             return
         for pane in panes:
             await self.workspace.close(pane)
@@ -615,7 +670,7 @@ class GPython(App):
 
         self.push_screen(Prompt("New notebook: ", placeholder="name.py"), create)
 
-    def action_window_prefix(self) -> None:
+    async def action_window_prefix(self) -> None:
         """ctrl+w: wait for the window command (s v h j k l w q o T = ...)."""
         focused = self.focused
         if isinstance(focused, VimTextArea) and self.ui_mode == "insert":
@@ -624,7 +679,8 @@ class GPython(App):
         if isinstance(focused, Input):
             return
         if not isinstance(self.screen, KeyCapture):
-            self.push_screen(KeyCapture("^W"), self._window_command)
+            # Awaited so the capture screen is up before the next key (typed quickly) arrives.
+            await self.push_screen(KeyCapture("^W"), self._window_command)
 
     async def _window_command(self, key: str | None) -> None:
         if key is None:
@@ -699,7 +755,7 @@ class GPython(App):
 
     def set_line_numbers(self, on: bool) -> None:
         VimTextArea.line_numbers = on
-        for pane in self.workspace.panes():
+        for pane in self.workspace.buffers:
             for cell in pane.cells():
                 cell.editor.show_line_numbers = on
         config.save({"line_numbers": on})
@@ -707,7 +763,7 @@ class GPython(App):
     def set_vim(self, on: bool) -> None:
         VimTextArea.enabled = on
         VimTextArea.mode = "normal" if on else "insert"
-        for pane in self.workspace.panes():
+        for pane in self.workspace.buffers:
             for cell in pane.cells():
                 cell.editor.pending = cell.editor.count = ""
                 cell.editor._apply_mode()
@@ -721,8 +777,8 @@ class GPython(App):
         self.pane.write_file()
 
     async def action_quit(self) -> None:
-        """ctrl+q / :qa: quit the whole app; ask first when any notebook has unsaved changes."""
-        dirty = [p.name for p in self.workspace.panes() if p.dirty]
+        """ctrl+q / :qa: quit the whole app; ask first when any buffer has unsaved changes."""
+        dirty = [p.name for p in self.workspace.buffers if p.dirty]
         if dirty:
             self.push_screen(Prompt(f"Unsaved changes in {', '.join(dirty)}. Quit without saving? (y/n) "), self._confirm_quit)
         else:
@@ -808,7 +864,12 @@ class GPython(App):
             (("tabp", "tabprevious", "tabN", "tabNext"), "Previous tab", lambda arg="": self.tab_switch(None, -1)),
             (("tabfirst", "tabr", "tabrewind"), "First tab", lambda arg="": self.tab_switch(1, 0)),
             (("tablast",), "Last tab", lambda arg="": self.tab_switch(len(self.workspace.tabs), 0)),
-            (("tabs", "ls", "buffers", "files"), "List the open notebooks", lambda arg="": self._ex_list()),
+            (("ls", "buffers", "files", "tabs"), "List the buffers (open notebooks): %a current, a shown, h hidden, + unsaved", lambda arg="": self._ex_list()),
+            (("b", "buffer"), "Show buffer N or name in this window (:b 2, :b two-sum)", lambda arg="": self.show_buffer(arg) if arg.strip() else self._ex_list()),
+            (("bn", "bnext"), "Next buffer in this window", lambda arg="": self.cycle_buffer(1)),
+            (("bp", "bprevious", "bN"), "Previous buffer in this window", lambda arg="": self.cycle_buffer(-1)),
+            (("bd", "bdelete"), "Delete buffer N or name (default: this one); stops its kernel", lambda arg="": self.delete_buffer(arg)),
+            (("bd!", "bdelete!"), "Delete buffer without asking about unsaved changes", lambda arg="": self.delete_buffer(arg, force=True)),
             (("Ex", "Explore", "explorer", "tree", "Lex", "Vex"), "Toggle the file explorer (ctrl+b)", lambda arg="": self._ex_explore(arg)),
             (("run", "runall"), "Run all cells", lambda arg="": self.action_run_all()),
             (("runabove",), "Run the cells above the current one", lambda arg="": self.pane.run_relative(False)),
@@ -864,7 +925,7 @@ class GPython(App):
             self.pane.save()
 
     def _save_all(self, then=None) -> None:
-        for pane in self.workspace.panes():
+        for pane in self.workspace.buffers:
             if pane.path is None:
                 if pane.dirty:
                     self.notify(f"An untitled notebook has no file name: use :w name.py in it", severity="warning")
@@ -917,13 +978,7 @@ class GPython(App):
             await self.action_toggle_explorer()
 
     def _ex_list(self) -> None:
-        lines = []
-        for i, tab in enumerate(self.workspace.tabs, 1):
-            for pane in self.workspace.panes():
-                if self.workspace.tab_of(pane) == i - 1:
-                    mark = ">" if pane is self.pane else " "
-                    lines.append(f"{mark} tab {i}: {pane.title}")
-        self.notify("\n".join(lines), title="Open notebooks", timeout=8)
+        self.notify("\n".join(self.buffer_lines()), title="Buffers  (:b N shows one, :bd N closes it)", timeout=10)
 
     def _ex_theme(self, arg: str = "") -> None:
         if not arg:
@@ -971,7 +1026,7 @@ class GPython(App):
                 yield command
         yield SystemCommand("Change theme", "Pick a colorscheme with live preview", self.action_pick_theme)
         for names, desc, handler in self.ex_commands():
-            if names[0] in ("q", "q!", "qa!", "help", "set", "e!", "tabn", "tabp", "wq"):
+            if names[0] in ("q", "q!", "qa!", "help", "set", "e!", "tabn", "tabp", "wq", "b", "bn", "bp", "bd!"):
                 continue
             yield SystemCommand(f"{desc}  (:{names[0]})", f"Also available as :{names[0]}", self._palette(handler))
 

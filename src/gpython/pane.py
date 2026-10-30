@@ -44,6 +44,7 @@ class NotebookPane(Vertical):
         self.kernel = Kernel(file=path, env=env)
         self._kernel_started = False
         self._shutting_down = False
+        self._booted = asyncio.Event()  # set when the kernel boot finished (well or badly)
         self._run_lock = asyncio.Lock()
         self.loaded = asyncio.Event()  # set once every cell of the file is mounted
         self._specs: list[notebook.CellSpec] = []
@@ -136,9 +137,16 @@ class NotebookPane(Vertical):
         return self._boot_kernel()
 
     async def _boot_kernel(self) -> None:
-        await self.kernel.start()
-        self.kernel_label = await self._kernel_version()
-        self.set_kernel_state("kernel ready")
+        try:
+            await self.kernel.start()
+            self.kernel_label = await self._kernel_version()
+            self.set_kernel_state("kernel ready")
+        except Exception as error:  # never let a kernel problem take the UI down
+            if not self._shutting_down and self.is_attached:
+                self.set_kernel_state("no kernel")
+                self.notify(f"Kernel could not start: {error}", severity="error", timeout=10)
+        finally:
+            self._booted.set()
 
     async def switch_env(self, env: envs.Env) -> None:
         """Run this notebook's kernel in another environment; remembered per notebook file."""
@@ -174,12 +182,19 @@ class NotebookPane(Vertical):
     async def close(self) -> None:
         """Remove the window; its kernel shuts down in the background."""
         self._shutting_down = True
-        self.app.run_worker(self.kernel.shutdown(), group="shutdown")
+        self.app.run_worker(self._shutdown_kernel(), group="shutdown")
         await self.remove()
+
+    async def _shutdown_kernel(self) -> None:
+        """Stop the kernel once its boot (if any) has finished: stopping it mid-start races."""
+        if self._kernel_started:
+            await self._booted.wait()
+        await self.kernel.shutdown()
 
     async def on_unmount(self) -> None:
         if not self._shutting_down:
-            await self.kernel.shutdown()
+            self._shutting_down = True
+            await self._shutdown_kernel()
 
     def focus_pane(self) -> None:
         """Give focus back to the cell (or editor) that had it last."""

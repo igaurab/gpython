@@ -1,10 +1,11 @@
-"""Tabs and splits: vim's tab pages and windows for notebook panes.
+"""Tabs, splits and buffers: vim's tab pages, windows and buffers for notebook panes.
 
-The Workspace widget holds every open NotebookPane as a direct child. Where each pane
-is drawn comes from a small tree per tab (Leaf = one pane, Branch = side-by-side or
-stacked children with weights), turned into screen regions by WindowLayout. Keeping
-the tree outside the DOM means a split or a close never re-mounts a pane: its cells,
-outputs and kernel stay exactly as they are.
+The Workspace widget holds every open NotebookPane as a direct child; that list is the
+buffer list (vim's :ls). Where each pane is drawn comes from a small tree per tab (Leaf =
+one pane, Branch = side-by-side or stacked children with weights), turned into screen
+regions by WindowLayout. A pane in no tab is a hidden buffer: still mounted (display:
+none), its cells, outputs and kernel intact, until :bd deletes it. Keeping the tree
+outside the DOM means a split, a close or a buffer switch never re-mounts a pane.
 """
 
 from __future__ import annotations
@@ -166,13 +167,13 @@ class WindowLayout(Layout):
 
 
 class TabBar(Static):
-    """vim's tabline: one entry per tab, the current one highlighted. Click to switch."""
+    """vim's tabline: one entry per tab (click to switch), then the hidden buffers (click to show)."""
 
     def __init__(self) -> None:
         super().__init__(id="tabbar")
-        self._ranges: list[tuple[int, int]] = []
+        self._ranges: list[tuple[int, int, str, int]] = []  # start, end, "tab" | "buffer", index
 
-    def show(self, tabs: list[Tab], current: int) -> None:
+    def show(self, tabs: list[Tab], current: int, hidden: list[tuple[int, NotebookPane]]) -> None:
         text = Text()
         self._ranges = []
         for i, tab in enumerate(tabs):
@@ -183,14 +184,24 @@ class TabBar(Static):
             label = f" {i + 1}: {count}{pane.name}{' •' if dirty else ''} "
             start = len(text)
             text.append(label, "bold reverse" if i == current else "dim")
-            self._ranges.append((start, len(text)))
+            self._ranges.append((start, len(text), "tab", i))
             text.append(" ")
+        if hidden:
+            text.append("  hidden:", "dim italic")
+            for number, pane in hidden:
+                text.append(" ")
+                start = len(text)
+                text.append(f"{number} {pane.name}{' •' if pane.dirty else ''}", "dim")
+                self._ranges.append((start, len(text), "buffer", number))
         self.update(text, layout=False)
 
     def on_click(self, event: events.Click) -> None:
-        for i, (start, end) in enumerate(self._ranges):
+        for start, end, kind, index in self._ranges:
             if start <= event.x < end:
-                self.app.tab_switch(i + 1, 0)
+                if kind == "tab":
+                    self.app.tab_switch(index + 1, 0)
+                else:
+                    self.app.run_worker(self.app.show_buffer(index))
                 return
 
 
@@ -201,6 +212,7 @@ class Workspace(Widget):
         super().__init__(id="workspace")
         self.tabs: list[Tab] = []
         self.index = 0  # current tab
+        self.buffers: list[NotebookPane] = []  # every open notebook, in opening order (:ls numbers)
         self._layout = WindowLayout()
         self.can_focus = False
 
@@ -223,8 +235,29 @@ class Workspace(Widget):
         return tab.active
 
     def panes(self) -> list[NotebookPane]:
-        """Every open pane, all tabs, in tab then window order."""
+        """Every pane shown in some tab (vim's active buffers), in tab then window order."""
         return [pane for tab in self.tabs for pane in panes_of(tab.root)]
+
+    def hidden(self) -> list[NotebookPane]:
+        """Buffers in no window (vim's hidden buffers)."""
+        shown = set(self.panes())
+        return [pane for pane in self.buffers if pane not in shown]
+
+    def number(self, pane: NotebookPane) -> int:
+        """The buffer number (1-based, in opening order)."""
+        return self.buffers.index(pane) + 1
+
+    def buffer(self, key: str) -> NotebookPane | None:
+        """`:b 3` or `:b name` (a unique substring match on the file name / path)."""
+        key = key.strip()
+        if key.isdigit():
+            n = int(key)
+            return self.buffers[n - 1] if 1 <= n <= len(self.buffers) else None
+        matches = [p for p in self.buffers if key.lower() in p.title.lower()]
+        exact = [p for p in matches if p.name == key]
+        if exact:
+            return exact[0]
+        return matches[0] if len(matches) == 1 else None
 
     def tab_panes(self) -> list[NotebookPane]:
         return panes_of(self.tab.root) if self.tab else []
@@ -237,59 +270,114 @@ class Workspace(Widget):
 
     # ── structure changes ────────────────────────────────────────────────
 
+    async def _adopt(self, pane: NotebookPane) -> None:
+        """Mount a new pane (a hidden buffer is already mounted) and register it as a buffer."""
+        if pane not in self.buffers:
+            self.buffers.append(pane)
+        if pane.parent is not self:
+            await self.mount(pane)
+        pane.display = True
+
     async def add(self, pane: NotebookPane, how: str = "tab", anchor: NotebookPane | None = None) -> None:
-        """Mount `pane`: in a new tab, or as a split/vsplit of `anchor` (default: the active pane)."""
+        """Show `pane` in a new tab, or as a split/vsplit of `anchor` (default: the active pane).
+
+        `pane` may be a hidden buffer (then it is simply shown again).
+        """
         anchor = anchor or self.active
         if how == "tab" or anchor is None or not self.tabs:
             self.tabs.insert(self.index + 1 if self.tabs else 0, Tab(Leaf(pane), pane))
-            await self.mount(pane)
+            await self._adopt(pane)
             self.switch(self.index + 1 if len(self.tabs) > 1 else 0)
             return
         tab = self.tabs[self.tab_of(anchor)]
         row = how == "vsplit"
         # vim puts the new window above / to the left; `splitbelow`/`splitright` style here.
         tab.root = split_leaf(tab.root, anchor, pane, row, after=True)
-        await self.mount(pane)
+        await self._adopt(pane)
         self.set_active(pane)
         self._changed()
 
     async def replace(self, old: NotebookPane, new: NotebookPane) -> None:
-        """Show `new` where `old` is (vim's :edit); `old` is closed."""
+        """Show `new` in `old`'s window (vim's :edit / :buffer).
+
+        `old` stays open as a hidden buffer, unless it is a blank untitled notebook (vim
+        drops an unnamed, unchanged buffer too) — then it is closed for good.
+        """
         found = next(((tab, find(tab.root, old)) for tab in self.tabs if find(tab.root, old)), None)
         if found is None:
             await self.add(new)
             return
         tab, (leaf, _) = found
         leaf.pane = new
-        await self.mount(new)
+        await self._adopt(new)
         if tab.active is old:
             tab.active = new
-        await old.close()
+        if old.is_blank:
+            await self._drop(old)
+        else:
+            old.display = False
         self.set_active(new)
         self._changed()
 
-    async def close(self, pane: NotebookPane) -> NotebookPane | None:
-        """Close one window. Returns the pane to focus next, or None when nothing is left."""
-        index = self.tab_of(pane)
-        if index is None:
-            return self.active
-        tab = self.tabs[index]
-        root = remove_leaf(tab.root, pane)
-        neighbour = None
-        if root is None:
-            del self.tabs[index]
-            if self.index >= len(self.tabs):
-                self.index = max(0, len(self.tabs) - 1)
-        else:
-            tab.root = root
-            neighbour = self._nearest(tab, pane) or panes_of(root)[0]
-            if tab.active is pane:
-                tab.active = neighbour
+    async def _drop(self, pane: NotebookPane) -> None:
+        if pane in self.buffers:
+            self.buffers.remove(pane)
         await pane.close()
+
+    async def close(self, pane: NotebookPane, delete: bool = False) -> NotebookPane | None:
+        """Close one window: its notebook becomes a hidden buffer (or is deleted with `delete`,
+        and always when it is a blank untitled one). Returns the pane to focus next, or None
+        when no window is left.
+        """
+        index = self.tab_of(pane)
+        neighbour = None
+        if index is not None:
+            tab = self.tabs[index]
+            root = remove_leaf(tab.root, pane)
+            if root is None:
+                del self.tabs[index]
+                if self.index >= len(self.tabs):
+                    self.index = max(0, len(self.tabs) - 1)
+            else:
+                tab.root = root
+                neighbour = self._nearest(tab, pane) or panes_of(root)[0]
+                if tab.active is pane:
+                    tab.active = neighbour
+        if delete or pane.is_blank:
+            await self._drop(pane)
+        else:
+            pane.display = False
         if not self.tabs:
+            self._changed()
             return None
         self.switch(self.index)
         return neighbour or self.active
+
+    async def show(self, pane: NotebookPane, window: NotebookPane | None = None) -> None:
+        """vim's :b N: show buffer `pane` in `window` (default: the active one)."""
+        window = window or self.active
+        if pane in self.panes():  # already in a window: go there (we cannot show it twice)
+            self.set_active(pane)
+            return
+        if window is None or not self.tabs:
+            await self.add(pane, "tab")
+            return
+        await self.replace(window, pane)
+
+    async def delete(self, pane: NotebookPane) -> NotebookPane | None:
+        """vim's :bd: close every window showing `pane`, forget the buffer, stop its kernel.
+
+        Returns the pane to focus next (None when no buffer is left: the caller opens a
+        fresh untitled one).
+        """
+        nxt = await self.close(pane, delete=True)
+        if pane in self.buffers:  # was hidden: close() found no window
+            await self._drop(pane)
+            self._changed()
+        if nxt is None and self.buffers:  # the last window went: show another buffer
+            await self.add(self.buffers[-1], "tab")
+            nxt = self.active
+        return nxt
 
     def _nearest(self, tab: Tab, pane: NotebookPane) -> NotebookPane | None:
         """The remaining pane whose rectangle was closest to `pane`'s."""
@@ -301,6 +389,7 @@ class Workspace(Widget):
         return min(candidates, key=lambda p: abs(tab.rects[p].center[0] - cx) + abs(tab.rects[p].center[1] - cy))
 
     async def only(self, keep: NotebookPane) -> None:
+        """vim's :only: the other windows of this tab close; their notebooks stay as buffers."""
         for pane in [p for p in self.tab_panes() if p is not keep]:
             await self.close(pane)
 
@@ -354,7 +443,7 @@ class Workspace(Widget):
             return
         self.index = max(0, min(len(self.tabs) - 1, index))
         shown = set(panes_of(self.tab.root))
-        for pane in self.panes():
+        for pane in self.buffers:
             pane.display = pane in shown
         active = self.active
         if active is not None:

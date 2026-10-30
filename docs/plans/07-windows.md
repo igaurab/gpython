@@ -31,6 +31,16 @@ sidebar opens files into any of them.
   `KeyCapture` modal that waits for the second key; in insert mode `ctrl+w`
   deletes a word as in vim.
 
+## Buffers (added the same day, on the user's request)
+
+Every NotebookPane is a buffer: `Workspace.buffers` (opening order = `:ls` number).
+Closing a window hides its pane (`display: none`, still mounted, kernel alive) unless the
+pane is a blank untitled one; `:bd` removes it for good (`Workspace.delete`). `:b N`,
+`:bn`/`:bp` swap the pane shown in the current window (`Workspace.show` → `replace`, which
+keeps the old pane hidden). The explorer's `enter`/`o`/`t` open each file in its own tab
+(reusing a blank untitled window); `e` opens in the current window; `s`/`v` split.
+Opening a file that is already a buffer shows it (its tab, or back from hidden).
+
 ## Keys and commands
 
 See `keymap.py` ("files" mode and the ctrl+w rows) and README "Files, windows and
@@ -46,3 +56,5 @@ tabs". `ctrl+b` toggles the explorer; `ctrl+w h` / `ctrl+w w` focus it from a wi
   return value back to `tab.root`.
 - Opening a file that is already open jumps to it (a second instance would need a
   second kernel on the same file).
+- More Textual names not to shadow on a Widget subclass: `_attach` (Textual mounts children
+  through it; shadowing it hung start-up).

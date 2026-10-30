@@ -1,7 +1,8 @@
 """A vim-style file explorer (think netrw / NERDTree) in a sidebar.
 
-Keys: j/k move, h/l collapse/expand (l on a file opens it), enter/o open in the
-current window, s/v open in a horizontal/vertical split, t open in a new tab,
+Keys: j/k move, h/l collapse/expand (l on a file opens it), enter/o/t open the file
+in its own tab (a blank untitled window is reused; an open file's tab is focused),
+e opens it in the current window, s/v open in a horizontal/vertical split,
 - goes up one directory, C makes the directory under the cursor the root,
 R reloads, . shows hidden files, / searches names, % creates a new notebook,
 q / escape / ctrl+b close the explorer.
@@ -94,7 +95,7 @@ class Explorer(DirectoryTree):
         if path is None:
             return
         if path.is_dir():
-            if how == "here":
+            if how in ("here", "tab"):
                 self._toggle_node(node)
             return
         self.post_message(self.Open(path, how))
@@ -119,7 +120,7 @@ class Explorer(DirectoryTree):
             if not node.is_expanded:
                 node.expand()
         else:
-            self.post_message(self.Open(path, "here"))
+            self.post_message(self.Open(path, "tab"))
 
     def go_up(self) -> None:
         """Make the parent directory the root (netrw's '-')."""
@@ -194,14 +195,14 @@ class Explorer(DirectoryTree):
                 self._collapse_or_parent()
             case "l" | "right":
                 self._expand_or_open()
-            case "enter" | "o":
+            case "enter" | "o" | "t":
+                self._open("tab")
+            case "e":
                 self._open("here")
             case "s" | "i":  # i: NERDTree's horizontal split
                 self._open("split")
             case "v":
                 self._open("vsplit")
-            case "t":
-                self._open("tab")
             case "-" | "u":
                 self.go_up()
             case "C":
@@ -226,4 +227,4 @@ class Explorer(DirectoryTree):
 
     def on_directory_tree_file_selected(self, event: DirectoryTree.FileSelected) -> None:
         event.stop()
-        self.post_message(self.Open(event.path, "here"))
+        self.post_message(self.Open(event.path, "tab"))

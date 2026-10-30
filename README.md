@@ -132,9 +132,9 @@ and other extensions behind `.`. Keys inside it:
 |---|---|
 | `j` / `k`, `gg` / `G` | Move |
 | `h` / `l` | Collapse (or go to the parent) / expand a folder; `l` on a file opens it |
-| `enter` / `o` | Open the file in the current window (a folder expands) |
+| `enter` / `o` / `t` | Open the file in its own tab (a folder expands); a blank untitled window is reused |
+| `e` | Open the file in the current window (like `:e`) |
 | `s` / `v` | Open in a horizontal / vertical split |
-| `t` | Open in a new tab |
 | `-` | Go up: the parent folder becomes the root |
 | `C` | Make the folder under the cursor the root |
 | `%` | New notebook in the folder under the cursor |
@@ -145,8 +145,8 @@ and other extensions behind `.`. Keys inside it:
 
 `ctrl+b` toggles the explorer from anywhere. The explorer stays open after a
 file is opened; `ctrl+w h` from the leftmost window (or `ctrl+w w`) goes back to
-it. A file that is already open is shown instead of being opened twice.
-Clicking a file opens it too.
+it. A file that is already open is shown (its tab focused) instead of being
+opened twice. Clicking a file opens it too.
 
 **Windows** (`ctrl+w` then a key, as in vim; not in insert mode, where
 `ctrl+w` deletes a word):
@@ -166,14 +166,27 @@ When a tab has several windows each shows a status line with its file name,
 dirty mark and kernel state; the active window's line is highlighted.
 
 **Tabs**: `:tabnew [file]`, `gt` / `gT` / `2gt` (normal and cell mode),
-`:tabn`, `:tabp`, `:tabclose`, `:tabonly`, `:ls` lists everything that is
-open. The tab line appears above the notebook once there are two tabs; click
-a tab to switch. `./gpython a.py b.py` opens one tab per file.
+`:tabn`, `:tabp`, `:tabclose`, `:tabonly`. The tab line appears above the
+notebook once there are two tabs (or a hidden buffer, see below); click a tab
+to switch. `./gpython a.py b.py` opens one tab per file.
 
-`:e file` opens a file in the current window (it refuses if the notebook
-there has unsaved changes; `:e! file` discards them). `:w` saves the current
-notebook, `:wa` saves every notebook, `:qa` quits (asks if anything is
-unsaved), `:wqa` saves everything and quits.
+**Buffers** (as in vim): every opened notebook is a buffer with its own
+kernel, numbered in opening order. Closing a window (`:q`, `ctrl+w q`,
+`:tabclose`) only hides its notebook: variables and outputs stay, and the tab
+line lists hidden buffers (click one to show it).
+
+| Command | Action |
+|---|---|
+| `:ls` / `:buffers` | List buffers: `%a` current, `a` shown, `h` hidden, `+` unsaved |
+| `:b N` / `:b name` | Show that buffer in the current window (a partial, unique name works) |
+| `:bn` / `:bp` | Next / previous buffer in the current window |
+| `:bd [N]` | Delete the buffer and stop its kernel (asks if unsaved; `:bd!` does not) |
+| `:e file` | Open a file in the current window (refuses if unsaved; `:e! file` discards) |
+
+`:w` saves the current notebook, `:wa` saves every buffer, `:q` on the last
+window quits (asking about any unsaved buffer), `:qa` quits, `:wqa` saves
+everything and quits. Hidden buffers keep their kernel process alive; `:bd`
+frees it.
 
 ## Themes
 

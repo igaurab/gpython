@@ -83,9 +83,9 @@ KEYMAP: list[tuple[str, str, str]] = [
     # ── file explorer ──
     ("files", "j / k / gg / G", "Move through the tree"),
     ("files", "h / l", "Collapse (or go to the parent) / expand a folder; l on a file opens it"),
-    ("files", "enter / o", "Open the file in the current window (folder: expand / collapse)"),
+    ("files", "enter / o / t", "Open the file in its own tab (a blank untitled window is reused; an open file's tab is focused)"),
+    ("files", "e", "Open the file in the current window (vim :e)"),
     ("files", "s / v", "Open the file in a horizontal / vertical split"),
-    ("files", "t", "Open the file in a new tab"),
     ("files", "-", "Go up: the parent folder becomes the root"),
     ("files", "C", "Make the folder under the cursor the root"),
     ("files", "%", "New notebook in the folder under the cursor"),
