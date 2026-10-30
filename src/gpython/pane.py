@@ -769,7 +769,7 @@ class NotebookPane(Vertical):
             if key == "d":
                 await self.delete_cell(n)
             return True
-        if pending in (" ", " f"):  # space is the leader: space f f finds files
+        if pending in (" ", " f"):
             if pending == " " and key == "f":
                 self._cmd_pending = " f"
             elif pending == " f" and key == "f":

@@ -32,13 +32,10 @@ from textual.widgets.option_list import Option
 
 from .explorer import HIDDEN_DIRS
 
-MAX_FILES = 20_000  # stop walking after this many files
-MAX_ROWS = 200  # rows shown in the list (the count shows how many matched)
+MAX_FILES = 20_000
+MAX_ROWS = 200
 
-_cache: dict[Path, list[str]] = {}  # last listing per root: shown at once, then refreshed
-
-
-# ── file source ──────────────────────────────────────────────────────────
+_cache: dict[Path, list[str]] = {}
 
 
 def _skipped(part: str) -> bool:
@@ -51,12 +48,11 @@ def _git_files(root: Path) -> list[str] | None:
         result = subprocess.run(
             ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
             cwd=root, capture_output=True, timeout=10, check=True,
-        )  # fmt: skip
+        )
     except (OSError, subprocess.SubprocessError):
         return None
     files = []
     for name in result.stdout.decode(errors="replace").split("\0"):
-        # --cached also lists files deleted from the working tree but not yet from the index
         if name and not any(_skipped(p) for p in name.split("/")) and (root / name).is_file():
             files.append(name)
             if len(files) >= MAX_FILES:
@@ -84,9 +80,6 @@ def list_files(root: Path) -> list[str]:
     if files is None:
         files = _walk_files(root)
     return sorted(files, key=lambda f: (f.count("/"), f.lower()))
-
-
-# ── matching ─────────────────────────────────────────────────────────────
 
 
 def _positions(query: str, text: str, start: int) -> list[int] | None:
@@ -126,23 +119,23 @@ def fuzzy_match(query: str, path: str) -> tuple[float, list[int]] | None:
     for p in found:
         if p == prev + 1:
             run += 1
-            score += 2 * run  # each letter of a run counts more than the last
+            score += 2 * run
         else:
             run = 0
             if prev >= 0:
-                score -= 1 + min(p - prev - 1, 10) * 0.1  # a gap, a little worse when long
+                score -= 1 + min(p - prev - 1, 10) * 0.1
         before = path[p - 1] if p else "/"
         if before == "/":
-            score += 4  # start of a folder or file name
+            score += 4
         elif before in "_-. ":
-            score += 3  # start of a word
+            score += 3
         elif before.islower() and path[p].isupper():
-            score += 2  # camelCase hump
+            score += 2
         if p >= base:
-            score += 1  # in the file name
+            score += 1
         prev = p
     if found[0] == base:
-        score += 3  # the file name starts with the query
+        score += 3
     return score - len(path) * 0.05, found
 
 
@@ -165,9 +158,6 @@ def highlight(path: str, positions: list[int], style: Style | str = "bold") -> T
     for p in positions:
         text.stylize(style, p, p + 1)
     return text
-
-
-# ── the popup ────────────────────────────────────────────────────────────
 
 
 class FileFinder(ModalScreen[Path | None]):
@@ -219,7 +209,6 @@ class FileFinder(ModalScreen[Path | None]):
         Binding("up,ctrl+p,ctrl+k", "move(-1)", show=False, priority=True),
         Binding("down,ctrl+n,ctrl+j", "move(1)", show=False, priority=True),
     ]
-    # App actions on the same keys that must not fire behind the popup (GPython.check_action).
     APP_ACTIONS_OFF = {"add_cell", "interrupt", "command_palette", "delete_cell", "run_cell", "window_prefix"}
 
     def __init__(self, root: Path, query: str = "") -> None:
@@ -227,8 +216,8 @@ class FileFinder(ModalScreen[Path | None]):
         self.root = root
         self.files: list[str] = _cache.get(root, [])
         self._query = query
-        self._shown: list[str] = []  # the rows of the list, top to bottom
-        self._last: tuple[str, list[str]] = ("", self.files)  # last query and the files it matched
+        self._shown: list[str] = []
+        self._last: tuple[str, list[str]] = ("", self.files)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="finder"):
@@ -255,13 +244,12 @@ class FileFinder(ModalScreen[Path | None]):
     def _style(self) -> Style:
         try:
             return Style(color=Color.parse(self.app.current_theme.accent).rich_color, bold=True)
-        except Exception:  # noqa: BLE001  (a theme without an accent, or one Rich cannot parse)
+        except Exception:
             return Style(bold=True, underline=True)
 
     def _fill(self, query: str) -> None:
         q = query.replace(" ", "").lower()
         last_query, last_matched = self._last
-        # Typing one more letter only narrows the list: search the previous matches only.
         pool = last_matched if last_query and q.startswith(last_query) else self.files
         rows, matched = rank(q, pool)
         self._last = (q, matched)
@@ -312,6 +300,6 @@ def open_finder(app, query: str = "") -> None:
 
     def chosen(path: Path | None) -> None:
         if path is not None:
-            app.run_worker(app.open_file(path, "tab"))  # like enter on a file in the explorer
+            app.run_worker(app.open_file(path, "tab"))
 
     app.push_screen(FileFinder(root, query), chosen)

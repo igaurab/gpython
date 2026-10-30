@@ -347,7 +347,7 @@ class VimTextArea(TextArea):
             elif key == "T":
                 self.post_message(self.TabSwitch(self, None, -n))
             return True
-        if pending in (" ", " f"):  # space is the leader: space f f finds files
+        if pending in (" ", " f"):
             if pending == " " and key == "f":
                 self.pending = " f"
             elif pending == " f" and key == "f":

@@ -1023,12 +1023,11 @@ class GPython(App):
 
     def action_find_files(self, query: str = "") -> None:
         """space f f: the fuzzy file finder (imported on first use, like telescope)."""
-        from .finder import open_finder  # noqa: PLC0415
+        from .finder import open_finder
 
         open_finder(self, query)
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
-        # A popup that moves with ctrl+n / ctrl+k (the file finder) turns those app keys off.
         return action not in getattr(self.screen, "APP_ACTIONS_OFF", ())
 
     def action_pick_env(self) -> None:

@@ -21,26 +21,20 @@ def _fresh():
     VimTextArea.mode = "normal"
 
 
-# ── matcher ──────────────────────────────────────────────────────────────
-
-
 def test_subsequence_or_nothing():
     assert fuzzy_match("fdr", "src/finder.py") is not None
     assert fuzzy_match("rdf", "src/finder.py") is None
     assert fuzzy_match("", "a.py") == (0.0, [])
-    assert fuzzy_match("FIN der", "src/finder.py")[1] == [4, 5, 6, 7, 8, 9]  # case and spaces ignored
+    assert fuzzy_match("FIN der", "src/finder.py")[1] == [4, 5, 6, 7, 8, 9]
 
 
 def test_ranking():
     files = ["docs/happy.md", "tests/test_app.py", "src/gpython/app.py", "a/p/p.txt", "src/gpython/apple_pie.py"]
     order = [f for f, _ in rank("app", files)[0]]
-    assert order[0] == "src/gpython/app.py"  # file name starts with it, shorter than apple_pie.py
-    assert order.index("tests/test_app.py") < order.index("docs/happy.md")  # word start beats mid-word
-    # consecutive letters beat scattered ones
+    assert order[0] == "src/gpython/app.py"
+    assert order.index("tests/test_app.py") < order.index("docs/happy.md")
     assert fuzzy_match("find", "x/finder.py")[0] > fuzzy_match("find", "x/f_i_n_d.py")[0]
-    # a match in the file name beats one spread over the folders
     assert fuzzy_match("vim", "src/vim.py")[0] > fuzzy_match("vim", "v/i/m/x.py")[0]
-    # shorter path wins when everything else is equal
     assert fuzzy_match("app", "a/app.py")[0] > fuzzy_match("app", "a/b/c/d/app.py")[0]
     _, matched = rank("zz", files)
     assert matched == []
@@ -52,20 +46,17 @@ def test_match_prefers_the_file_name_and_highlights_it():
     text = highlight("src/gpython/app.py", found, "bold red")
     styled = {i for span in text.spans if "red" in str(span.style) for i in range(span.start, span.end)}
     assert styled == {12, 13, 14}
-    assert any(span.style == "dim" and span.end == 12 for span in text.spans)  # the folders are dim
+    assert any(span.style == "dim" and span.end == 12 for span in text.spans)
 
 
 def test_list_files_skips_hidden_and_ignored(tmp_path):
     for name in ["a.py", "sub/b.py", ".hidden/c.py", "node_modules/d.js", ".venv/e.py", "sub/__pycache__/f.pyc", "build/g.py"]:
         (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / name).write_text("")
-    assert list_files(tmp_path) == ["a.py", "build/g.py", "sub/b.py"]  # os.walk: not a git checkout
+    assert list_files(tmp_path) == ["a.py", "build/g.py", "sub/b.py"]
     (tmp_path / ".gitignore").write_text("build/\n")
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    assert list_files(tmp_path) == ["a.py", "sub/b.py"]  # git ls-files honours .gitignore
-
-
-# ── the popup in the app ─────────────────────────────────────────────────
+    assert list_files(tmp_path) == ["a.py", "sub/b.py"]
 
 
 def ui(tmp_path, test):
@@ -91,7 +82,7 @@ async def open_from_cell_mode(app, pilot):
     await pilot.press("space", "f", "f")
     await pilot.pause()
     assert isinstance(app.screen, FileFinder)
-    for _ in range(50):  # the listing runs in a thread
+    for _ in range(50):
         if app.screen.files:
             break
         await pilot.pause(0.02)
@@ -116,7 +107,7 @@ def test_space_ff_opens_from_cell_mode_filters_and_enter_opens(tmp_path):
         await pilot.pause()
         assert not isinstance(app.screen, FileFinder)
         assert app.pane.path == tmp_path / "pkg" / "beta.py"
-        assert len(app.workspace.tabs) == 2  # its own tab, like the explorer
+        assert len(app.workspace.tabs) == 2
 
     ui(tmp_path, test)
 
@@ -131,11 +122,11 @@ def test_keys_move_and_escape_closes(tmp_path):
         assert options.highlighted == 3
         await pilot.press("ctrl+p", "ctrl+k", "up")
         assert options.highlighted == 0
-        assert isinstance(app.screen, FileFinder)  # ctrl+p did not open the command palette
+        assert isinstance(app.screen, FileFinder)
         await pilot.press("escape")
         await pilot.pause()
         assert not isinstance(app.screen, FileFinder)
-        assert len(app.cells()) == cells  # ctrl+n did not add a cell behind the popup
+        assert len(app.cells()) == cells
         assert len(app.workspace.tabs) == 1
 
     ui(tmp_path, test)
@@ -150,13 +141,13 @@ def test_space_ff_in_normal_mode_and_space_in_insert_mode(tmp_path):
         await pilot.press("space", "f", "f")
         await pilot.pause()
         assert not isinstance(app.screen, FileFinder)
-        assert editor.text == "x = 1 ff"  # insert mode types a space
+        assert editor.text == "x = 1 ff"
         await pilot.press("escape")
         assert VimTextArea.mode == "normal"
         await pilot.press("space", "f", "f")
         await pilot.pause()
         assert isinstance(app.screen, FileFinder)
-        assert editor.text == "x = 1 ff"  # normal mode: space f f edits nothing
+        assert editor.text == "x = 1 ff"
         await pilot.press("escape")
         await pilot.pause()
         assert not isinstance(app.screen, FileFinder)
