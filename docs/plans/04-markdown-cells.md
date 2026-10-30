@@ -3,9 +3,9 @@
 Read `docs/plans/README.md` first. Plans 01–03 are done: `outputs.py`, `themes.py`, `config.py`,
 `keymap.py`, `help.py`, CELL mode with `m`/`y` stubs and `:md`/`:code` stubs, `GPython.set_cell_kind` stub.
 
-## Dependency on the peer's `CellSpec`
+## The peer's `CellSpec` has landed (commit 21aebc2)
 
-The peer session owns `notebook.py` and is adding:
+`notebook.py` now provides (read the file; do not edit it):
 
 ```python
 @dataclass
@@ -13,25 +13,22 @@ class CellSpec:
     source: str
     kind: Literal["code", "markdown"] = "code"
 
-def load(path) -> tuple[list[CellSpec], bool]
-def save(path, cells: list[CellSpec], markers: bool = True) -> None
+def load_cells(path) -> tuple[list[CellSpec], bool]      # (cells, uses_markers); handles # %%, [markdown]/[md], plain scripts, .ipynb
+def save(path, cells: list[CellSpec | str], markers: bool = True) -> None   # str = code cell
+def dump(cells, markers=True) -> str
+def parse(text) -> list[CellSpec]
 ```
 
 File format: `# %% [markdown]` + lines prefixed `# ` (Jupytext percent format); for marker-less
-scripts a module-level triple-quoted string statement is a markdown cell.
+scripts a module-level triple-quoted string statement is a markdown cell; `.ipynb` is read and written
+(nbformat 4, outputs dropped). `CellSpec` is a frozen dataclass.
 
-**Check `hasattr(notebook, "CellSpec")` at import time.** Write `app.py` so it works with both the old
-`list[str]` API and the new one:
+`GPython.compose` already calls `load_cells()` (plan 01) but ignores `kind`; this plan passes
+`Cell(spec.source, kind=spec.kind)` and saves `[CellSpec(c.source, c.kind) for c in cells]`.
+`graph.analyze` blanks `%magic`/`!shell`/`name?` lines so `.ipynb` cells with magics do not error.
 
-```python
-def _specs(items) -> list[tuple[str, str]]:   # -> [(source, kind)]
-    return [(i, "code") if isinstance(i, str) else (i.source, i.kind) for i in items]
-
-def _to_save(cells) :  # list[CellSpec] if available else list[str] (markdown cells then saved as code!
-    # -> in that case warn once via notify: "markdown cells need the new notebook format; saved as code")
-```
-
-If `CellSpec` is still missing when you finish, say so in the report; do not edit `notebook.py`.
+The user's concrete question that triggered this plan: a cell containing `### Hello` – "how do I render
+this block as markdown?" The answer after this plan: press `escape` to CELL mode and `m`, or `:md`.
 
 ## Cell model
 

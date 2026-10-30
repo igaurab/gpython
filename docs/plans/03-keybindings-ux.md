@@ -22,9 +22,10 @@ Run keys (work in every mode; `priority=True` on the App):
 
 | Key | Action | Notes |
 |---|---|---|
-| `shift+enter` | run cell and **insert** a new cell below (INSERT mode) – existing `action_run_and_add`; the user chose this mapping, keep it | if the next cell exists and is **empty**, reuse it instead of inserting another |
+| `shift+enter` | **Jupyter semantics (user's latest ask):** run the cell, then focus the cell below (cursor at (0,0), scroll visible); only when the current cell is the **last** one create a new cell below and enter INSERT mode | replaces the "always create" behaviour of `action_run_and_add`; keep that method name as the implementation |
 | `ctrl+enter`, `ctrl+shift+enter`, `ctrl+e` | run cell, stay | existing + the user's explicit ask for `ctrl+shift+enter`; `ctrl+e` is the fallback for terminals without the kitty protocol |
-| `alt+enter` | run cell and **select next** (create an empty cell below if it was the last) | Jupyter's shift+enter semantics |
+| `alt+enter` | run cell and **insert** a new cell below (INSERT mode) | Jupyter's alt+enter |
+| `ctrl+n` | insert new cell below (no run) | unchanged, explicit insert |
 | `f5` | run all | also palette / `:run` |
 | `f4` | run stale | existing |
 | `ctrl+k` | interrupt | existing |
@@ -70,9 +71,45 @@ Visuals:
   (`GPython.exec_counter` incremented per cell run, like Jupyter `In [n]`), and the duration appears when
   a run took ≥ 0.1 s (`time.perf_counter()` around `kernel.execute`). While running show `●  running…`
   with elapsed seconds updated once per second via `set_interval(1, …)` (stop it when done).
-- Status line (`#status`, extend `update_status`): left mode chip `INSERT`/`NORMAL`/`CELL` (CELL when
-  the focused widget is a `Cell` itself; expose `GPython.ui_mode` property returning it), file name +
-  `•` when dirty, `reactive|lazy`, kernel state, theme name. Cell headers do **not** show the mode.
+- Mode chip: plan 01 added `Static#mode` inside the top `Header`, right after the header icon (user ask),
+  showing `NORMAL` (bold yellow) / `INSERT` (bold green). Extend it with `CELL` (bold $accent / cyan) when
+  the focused widget is a `Cell` itself; expose `GPython.ui_mode` property returning `"insert"|"normal"|"cell"`.
+  `update_status()` updates both the chip and the bottom `#status` line (file name + `•` when dirty,
+  `reactive|lazy`, kernel state, theme name). Cell headers do **not** show the mode.
+
+## Direct user requests (relayed by the peer; must be in this plan)
+
+0. **Cell labels are display positions, not creation ids.** `Cell.cid` (`c1, c2, …` from a global counter)
+   stays the internal, unique, stable graph key, but the header must show the **1-based display index**
+   (`[3]` style, like Jupyter's `In [3]` slot, or `c3` – pick `c3` so `/3` reads naturally). Add
+   `Cell.label: str` and `Cell.set_label(n)`; `GPython.relabel()` renumbers every cell after mount, delete,
+   move, undo-restore and progressive mount (one pass over `cells()`). Today a cell inserted with `ctrl+n`
+   between c1 and c2 shows as `c5` – that is the bug the user screenshotted.
+
+1. **Variables panel hidden by default.** `#vars` starts with `display = False` (set in `compose` or CSS);
+   `f2` and `:vars` toggle it. Status line unaffected.
+2. **`/` jump prompt** in NORMAL and CELL mode: `/` opens `Prompt("/")`. Input `N` (digits): focus the
+   **N-th cell by display position** (1-based, i.e. the label shown in the header; never the internal
+   cid). Non-numeric text: jump to the next cell (after the current, wrapping) whose source
+   contains the text (case-insensitive); notify "not found" otherwise. Scroll it visible
+   (`animate=False`), keep the current UI mode (NORMAL → focus its editor; CELL → select it). The `:N`
+   ex command does the same as `/N`. `VimTextArea` must post a new `SearchRequested` message on `/` in
+   normal mode (like `:` posts `ExCommand`).
+3. **`J` / `K` in vim NORMAL mode jump cells (user ask).** In `VimTextArea._normal`: `J` posts
+   `EdgeReached(self, +1)` and `K` posts `EdgeReached(self, -1)` (counts repeat it, `3J`); the app's
+   `_edge` handler focuses the neighbour, puts the cursor on row 0 / last row and scrolls it visible
+   (`animate=False`). Lowercase `j`/`k` stay per-line and still hop at the edge. vim's join-lines moves
+   from `J` to `gJ` (pending `g` + `J`). Update `tests/test_vim.py::test_join` to press `g`, `J`, add a test
+   that `J`/`K` post `EdgeReached` with the right step, and update the README key table.
+4. **`gg` / `G` in vim NORMAL mode jump to the first / last cell (user ask).** `gg` → first cell, cursor
+   (0,0); `G` → last cell, cursor on its last line. With a count, `3G` and `3gg` focus cell 3 **by display
+   position** (same resolution as `/3`). Implement with a new message `VimTextArea.GoToCell(index: int | None,
+   last: bool)` posted from `_normal` (no in-cell movement any more); `GPython` handles it (focus the editor,
+   place the cursor, `scroll_visible(animate=False)`). In CELL mode the same keys select the cell.
+   Update `tests/test_vim.py::test_motions` (it currently expects `G`/`gg` to move within the cell) and
+   README.
+5. **Markdown cells** – full implementation is plan 04; this plan only guarantees the hooks exist
+   (`set_cell_kind` stub, `m`/`y`, `:md`/`:code` rows) so plan 04 is a drop-in.
 
 ## Dirty tracking and quitting
 
@@ -98,7 +135,7 @@ Visuals:
 dependency order within the subset via `graph.sort`), `:restart`, `:clear` (all outputs), `:theme [name]`,
 `:set vim` / `:set novim` (toggle `VimTextArea.enabled` for all editors + persist `vim` in config),
 `:set lazy` / `:set nolazy`, `:set nu` / `:set nonu` (line numbers), `:help`, `:md` / `:code` (stub → plan 04),
-`:N` (integer → select cell N, 1-based). Unknown → error notify.
+`:N` (integer → same as `/N`: N-th cell by display position). Unknown → error notify.
 
 ## Help screen
 
@@ -119,9 +156,10 @@ generated from/consistent with `KEYMAP` (at minimum, a test asserts every App `B
   `on_blur` → remove the class and `update_status()` again. `GPython.current_cell()` must return the cell when the
   Cell itself is focused (it already walks up from `self.focused`).
 - `action_run_cell(advance: str = "stay")` with `advance in {"stay", "next", "insert"}`; bind the three
-  run variants to it with arguments: `Binding("alt+enter", "run_cell('next')", ...)`,
-  `Binding("shift+enter", "run_cell('insert')", ...)` (replaces `action_run_and_add`; keep that name as a
-  thin alias so nothing else breaks).
+  run variants to it with arguments: `Binding("shift+enter", "run_cell('next')", ...)`,
+  `Binding("alt+enter", "run_cell('insert')", ...)`; `action_run_and_add` becomes a thin alias for
+  `run_cell('next')` so existing tests keep passing (update their expectations where they assumed a new
+  cell is always created).
   After `run_cells` is **scheduled** (not awaited), move selection: for `next`, select the next cell in
   CELL mode if the current mode was CELL, else focus its editor in NORMAL mode; create an empty cell if
   none exists. For `insert`, mount a new cell below and focus it in INSERT mode.
@@ -149,7 +187,13 @@ Use a 3-cell notebook without waiting for the kernel where possible (most of the
    running; `:q!` exits.
 9. `:3` selects the third cell; `:runbelow` runs only cells at/after the current one (kernel test).
 10. `f1` opens `HelpScreen`; `escape` closes it. Every App binding key is listed in `KEYMAP`.
-11. `:set nu`/`:set nonu` toggles `show_line_numbers` on all editors and writes `line_numbers` to the config
+11. `/3` focuses the third cell by display order (after deleting the second cell, `/2` means the former
+    third one; labels in headers renumber accordingly); inserting with `ctrl+n` between cells 1 and 2 shows
+    the new cell as `c2` and the old second as `c3`; `/print` jumps to the next cell containing `print`;
+    the variables panel starts hidden and `f2` shows it.
+11b. `shift+enter` on a cell with a cell below runs it and focuses the next cell without creating one;
+    on the last cell it creates a new cell in INSERT mode.
+12. `:set nu`/`:set nonu` toggles `show_line_numbers` on all editors and writes `line_numbers` to the config
     (XDG_CONFIG_HOME = tmp_path).
 
 Run `uv run python3 scripts/bench.py` – no metric regresses > 10 %; paste the table.
