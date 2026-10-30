@@ -3,13 +3,19 @@
 Stream output (stdout/stderr) arrives in many small chunks. Re-rendering the
 whole text for every chunk is O(n^2), so chunks are collected in a list and
 drawn at most 30 times a second by one timer (`_flush`).
+
+Results and displays pick the richest MIME type we can show (`MIME_PRIORITY`):
+images, markdown, JSON, HTML (as plain text) and LaTeX (as source).
 """
 
 from __future__ import annotations
 
 import base64
 import io
+import json
+from html.parser import HTMLParser
 
+from rich.json import JSON
 from rich.text import Text
 from textual.containers import Vertical
 from textual.timer import Timer
@@ -17,9 +23,20 @@ from textual.widget import Widget
 from textual.widgets import Static
 from textual_image.widget import Image  # must be imported before the app starts
 
+from .markdown import MarkdownView
+
 MAX_STREAM_CHARS = 50_000  # characters of one stream block that are drawn
 FLUSH_INTERVAL = 1 / 30
 _KEEP_RAW = 4 * MAX_STREAM_CHARS  # raw stream text kept in memory before compacting
+
+MIME_PRIORITY = (
+    "image/png",
+    "text/markdown",
+    "application/json",
+    "text/html",
+    "text/latex",
+    "text/plain",
+)
 
 
 def _render(kind: str, text: str) -> Text:
@@ -40,6 +57,51 @@ def collapse_carriage_returns(text: str) -> str:
             line = line.rstrip("\r")  # "\r\n" line endings and a trailing "\r" keep the line
             lines[i] = line.rsplit("\r", 1)[-1]
     return "\n".join(lines)
+
+
+class _TextExtractor(HTMLParser):
+    _SKIP = {"script", "style", "head", "title"}
+    _BREAK = {"br", "p", "div", "tr", "li", "h1", "h2", "h3", "h4", "h5", "h6", "table", "pre"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self._skip = 0
+
+    def handle_starttag(self, tag, attrs) -> None:
+        if tag in self._SKIP:
+            self._skip += 1
+        elif tag in self._BREAK:
+            self.parts.append("\n")
+        elif tag in ("td", "th"):
+            self.parts.append("\t")
+
+    def handle_endtag(self, tag) -> None:
+        if tag in self._SKIP:
+            self._skip = max(0, self._skip - 1)
+        elif tag in self._BREAK:
+            self.parts.append("\n")
+
+    def handle_data(self, data) -> None:
+        if not self._skip:
+            self.parts.append(data)
+
+
+def html_to_text(html: str) -> str:
+    """Strip tags from `html`, keeping a rough line structure."""
+    parser = _TextExtractor()
+    parser.feed(html)
+    parser.close()
+    lines = [" ".join(line.split()) for line in "".join(parser.parts).split("\n")]
+    out: list[str] = []
+    for line in lines:  # drop blank runs
+        if line or (out and out[-1]):
+            out.append(line)
+    return "\n".join(out).strip()
+
+
+def _as_str(value) -> str:
+    return "".join(value) if isinstance(value, list) else str(value)
 
 
 def _tail(text: str, limit: int) -> tuple[str, int]:
@@ -65,6 +127,7 @@ class OutputArea(Vertical):
         self._stream_hidden = 0  # raw characters dropped from the open stream to bound memory
         self._stream_widget: Static | None = None
         self._flush_timer: Timer | None = None
+        self._clear_pending = False  # clear_output(wait=True): clear when the next output arrives
 
     # ── public API ───────────────────────────────────────────────────────
 
@@ -83,6 +146,7 @@ class OutputArea(Vertical):
         return bool(self._blocks)
 
     def clear(self) -> None:
+        self._clear_pending = False
         self._cancel_timer()
         self._close_stream(flush=False)
         self._blocks.clear()
@@ -95,23 +159,71 @@ class OutputArea(Vertical):
 
     def add(self, kind: str, content: dict) -> None:
         """Add one output, with the same (kind, content) as `Kernel.execute` callbacks."""
+        if kind == "clear_output":
+            if content.get("wait"):
+                self._clear_pending = True
+            else:
+                self.clear()
+            return
+        if self._clear_pending:
+            self.clear()
         if kind == "stream":
             self._add_stream(content["name"], content["text"])
             return
-        if kind == "clear_output":
-            self.clear()
-            return
         self._close_stream()  # keep order: pending stream text is drawn before this block
         if kind in ("execute_result", "display_data"):
-            data = content.get("data", {})
-            if "image/png" in data:
-                self._add_image(data["image/png"])
-            elif "text/plain" in data:
-                self._add_text("result", data["text/plain"])
-            else:
-                self._add_text("note", f"[{', '.join(data)} output not supported yet]")
+            self._add_data(content.get("data", {}))
         elif kind == "error":
             self._add_text("traceback", "\n".join(content["traceback"]))
+
+    # ── rich data ────────────────────────────────────────────────────────
+
+    def _add_data(self, data: dict) -> None:
+        mime = next((m for m in MIME_PRIORITY if m in data), None)
+        if mime is None:
+            self._add_text("note", f"[{', '.join(data)} output not supported yet]")
+        elif mime == "image/png":
+            self._add_image(data["image/png"])
+        elif mime == "text/markdown":
+            self._add_markdown(_as_str(data[mime]))
+        elif mime == "application/json":
+            self._add_json(data[mime])
+        elif mime == "text/html":
+            if "text/plain" in data:  # e.g. pandas DataFrames have a good plain repr
+                self._add_text("result", _as_str(data["text/plain"]))
+            else:
+                self._add_noted(html_to_text(_as_str(data[mime])), "[html rendered as text]")
+        elif mime == "text/latex":
+            self._add_noted(_as_str(data[mime]), "[latex shown as source]")
+        else:
+            self._add_text("result", _as_str(data["text/plain"]))
+
+    def _add_markdown(self, text: str) -> None:
+        widget = MarkdownView(text, placeholder=None, classes="output-markdown")
+        widget.gp_text = text
+        self._mount_block(widget)
+
+    def _add_json(self, payload) -> None:
+        if isinstance(payload, str):  # some kernels send JSON as a string
+            try:
+                payload = json.loads(payload)
+            except ValueError:
+                pass
+        try:
+            source = json.dumps(payload, indent=2, default=str)
+        except (TypeError, ValueError):
+            self._add_text("result", repr(payload))
+            return
+        widget = Static(JSON(source))
+        widget.gp_text = source
+        self._mount_block(widget)
+
+    def _add_noted(self, text: str, note: str) -> None:
+        """Plain text with a dim note after it (the note is not part of `text`)."""
+        rendered = Text.assemble(Text(text), "\n", Text(note, style="dim italic"))
+        widget = Static(rendered)
+        widget.gp_text = text
+        self._mount_block(widget)
 
     # ── blocks ───────────────────────────────────────────────────────────
 
