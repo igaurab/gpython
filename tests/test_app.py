@@ -64,6 +64,17 @@ def test_reactive_run_edit_delete_save(tmp_path):
             await pilot.press("ctrl+s")
             assert parse(path.read_text()) == ["y = x * 2\ny", "print('independent')"]
 
+            # ctrl+enter runs and opens a new cell below in insert mode; the mode is global.
+            second.editor.focus()
+            await pilot.press("escape", "ctrl+enter")
+            await app.workers.wait_for_complete()
+            cells = app.cells()
+            assert len(cells) == 3 and app.focused is cells[1].editor
+            assert cells[1].editor.mode == "insert" and cells[0].editor.mode == "insert"
+            await pilot.press("escape")
+            assert cells[2].editor.mode == "normal"
+            assert "NORMAL" in str(app.query_one("#status").render())
+
     asyncio.run(main())
 
 
@@ -124,6 +135,17 @@ def test_untitled_plain_script_split_and_completion(tmp_path):
             await pilot.press("escape")
             assert not app.query(CompletionPopup)
 
+            # Autocomplete as you type: the popup opens on its own, enter accepts.
+            cells[2].editor.text = ""
+            await pilot.press(*"math.fl")
+            await pilot.pause(0.3)
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert app.query(CompletionPopup).first().option_count >= 1  # floor
+            await pilot.press("enter")
+            assert cells[2].source.startswith("math.fl") and len(cells[2].source) > 7
+            assert not app.query(CompletionPopup)
+
             # Saving a plain script keeps it a plain script.
             await pilot.press("escape", "ctrl+s")
             assert "# %%" not in script.read_text()
@@ -142,5 +164,31 @@ def test_untitled_save_prompt(tmp_path, monkeypatch):
             await pilot.press(*"new.py", "enter")
             await pilot.pause()
             assert (tmp_path / "new.py").read_text() == "# %%\nz = 1\n"
+
+    asyncio.run(main())
+
+
+def test_ex_commands(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    async def main():
+        app = GPython(None)
+        async with app.run_test(size=(120, 40)) as pilot:
+            table = app.query_one("#vars")
+            await pilot.press("escape", ":")
+            await pilot.press(*"variables", "enter")
+            await pilot.pause()
+            assert table.display is False
+            await pilot.press(":", *"vars", "enter")
+            await pilot.pause()
+            assert table.display is True
+            await pilot.press(":", *"new", "enter")
+            await pilot.pause()
+            assert len(app.cells()) == 2
+            app.cells()[0].editor.text = "a = 1"
+            await pilot.press("escape", ":", *"wqall out.py", "enter")
+            await pilot.pause()
+            assert app.return_code == 0
+            assert (tmp_path / "out.py").read_text() == "# %%\na = 1\n\n# %%\n\n"
 
     asyncio.run(main())

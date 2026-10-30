@@ -86,7 +86,7 @@ def has_markers(text: str) -> bool:
 
 def dump(sources: list[str], markers: bool = True) -> str:
     if markers:
-        return "\n\n".join(f"{MARKER}\n{s.strip(chr(10))}\n" for s in sources)
+        return "\n".join(f"{MARKER}\n{s.strip(chr(10))}\n" for s in sources)
     return "\n\n\n".join(s.strip("\n") for s in sources if s.strip()) + "\n"
 
 

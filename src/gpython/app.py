@@ -59,21 +59,19 @@ class Prompt(ModalScreen[str | None]):
 class Cell(Vertical):
     """One code cell: a header line, an editor and an output area."""
 
-    def __init__(self, source: str = "", mode: str = "normal") -> None:
+    def __init__(self, source: str = "") -> None:
         self.cid = f"c{next(_ids)}"
         super().__init__(id=self.cid)
         self.initial_source = source
-        self.initial_mode = mode
         self.ran_source: str | None = None
         self.last_defs: set[str] = set()
         self.status = "idle"
         self.info = ""
-        self.mode = mode
         self._last_text: tuple[str, Static, str] | None = None  # (kind, widget, text)
 
     def compose(self) -> ComposeResult:
         yield Static(classes="cell-header")
-        yield VimTextArea(self.initial_source, mode=self.initial_mode)
+        yield VimTextArea(self.initial_source)
         yield Vertical(classes="cell-output")
 
     def on_mount(self) -> None:
@@ -89,7 +87,8 @@ class Cell(Vertical):
 
     @property
     def source(self) -> str:
-        return self.editor.text
+        editors = self.query(VimTextArea)  # may not be composed yet right after mounting
+        return editors.first().text if editors else self.initial_source
 
     @property
     def output_text(self) -> str:
@@ -163,19 +162,13 @@ class Cell(Vertical):
         if not self.is_mounted:
             return
         icon, style = STATUS_ICONS[self.status]
-        mode = ("INSERT", "bold green") if self.mode == "insert" else ("NORMAL", "bold yellow")
-        header = Text.assemble((f"{icon} ", style), (self.cid, "bold"), "  ", mode, ("  " + self.info, "dim"))
+        header = Text.assemble((f"{icon} ", style), (self.cid, "bold"), ("  " + self.info, "dim"))
         self.query_one(".cell-header", Static).update(header)
 
     @on(VimTextArea.Changed)
     def _mark_stale(self) -> None:
         if self.ran_source is not None and self.status != "running":
             self.set_status("stale" if self.source != self.ran_source else "ok")
-
-    @on(VimTextArea.ModeChanged)
-    def _mode_changed(self, event: VimTextArea.ModeChanged) -> None:
-        self.mode = event.mode
-        self._render_header()
 
 
 def _render(kind: str, text: str) -> Text:
@@ -190,7 +183,8 @@ class GPython(App):
     CSS_PATH = "app.tcss"
     TITLE = "gpython"
     BINDINGS = [
-        Binding("shift+enter,ctrl+enter,ctrl+e", "run_cell", "Run", priority=True),
+        Binding("shift+enter,ctrl+e", "run_cell", "Run", priority=True),
+        Binding("ctrl+enter", "run_and_add", "Run + new", priority=True),
         Binding("ctrl+n", "add_cell", "New cell", priority=True),
         Binding("ctrl+d", "delete_cell", "Delete cell", priority=True),
         Binding("alt+up,ctrl+up", "focus_cell(-1)", "Prev cell", show=False, priority=True),
@@ -208,6 +202,7 @@ class GPython(App):
         self.path = path
         self.markers = True
         self.lazy = False
+        self.kernel_state = "starting kernel…"
         self.kernel = Kernel(file=path)
         self._run_lock = asyncio.Lock()
 
@@ -223,26 +218,39 @@ class GPython(App):
             table = DataTable(id="vars", cursor_type="row", zebra_stripes=True)
             table.add_columns("name", "type", "value")
             yield table
+        yield Static(id="status")
         yield Footer()
 
     async def on_mount(self) -> None:
-        self.update_subtitle("starting kernel…")
+        VimTextArea.mode = "normal"
+        self.update_status()
         self.cells()[0].editor.focus()
         self.refresh_info()
         self.run_worker(self._start_kernel(), group="kernel")
 
     async def _start_kernel(self) -> None:
         await self.kernel.start()
-        self.update_subtitle("kernel ready")
+        self.update_status("kernel ready")
 
     async def on_unmount(self) -> None:
         await self.kernel.shutdown()
 
     # ── helpers ──────────────────────────────────────────────────────────
 
-    def update_subtitle(self, state: str) -> None:
-        name = str(self.path) if self.path else "untitled"
-        self.sub_title = f"{name}  ·  {'lazy' if self.lazy else 'reactive'}  ·  {state}"
+    def update_status(self, kernel_state: str | None = None) -> None:
+        """One status line for the whole app: vim mode, file, run mode, kernel."""
+        if kernel_state is not None:
+            self.kernel_state = kernel_state
+        self.sub_title = str(self.path) if self.path else "untitled"
+        if not VimTextArea.enabled:
+            mode = ("", "")
+        elif VimTextArea.mode == "insert":
+            mode = (" INSERT ", "bold black on green")
+        else:
+            mode = (" NORMAL ", "bold black on yellow")
+        self.query_one("#status", Static).update(
+            Text.assemble(mode, f"  {self.sub_title}  ·  {'lazy' if self.lazy else 'reactive'}  ·  {self.kernel_state}")
+        )
 
     def cells(self) -> list[Cell]:
         return list(self.query(Cell))
@@ -335,7 +343,7 @@ class GPython(App):
             self.run_worker(self.run_cells(stale, downstream=True), group="run")
 
     async def action_add_cell(self) -> None:
-        cell = Cell(mode="insert")
+        cell = Cell()
         current = self.current_cell()
         container = self.query_one("#cells", VerticalScroll)
         if current:
@@ -343,7 +351,16 @@ class GPython(App):
         else:
             await container.mount(cell)
         cell.editor.focus()
+        cell.editor.set_mode("insert")
         cell.scroll_visible()
+
+    async def action_run_and_add(self) -> None:
+        """ctrl+enter: run this cell, then start typing in a fresh cell below."""
+        cell = self.current_cell()
+        if cell is None:
+            return
+        await self.action_add_cell()
+        self.run_worker(self.run_cells([cell.cid]), group="run")
 
     async def action_delete_cell(self) -> None:
         cell = self.current_cell()
@@ -390,7 +407,7 @@ class GPython(App):
             return
         self.path = Path(name)
         self.write_file()
-        self.update_subtitle("kernel ready" if self.kernel.ready.is_set() else "starting kernel…")
+        self.update_status()
         if self.kernel.ready.is_set():
             await self.kernel.set_file(self.path)
 
@@ -403,20 +420,24 @@ class GPython(App):
 
     def action_toggle_lazy(self) -> None:
         self.lazy = not self.lazy
-        self.update_subtitle("kernel ready" if self.kernel.ready.is_set() else "starting kernel…")
+        self.update_status()
         self.notify("Lazy: dependents are marked stale, run them with f4" if self.lazy else "Reactive: dependents re-run automatically")
 
     async def action_restart_kernel(self) -> None:
-        self.update_subtitle("restarting kernel…")
+        self.update_status("restarting kernel…")
         await self.kernel.restart()
         for cell in self.cells():
             cell.last_defs = set()
             if cell.ran_source is not None:
                 cell.set_status("stale")
         self.query_one("#vars", DataTable).clear()
-        self.update_subtitle("kernel ready")
+        self.update_status("kernel ready")
 
     # ── vim glue ─────────────────────────────────────────────────────────
+
+    @on(VimTextArea.ModeChanged)
+    def _mode_changed(self) -> None:
+        self.update_status()
 
     @on(VimTextArea.EdgeReached)
     def _edge(self, event: VimTextArea.EdgeReached) -> None:
@@ -426,38 +447,66 @@ class GPython(App):
     def _ex(self) -> None:
         self.push_screen(Prompt(":"), self._run_ex)
 
+    def ex_commands(self) -> list[tuple[tuple[str, ...], str, object]]:
+        """(names, description, handler). Shared by ':' commands and the palette.
+
+        Handlers take the rest of the command line as one argument and may be async.
+        """
+        return [
+            (("w", "write"), "Save notebook (:w name.py saves as)", self._ex_write),
+            (("wq", "x", "wqa", "wqall", "xa", "xall"), "Save and quit", self._ex_write_quit),
+            (("q", "q!", "qa", "qall", "quit"), "Quit", lambda arg="": self.exit()),
+            (("run", "runall"), "Run all cells", lambda arg="": self.action_run_all()),
+            (("stale", "runstale"), "Run stale cells", lambda arg="": self.action_run_stale()),
+            (("restart",), "Restart kernel", lambda arg="": self.action_restart_kernel()),
+            (("variables", "vars"), "Toggle variables panel", lambda arg="": self.action_toggle_vars()),
+            (("lazy",), "Toggle lazy mode", lambda arg="": self.action_toggle_lazy()),
+            (("new",), "New cell below", lambda arg="": self.action_add_cell()),
+            (("delete", "del"), "Delete current cell", lambda arg="": self.action_delete_cell()),
+            (("interrupt",), "Interrupt running code", lambda arg="": self.kernel.interrupt()),
+            (("help", "h"), "List : commands", lambda arg="": self._ex_help()),
+        ]
+
+    async def _ex_write(self, arg: str = "") -> None:
+        if arg:
+            await self._saved_as(arg)
+        else:
+            self.action_save()
+
+    async def _ex_write_quit(self, arg: str = "") -> None:
+        if self.path is None and not arg:
+            self.notify("No file name. Use :wq name.py", severity="warning")
+            return
+        await self._saved_as(arg or str(self.path))
+        self.exit()
+
+    def _ex_help(self) -> None:
+        lines = [f":{names[0]:<10} {desc}" for names, desc, _ in self.ex_commands()]
+        self.notify("\n".join(lines), title="Commands", timeout=15)
+
     async def _run_ex(self, command: str | None) -> None:
         if not command:
             return
-        name, _, arg = command.partition(" ")
-        match name:
-            case "w" | "write":
-                if arg:
-                    self.path = Path(arg)
-                    await self._saved_as(arg)
-                else:
-                    self.action_save()
-            case "q" | "q!" | "quit":
-                self.exit()
-            case "wq" | "x":
-                if self.path is None and not arg:
-                    self.notify("No file name. Use :w name.py", severity="warning")
-                    return
-                await self._saved_as(arg or str(self.path))
-                self.exit()
-            case "run":
-                self.action_run_all()
-            case "restart":
-                await self.action_restart_kernel()
-            case _:
-                self.notify(f"Unknown command: {command}", severity="error")
+        name, _, arg = command.strip().partition(" ")
+        for names, _, handler in self.ex_commands():
+            if name in names:
+                result = handler(arg.strip())
+                if asyncio.iscoroutine(result):
+                    await result
+                return
+        self.notify(f"Unknown command: {command}  (try :help)", severity="error")
 
     def get_system_commands(self, screen):
         yield from super().get_system_commands(screen)
-        yield SystemCommand("Run all cells", "Run every cell in dependency order", self.action_run_all)
-        yield SystemCommand("Run stale cells", "Run cells that changed since they last ran", self.action_run_stale)
-        yield SystemCommand("Toggle lazy mode", "Mark dependents stale instead of re-running them", self.action_toggle_lazy)
-        yield SystemCommand(
-            "Restart kernel", "Start a fresh Python process", lambda: self.run_worker(self.action_restart_kernel())
-        )
-        yield SystemCommand("Save notebook", "Write cells to disk", self.action_save)
+        for names, desc, handler in self.ex_commands():
+            if names[0] in ("q", "help"):
+                continue
+            yield SystemCommand(f"{desc}  (:{names[0]})", f"Also available as :{names[0]}", self._palette(handler))
+
+    def _palette(self, handler):
+        def callback() -> None:
+            result = handler("")
+            if asyncio.iscoroutine(result):
+                self.run_worker(result)
+
+        return callback

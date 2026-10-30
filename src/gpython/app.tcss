@@ -93,3 +93,10 @@ Prompt {
     padding: 1 0 0 0;
     background: transparent;
 }
+
+#status {
+    dock: bottom;
+    height: 1;
+    background: $panel;
+    color: $text-muted;
+}

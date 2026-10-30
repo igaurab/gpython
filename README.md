@@ -13,7 +13,8 @@ Run a cell and every cell that uses its variables re-runs automatically.
 
 | Key | Action |
 |---|---|
-| `shift+enter` / `ctrl+enter` / `ctrl+e` | Run cell (and everything downstream) |
+| `shift+enter` / `ctrl+e` | Run cell (and everything downstream) |
+| `ctrl+enter` | Run cell and open a new cell below |
 | `ctrl+n` | New cell below (starts in insert mode) |
 | `ctrl+d` | Delete cell (dependents re-run) |
 | `alt+↑/↓` | Previous / next cell (`j`/`k` past the edge also work) |
@@ -22,13 +23,18 @@ Run a cell and every cell that uses its variables re-runs automatically.
 | `f2` | Toggle variables panel |
 | `f3` | Toggle lazy mode (dependents only marked stale) |
 | `f4` | Run stale cells |
-| `tab` | Complete (from the kernel) |
+| `tab` | Complete (from the kernel); matches also pop up as you type |
 | `ctrl+p` | Command palette: run all, restart kernel, … |
 | `:q` / `ctrl+q` | Quit |
 
-Vim keys in normal mode: `h j k l w b e 0 ^ $ gg G`, counts, `i a I A o O`,
-`x X s S dd dw d$ D cc cw C yy p P J u ctrl+r`. `escape` leaves insert mode.
-Ex commands: `:w [file]`, `:q`, `:wq`, `:run`, `:restart`.
+The vim mode is global (one mode for all cells) and shown in the status line.
+Normal mode: `h j k l w b e 0 ^ $ gg G`, counts, `i a I A o O`,
+`x X s S dd dw d$ D cc cw C yy p P J u ctrl+r`. `escape` or `ctrl+[` leaves
+insert mode. Ex commands: `:w [file]`, `:q`, `:wq`, `:run`, `:restart`.
+
+Editing: Enter indents after `:` or an open bracket and dedents after
+`return`/`pass`/…; backspace in leading whitespace removes one indent level;
+Tab inserts four spaces.
 
 `shift+enter` needs a terminal that reports it (Ghostty, Kitty, WezTerm,
 iTerm2). In Terminal.app use `ctrl+e`.

@@ -18,6 +18,27 @@ from textual.widgets import OptionList, TextArea
 from textual.widgets.text_area import Location, TextAreaTheme
 
 _WORD = re.compile(r"\w+|[^\w\s]+")
+_ESCAPE_KEYS = {"escape", "ctrl+left_square_bracket", "ctrl+left_square_brace"}
+_IDENT = re.compile(r"[\w.]$")
+_DEDENT_AFTER = ("return", "break", "continue", "pass", "raise")
+AUTOCOMPLETE_DELAY = 0.12  # seconds after the last keystroke
+INDENT = "    "
+
+
+def _is_escape(event: events.Key) -> bool:
+    """escape, or ctrl+[ (the same byte in old terminals, its own key in new ones)."""
+    return bool(_ESCAPE_KEYS & {event.key, *event.aliases})
+
+
+def indent_after(line: str) -> str:
+    """Indentation for the line typed after `line`, following Python's rules of thumb."""
+    current = line[: len(line) - len(line.lstrip())]
+    code = line.split("#", 1)[0].rstrip()
+    if code.endswith((":", "(", "[", "{")):
+        return current + INDENT
+    if code.lstrip().split(" ")[0] in _DEDENT_AFTER:
+        return current[: max(0, len(current) - len(INDENT))]
+    return current
 
 
 class CompletionPopup(OptionList):
@@ -38,6 +59,7 @@ class CompletionPopup(OptionList):
 
 class VimTextArea(TextArea):
     enabled = True  # set False for plain (insert-only) editing
+    mode = "normal"  # one mode for the whole app, like a single vim buffer
     register = ""  # shared yank buffer
     register_linewise = False
 
@@ -60,7 +82,7 @@ class VimTextArea(TextArea):
             super().__init__()
             self.editor = editor
 
-    def __init__(self, text: str = "", *, mode: str = "normal", **kwargs) -> None:
+    def __init__(self, text: str = "", **kwargs) -> None:
         super().__init__(
             text,
             language="python",
@@ -70,11 +92,13 @@ class VimTextArea(TextArea):
             show_line_numbers=True,
             **kwargs,
         )
-        self.mode = mode if self.enabled else "insert"
         self.pending = ""
         self.count = ""
         self._popup: CompletionPopup | None = None
         self._popup_start: Location = (0, 0)
+        self._auto_timer = None
+        if not self.enabled:
+            VimTextArea.mode = "insert"
 
     def on_mount(self) -> None:
         base = TextAreaTheme.get_builtin_theme("monokai")
@@ -82,18 +106,26 @@ class VimTextArea(TextArea):
             base, name="monokai-normal", cursor_style=Style(color="#272822", bgcolor="#e6db74", bold=True)
         )
         self.register_theme(normal)
-        self.set_mode(self.mode)
+        self._apply_mode()
+
+    def _on_focus(self, event: events.Focus) -> None:
+        super()._on_focus(event)
+        self._apply_mode()  # the global mode may have changed while another cell had focus
 
     # ── mode ─────────────────────────────────────────────────────────────
 
     def set_mode(self, mode: str) -> None:
         if not self.enabled:
             mode = "insert"
-        self.mode = mode
+        VimTextArea.mode = mode
         self.pending = self.count = ""
+        self._apply_mode()
+        self.post_message(self.ModeChanged(self, mode))
+
+    def _apply_mode(self) -> None:
+        mode = self.mode if self.enabled else "insert"
         self.theme = "monokai" if mode == "insert" else "monokai-normal"
         self.cursor_blink = mode == "insert"
-        self.post_message(self.ModeChanged(self, mode))
 
     # ── keys ─────────────────────────────────────────────────────────────
 
@@ -102,8 +134,8 @@ class VimTextArea(TextArea):
             event.stop()
             event.prevent_default()
             return
-        if self.mode == "insert":
-            if event.key == "escape" and self.enabled:
+        if self.mode == "insert" or not self.enabled:
+            if _is_escape(event) and self.enabled:
                 event.stop()
                 event.prevent_default()
                 if not self.cursor_at_start_of_line:
@@ -113,8 +145,22 @@ class VimTextArea(TextArea):
                 event.stop()
                 event.prevent_default()
                 self.run_worker(self._complete(), exclusive=True, group="complete")
+            elif event.key == "enter":
+                event.stop()
+                event.prevent_default()
+                self._newline()
+            elif event.key == "backspace" and self._dedent_on_backspace():
+                event.stop()
+                event.prevent_default()
             else:
                 await super()._on_key(event)
+                if event.is_printable:
+                    self._schedule_autocomplete()
+            return
+        if _is_escape(event):
+            event.stop()
+            event.prevent_default()
+            self.pending = self.count = ""
             return
         key = event.character if event.is_printable and event.character else event.key
         # Unhandled non-printable keys (f-keys, ctrl combos) still reach app bindings.
@@ -161,6 +207,7 @@ class VimTextArea(TextArea):
             case "o" | "O":
                 indent = line[: len(line) - len(line.lstrip())]
                 if key == "o":
+                    indent = indent_after(line)
                     self.insert("\n" + indent, (row, len(line)), maintain_selection_offset=False)
                 else:
                     self.insert(indent + "\n", (row, 0), maintain_selection_offset=False)
@@ -209,6 +256,36 @@ class VimTextArea(TextArea):
                 else:
                     self._clamp()
         return True
+
+    # ── python editing helpers ───────────────────────────────────────────
+
+    def _newline(self) -> None:
+        """Enter: newline plus the indentation Python would want next."""
+        self._close_popup()
+        row, col = self.cursor_location
+        line = self.document.get_line(row)
+        before, after = line[:col], line[col:]
+        indent = indent_after(before)
+        if self.selection.start != self.selection.end:
+            self.delete(*sorted([self.selection.start, self.selection.end]), maintain_selection_offset=False)
+            row, col = self.cursor_location
+        # Enter between brackets: put the closing bracket on its own line.
+        if before.rstrip()[-1:] in "([{" and after.lstrip()[:1] in ")]}" and after.strip():
+            outer = line[: len(line) - len(line.lstrip())]
+            self.replace("\n" + indent + "\n" + outer + after.lstrip(), (row, col), (row, len(line)), maintain_selection_offset=False)
+            self.move_cursor((row + 1, len(indent)))
+            return
+        self.replace("\n" + indent + after.lstrip() if after.strip() else "\n" + indent, (row, col), (row, len(line)), maintain_selection_offset=False)
+        self.move_cursor((row + 1, len(indent)))
+
+    def _dedent_on_backspace(self) -> bool:
+        """Backspace inside leading whitespace removes a whole indent level."""
+        row, col = self.cursor_location
+        before = self.document.get_line(row)[:col]
+        if col and not before.strip() and col % len(INDENT) == 0:
+            self.delete((row, col - len(INDENT)), (row, col), maintain_selection_offset=False)
+            return True
+        return False
 
     def _clamp(self) -> None:
         """In normal mode the cursor sits on a character, not after the last one."""
@@ -384,18 +461,47 @@ class VimTextArea(TextArea):
             offset -= length + 1
         return self.document.end
 
-    async def _complete(self) -> None:
+    def _schedule_autocomplete(self) -> None:
+        """Show matches shortly after typing an identifier character or '.'."""
+        if self._auto_timer is not None:
+            self._auto_timer.stop()
+            self._auto_timer = None
+        row, col = self.cursor_location
+        before = self.document.get_line(row)[:col]
+        if _IDENT.search(before):
+            self._auto_timer = self.set_timer(
+                AUTOCOMPLETE_DELAY,
+                lambda: self.run_worker(self._complete(auto=True), exclusive=True, group="complete"),
+            )
+        else:
+            self._close_popup()
+
+    async def _complete(self, auto: bool = False) -> None:
+        """Ask the kernel for completions at the cursor.
+
+        Tab (auto=False) fills in the common prefix and pops up the rest;
+        as-you-type (auto=True) only shows the popup and never edits the text.
+        """
         kernel = getattr(self.app, "kernel", None)
         if kernel is None or not kernel.ready.is_set():
             return
         code = self.text
         cursor = self.cursor_location
         matches, start, end = await kernel.complete(code, self._offset(cursor))
-        if self.cursor_location != cursor or not matches:
+        if self.cursor_location != cursor or self.mode != "insert":
             return
         typed = code[start : self._offset(cursor)]
-        prefix = os.path.commonprefix(matches)
         start_loc = self._location(start)
+        if auto:
+            matches = [m for m in matches if m != typed]
+            if matches:
+                self._show_popup(matches, start_loc)
+            else:
+                self._close_popup()
+            return
+        if not matches:
+            return
+        prefix = os.path.commonprefix(matches)
         if len(matches) == 1 or len(prefix) > len(typed):
             self.replace(prefix, start_loc, self._location(end), maintain_selection_offset=False)
         if len(matches) > 1:
@@ -406,6 +512,9 @@ class VimTextArea(TextArea):
         popup = CompletionPopup(*matches[:200])
         self._popup, self._popup_start = popup, start
         x, y = self.cursor_screen_offset
+        height = min(len(matches), 10) + 2
+        if y + 1 + height > self.screen.size.height:  # no room below: open upwards
+            y = max(0, y - height) - 1
         popup.styles.offset = (max(0, x - (self.cursor_location[1] - start[1]) - 1), y + 1)
         self.screen.mount(popup)
         popup.highlighted = 0
@@ -417,16 +526,17 @@ class VimTextArea(TextArea):
 
     def _popup_key(self, event: events.Key) -> bool:
         popup = self._popup
+        if _is_escape(event):
+            self._close_popup()
+            return True
         match event.key:
-            case "down" | "tab" | "ctrl+n":
+            case "down" | "ctrl+n":
                 popup.action_cursor_down()
             case "up" | "shift+tab" | "ctrl+p":
                 popup.action_cursor_up()
-            case "enter":
+            case "enter" | "tab":
                 index = popup.highlighted or 0
                 self.replace(str(popup.get_option_at_index(index).prompt), self._popup_start, self.cursor_location, maintain_selection_offset=False)
-                self._close_popup()
-            case "escape":
                 self._close_popup()
             case _:
                 self._close_popup()

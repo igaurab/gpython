@@ -19,6 +19,7 @@ def run(text: str, *keys: str) -> tuple[str, str, tuple[int, int]]:
 
     async def main():
         app = EditorApp(text)
+        VimTextArea.mode = "normal"
         async with app.run_test() as pilot:
             editor = app.query_one(VimTextArea)
             editor.focus()
@@ -77,3 +78,17 @@ def test_disabled_vim_is_plain_insert():
         assert run("", "a", "b", "escape", "c") == ("abc", "insert", (0, 3))
     finally:
         VimTextArea.enabled = True
+
+
+def test_ctrl_bracket_leaves_insert_mode():
+    assert run("", "i", "x", "ctrl+left_square_bracket", "y")[0:2] == ("x", "normal")
+
+
+def test_auto_indent():
+    assert run("def f():", "A", "enter", "x")[0] == "def f():\n    x"
+    assert run("    return 1", "A", "enter", "x")[0] == "    return 1\nx"
+    assert run("    y = 2", "A", "enter", "x")[0] == "    y = 2\n    x"
+    assert run("xs = [", "A", "]", "left", "enter")[0] == "xs = [\n    \n]"
+    assert run("def f():", "o", "x")[0] == "def f():\n    x"
+    # Backspace in leading whitespace removes a whole indent level.
+    assert run("        x", "I", "backspace")[0] == "    x"
