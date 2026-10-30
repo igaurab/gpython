@@ -590,8 +590,10 @@ class NotebookPane(Vertical):
         cell.scroll_visible(animate=False)
 
     def copy_cell(self) -> None:
+        """yy / x in cell mode: keep the cell for p / P, and put its text on the system clipboard."""
         if cell := self.current_cell():
             self.app._cell_clipboard = self._snapshot(cell, self.cells().index(cell))
+            self.app.copy_to_clipboard(cell.source)
 
     async def cut_cell(self) -> None:
         self.copy_cell()

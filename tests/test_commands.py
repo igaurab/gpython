@@ -144,6 +144,7 @@ def test_delete_undo_copy_cut_paste(tmp_path):
         assert sources(app) == SOURCES and app.focused is app.cells()[1]
 
         await pilot.press("y", "y", "p")
+        assert app.clipboard == "b = 2"
         assert sources(app) == ["a = 1", "b = 2", "b = 2", "print('c')"]
         assert app.focused is app.cells()[2]
         await pilot.press("d", "d")
