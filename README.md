@@ -71,6 +71,7 @@ Everywhere:
 | `alt+shift+↑/↓` | Move the cell up / down |
 | `ctrl+s` / `:w` | Save (asks for a name if untitled) |
 | `ctrl+b` | Toggle the file explorer (see [Files, windows and tabs](#files-windows-and-tabs)) |
+| `ctrl+h` / `ctrl+l` | Focus the window to the left / right; `ctrl+h` from the leftmost window opens or focuses the explorer, `ctrl+l` from the explorer goes back (not in insert mode, where `ctrl+h` is backspace) |
 | `ctrl+w` … | Window commands: `s` split, `v` vsplit, `h j k l` move, `q` close, `o` only, `T` to tab |
 | `f1` | Help |
 | `f2` | Toggle variables panel (hidden at start) |
@@ -184,9 +185,11 @@ and other extensions behind `.`. Keys inside it:
 | `q`, `escape`, `ctrl+b` | Hide the explorer |
 
 `ctrl+b` toggles the explorer from anywhere. The explorer stays open after a
-file is opened; `ctrl+w h` from the leftmost window (or `ctrl+w w`) goes back to
-it. A file that is already open is shown (its tab focused) instead of being
-opened twice. Clicking a file opens it too.
+file is opened; `ctrl+h` or `ctrl+w h` from the leftmost window (or `ctrl+w w`)
+goes back to it, and `ctrl+l` returns to the notebook. Terminals send `ctrl+h`
+as backspace, so backspace does the same outside insert mode. A file that is
+already open is shown (its tab focused) instead of being opened twice. Clicking
+a file opens it too.
 
 **Windows** (`ctrl+w` then a key, as in vim; not in insert mode, where
 `ctrl+w` deletes a word):

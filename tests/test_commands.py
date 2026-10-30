@@ -3,10 +3,11 @@
 import asyncio
 
 import pytest
-from textual.widgets import DataTable
+from textual.widgets import DataTable, Input
 
 from gpython import config
 from gpython.app import GPython, Prompt
+from gpython.explorer import Explorer
 from gpython.help import HelpScreen
 from gpython.keymap import KEYMAP
 from gpython.vim import VimTextArea
@@ -408,3 +409,59 @@ def test_shift_enter_keeps_the_viewport(tmp_path):
         assert box.region.contains_region(new.region)
 
     ui(tmp_path, test, sources=many, kernel=True)
+
+
+def test_wq_saves_and_quits(tmp_path):
+    async def test(app, pilot):
+        app.cells()[0].editor.focus()
+        await pilot.press("i", *"x = 9", "escape", ":", *"wq", "enter")
+        await pilot.pause()
+        assert app.return_code == 0
+        assert (tmp_path / "nb.py").read_text().startswith("# %%\nx = 9a = 1\n")
+
+    ui(tmp_path, test)
+
+
+def test_only_the_focused_editor_paints_a_cursor(tmp_path):
+    def paints_cursor(editor):
+        strip = editor.render_line(editor.cursor_location[0])
+        cursor = editor._theme.cursor_style
+        return any(segment.style and segment.style.bgcolor == cursor.bgcolor for segment in strip)
+
+    async def test(app, pilot):
+        first, second, third = app.cells()
+        assert [c.editor.highlight_cursor_line for c in app.cells()] == [c.editor is app.focused for c in app.cells()]
+        first.editor.focus()
+        await pilot.press("J")
+        await pilot.pause()
+        assert app.focused is second.editor
+        assert paints_cursor(second.editor) and second.editor.highlight_cursor_line
+        assert not paints_cursor(first.editor) and not first.editor.highlight_cursor_line
+        await pilot.press("escape", "escape", "j", "i")
+        await pilot.pause()
+        assert app.focused is third.editor and app.ui_mode == "insert"
+        assert not paints_cursor(first.editor) and not paints_cursor(second.editor)
+
+    ui(tmp_path, test)
+
+
+def test_ctrl_h_and_l_move_between_explorer_and_notebook(tmp_path):
+    async def test(app, pilot):
+        editor = app.cells()[0].editor
+        editor.focus()
+        await pilot.press("ctrl+h")
+        await pilot.pause()
+        assert app.explorer_visible and isinstance(app.focused, Explorer)
+        await pilot.press("ctrl+l")
+        assert app.focused is editor
+        await pilot.press("backspace")
+        assert isinstance(app.focused, Explorer)
+        await pilot.press("ctrl+l", "i", "x", "backspace")
+        await pilot.pause()
+        assert app.focused is editor and editor.text == "a = 1" and app.ui_mode == "insert"
+        await pilot.press("escape", ":", *"ab", "backspace")
+        await pilot.pause()
+        assert app.screen.query_one(Input).value == "a"
+        await pilot.press("escape")
+
+    ui(tmp_path, test)

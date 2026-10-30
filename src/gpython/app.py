@@ -146,6 +146,8 @@ class GPython(App):
         Binding("ctrl+k", "interrupt", "Interrupt", priority=True),
         Binding("ctrl+w", "window_prefix", "Window", show=False, priority=True),
         Binding("ctrl+b", "toggle_explorer", "Files", priority=True),
+        Binding("ctrl+h,backspace", "focus_left", "Window left", show=False, priority=True),
+        Binding("ctrl+l", "focus_right", "Window right", show=False, priority=True),
         Binding("f1", "help", "Help"),
         Binding("f2", "toggle_vars", "Variables"),
         Binding("f3", "toggle_lazy", "Lazy"),
@@ -652,8 +654,26 @@ class GPython(App):
         if self.explorer_visible:
             self.hide_explorer()
         else:
-            root = None if self.explorer is not None else (self.pane.path.resolve().parent if self.pane.path else None)
-            await self.show_explorer(root)
+            await self.open_explorer()
+
+    async def open_explorer(self) -> None:
+        """Show and focus the explorer, rooted at the notebook's folder the first time."""
+        root = None if self.explorer is not None else (self.pane.path.resolve().parent if self.pane.path else None)
+        await self.show_explorer(root)
+
+    async def action_focus_left(self) -> None:
+        """ctrl+h (terminals send it as backspace): the window to the left, like ctrl+w h;
+        from the leftmost window the explorer, opened when hidden. Insert mode keeps backspace."""
+        if isinstance(self.focused, Explorer):
+            return
+        if self.workspace.neighbour(self.pane, "h") is None and not self.explorer_visible:
+            await self.open_explorer()
+        else:
+            self.focus_window("left")
+
+    def action_focus_right(self) -> None:
+        """ctrl+l: the window to the right, like ctrl+w l; from the explorer, the leftmost window."""
+        self.focus_window("right")
 
     @on(Explorer.Open)
     async def _explorer_open(self, event: Explorer.Open) -> None:
@@ -1116,7 +1136,18 @@ class GPython(App):
         open_finder(self, query)
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
-        return action not in getattr(self.screen, "APP_ACTIONS_OFF", ())
+        if action in getattr(self.screen, "APP_ACTIONS_OFF", ()):
+            return False
+        if action in ("focus_left", "focus_right"):
+            return self._window_keys_apply(action == "focus_left")
+        return True
+
+    def _window_keys_apply(self, needs_backspace: bool) -> bool:
+        """ctrl+h and ctrl+l move between windows only on the notebook screen, never in a text
+        field; ctrl+h arrives as backspace, which insert mode keeps for deleting."""
+        if not isinstance(self.screen, NotebookScreen) or isinstance(self.focused, Input):
+            return False
+        return not (needs_backspace and self.ui_mode == "insert")
 
     def action_pick_env(self) -> None:
         """Env picker: switch the kernel's environment, create a venv, install packages."""

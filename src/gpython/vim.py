@@ -224,6 +224,7 @@ class VimTextArea(TextArea):
             theme="monokai",
             soft_wrap=False,
             tab_behavior="indent",
+            highlight_cursor_line=False,
             show_line_numbers=kwargs.pop("show_line_numbers", self.line_numbers),
             **kwargs,
         )
@@ -416,6 +417,19 @@ class VimTextArea(TextArea):
         self.pending = self.count = ""
         self._apply_mode()
         self.post_message(self.ModeChanged(self, mode))
+
+    def _watch_has_focus(self, focus: bool) -> None:
+        """Only the focused editor paints a cursor and a cursor line. Textual's line cache
+        does not key on focus, so the cursor line is forgotten when focus moves."""
+        super()._watch_has_focus(focus)
+        self.set_reactive(TextArea.highlight_cursor_line, focus and not self.visual)
+        self.forget_cursor_line()
+
+    def forget_cursor_line(self) -> None:
+        _, cursor_y = self._cursor_offset
+        cache = self._line_cache
+        for key in [key for key in cache.keys() if key[2] == cursor_y]:
+            cache.discard(key)
 
     def _apply_mode(self) -> None:
         mode = self.mode if self.enabled else "insert"
