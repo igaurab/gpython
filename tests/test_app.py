@@ -76,7 +76,7 @@ def test_reactive_run_edit_delete_save(tmp_path):
             assert cells[2].editor.mode == "insert" and cells[0].editor.mode == "insert"  # the mode is global
             await pilot.press("escape")
             assert cells[1].editor.mode == "normal"
-            assert "NORMAL" in str(app.query_one("#status").render())
+            assert "NORMAL" not in str(app.query_one("#status").render())
             assert "NORMAL" not in app.sub_title and app.sub_title.startswith(str(path))
             assert app.dirty and app.sub_title.endswith("•")  # a cell was added
 

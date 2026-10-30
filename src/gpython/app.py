@@ -40,7 +40,6 @@ INITIAL_CELLS = 12  # cells composed before the first frame; the rest mount righ
 MOUNT_BATCH = 10
 MAX_UNDO = 50
 _MODE_STYLES = {"insert": "bold green", "normal": "bold yellow", "cell": "bold cyan"}
-_STATUS_STYLES = {"insert": "bold black on green", "normal": "bold black on yellow", "cell": "bold black on cyan"}
 
 # Non-printable keys that cell mode handles; others (f-keys, ctrl+...) reach app bindings.
 _CELL_KEYS = {"escape", "enter", "up", "down", "shift+j", "shift+k", "shift+o", "question_mark"}
@@ -502,10 +501,11 @@ class GPython(App):
         if self._mode is not None:
             self._mode.display = show_mode
             self._mode.update(Text(mode.upper(), style=_MODE_STYLES[mode]))
+        # The vim mode lives in the header chip and the file name in the subtitle,
+        # so the bottom bar only carries run mode, kernel state and key hints.
         self._status.update(
             Text.assemble(
-                (f" {mode.upper()} ", _STATUS_STYLES[mode]) if show_mode else "",
-                f"  {name}  ·  {'lazy' if self.lazy else 'reactive'}  ·  {self.kernel_state}",
+                f" {'lazy' if self.lazy else 'reactive'}  ·  {self.kernel_state}",
                 (f"    {KEY_HINTS}", "dim"),
             )
         )
