@@ -110,6 +110,35 @@ Traced every message during 30 cell moves (headless, 60 cells). Findings, in ord
 | keys_30_proc / keys_30_net | 0.05–0.06 / 0.10–0.15 s | 0.05 / 0.13 s (unchanged) |
 | first_paint / loaded_60 | 0.07–0.08 / 0.31–0.38 s | 0.07 / 0.31–0.33 s (unchanged) |
 
+Second half of round 4 (same day), from `--profile mount` (CSS apply was 0.22 s of a 0.88 s
+profiled mount, half of it `_process_component_classes`) and the import profile:
+
+- `Cell` mounts its `OutputArea` on the first output (`output_box`): most cells never have
+  one, every widget costs ~1 ms of CSS and layout at start-up, and marimo files save none.
+- `VimTextArea._get_component_classes()` returns nothing: TextArea's eight component classes
+  (`text-area--cursor`, `--gutter`, ...) were only fallbacks for theme fields that every
+  gpython theme sets, yet Textual ran a full stylesheet match for each of them per editor
+  at mount and on every theme change. `get_component_rich_style` returns an empty style for
+  the lookups TextArea still makes. (`inherit_component_classes=False` from the docstring does
+  not exist in Textual 8.2.)
+- Rejected after measuring: importing `jupyter_client` in a thread (`kernel_ready` 0.60-0.65 →
+  0.68-0.78 s, `loaded_60` unchanged); `MOUNT_BATCH` 20 or 30 (no change).
+- Measured, not done: dropping the per-cell header `Static` (60 widgets) gives `loaded_60`
+  0.27 → 0.245 s and `keys_30_net` 0.085 → 0.075 s, `moves_30_net` unchanged. It needs the
+  header drawn without a widget (e.g. the cell's top border title) and changes the look, so
+  it is the user's call.
+- Import time (145 ms with `-X importtime`, ~80 ms real) is spread over 346 modules: Textual
+  ~100 ms, textual_image + PIL ~25 ms (must stay eager for the terminal query). No single
+  lever left there.
+
+| metric (2 ms tick) | start of round 4 | end |
+|---|---|---|
+| loaded_60 | 0.31–0.38 s | 0.27–0.29 s |
+| keys_30_net | 0.10–0.15 s | 0.08–0.09 s |
+| moves_30_proc / moves_30_net | 0.41–0.50 / – | 0.34–0.37 / 0.21–0.24 s (machine drift ±0.03) |
+| first_paint | 0.07–0.08 s | 0.07 s |
+| pty first_frame / j → paint | 0.28–0.29 s / 3–15 ms | same (the spread is the machine) |
+
 ## 2. Acceptance in a real terminal
 
 - `./gpython ~/leetcode/notebooks/0001-two-sum.py`: run all (f5), problem statement renders as

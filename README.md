@@ -79,7 +79,10 @@ Vim normal mode (in the editor):
 
 Also `h j k l w b e 0 ^ $`, counts, `i a I A o O`, `x X s S dw d$ dj D cc cw C yy p P u ctrl+r`.
 
-Cell mode:
+Cell mode. Whether you are in cell mode or in the editor is one choice for the whole
+notebook: moving across a rendered markdown or hidden-code cell (which is always
+selected as a cell), deleting, undoing, searching or switching tabs keeps it; `escape`,
+`enter`/`i` and clicks change it.
 
 | Key | Action |
 |---|---|
