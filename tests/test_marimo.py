@@ -110,6 +110,20 @@ def test_markdown_cell():
     assert '@app.cell(hide_code=True)\ndef _(mo):\n    mo.md(r"""\n    hello\n    """)\n    return' in out
 
 
+def test_markdown_cell_wrapping_display_code_stays_markdown_byte_for_byte(tmp_path):
+    problem = "mo.vstack([\n    mo.md('## [15. 3Sum](https://leetcode.com/problems/3sum/)\\n\\n*Two Pointers*'),\n    mo.Html('<p>Given</p>\\n'),\n])"
+    wrapped = "".join("    " + line + "\n" for line in problem.split("\n"))
+    old = "    mo.vstack([\n        mo.md('## [1. Two Sum  (Easy)](https://leetcode.com/problems/two-sum/)'),\n        mo.Html('<p>You are given an array ...</p>'),\n    ])\n"
+    assert old in EXAMPLE
+    text = EXAMPLE.replace(old, '    mo.md(r"""\n' + wrapped + '    """)\n')
+    path = tmp_path / "nb.py"
+    path.write_text(text)
+    cells, markers = load_cells(path)
+    assert cells[1] == CellSpec(problem, "markdown", hide_code=True)
+    save(path, cells, markers)
+    assert path.read_text() == text
+
+
 def test_non_canonical_md_stays_code():
     text = EXAMPLE.replace("    mo.vstack([\n", "    mo.md('# hi')\n    mo.vstack([\n")
     cells = parse_marimo(text)

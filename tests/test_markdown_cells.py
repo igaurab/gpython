@@ -316,3 +316,91 @@ def test_markdown_follows_the_theme(tmp_path):
         assert heading_color(view) == Color.parse(app.palette.type) != nord
 
     ui(tmp_path, test)
+
+
+PROBLEM = "mo.vstack([\n    mo.md('## [15. 3Sum  (Medium)](https://leetcode.com/problems/3sum/)\\n\\n*Two Pointers*'),\n    mo.Html('<p>Given <code>nums</code>.</p>\\n\\n<pre>\\n<strong>Input:</strong> nums = [0,0,0]\\n</pre>\\n<ul>\\n\\t<li><code>-10<sup>5</sup> &lt;= nums[i]</code></li>\\n</ul>\\n'),\n])"
+PROBLEM_SHOWN = "## [15. 3Sum  (Medium)](https://leetcode.com/problems/3sum/)\n\n*Two Pointers*\n\nGiven `nums`.\n\n```\nInput: nums = [0,0,0]\n```\n\n- `-10⁵ <= nums[i]`"
+WRAPPED = '''import marimo
+
+__generated_with = "0.25.2"
+app = marimo.App(width="medium")
+
+
+@app.cell(hide_code=True)
+def _():
+    import marimo as mo
+
+    return (mo,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+''' + "".join("    " + line + "\n" for line in PROBLEM.split("\n")) + '''    """)
+    return
+
+
+@app.cell
+def _():
+    x = 1
+    return
+
+
+if __name__ == "__main__":
+    app.run()
+'''
+
+
+def ui_text(tmp_path, test, text):
+    path = tmp_path / "nb.py"
+    path.write_text(text)
+
+    async def main():
+        app = GPython(path)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await app.loaded.wait()
+            await pilot.pause()
+            await test(app, pilot)
+
+    asyncio.run(main())
+    return path
+
+
+def test_markdown_cell_holding_marimo_display_code_renders_it(tmp_path):
+    async def test(app, pilot):
+        md = app.cells()[1]
+        assert md.kind == "markdown" and md.rendered and md.source == PROBLEM
+        view = md.query_one(MarkdownView)
+        assert view.text == PROBLEM and view.shown == PROBLEM_SHOWN
+        md.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.focused is md.editor and md.editor.text == PROBLEM
+        await pilot.press("escape", "escape")
+        await pilot.pause()
+        assert md.rendered and view_text(md) == PROBLEM_SHOWN
+        await pilot.press("ctrl+s")
+        await pilot.pause()
+
+    path = ui_text(tmp_path, test, WRAPPED)
+    assert path.read_text() == WRAPPED
+
+
+def test_m_on_hidden_marimo_display_cell_keeps_it_rendered(tmp_path):
+    hidden = WRAPPED.replace('    mo.md(r"""\n', "").replace('    """)\n    return\n\n\n@app.cell\n', "    return\n\n\n@app.cell\n")
+    assert hidden != WRAPPED
+
+    async def test(app, pilot):
+        problem = app.cells()[1]
+        assert problem.kind == "code" and problem.code_hidden
+        problem.focus()
+        await pilot.press("m")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert problem.kind == "markdown" and problem.rendered
+        assert view_text(problem) == PROBLEM_SHOWN
+        await pilot.press("ctrl+s")
+        await pilot.pause()
+
+    path = ui_text(tmp_path, test, hidden)
+    assert path.read_text() == WRAPPED

@@ -148,7 +148,7 @@ class Cell(Vertical):
         yield self._editor
         if markdown:
             self._editor.display = False
-            self._view = MarkdownView(self.initial_source)
+            self._view = MarkdownView(self.initial_source, marimo=True)
             yield self._view
         yield self._outputs
 
@@ -316,7 +316,7 @@ class Cell(Vertical):
             return
         self.editing = False
         if self._view is None:
-            self._view = MarkdownView(self.source)
+            self._view = MarkdownView(self.source, marimo=True)
             self._view.display = False
             await self.mount(self._view, after=self._editor)
         elif self._view.text != self.source:

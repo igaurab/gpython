@@ -27,20 +27,48 @@ PLACEHOLDER = "*empty markdown cell – press enter to edit*"
 
 
 def html_to_markdown(text):
-    """Rough markdown for marimo's `mo.Html`. Self-contained: kernel.py sends its source to the kernel."""
+    """Rough markdown for marimo's `mo.Html`. Self-contained: kernel.py sends its source to the kernel.
+
+    `<pre>` becomes a fenced block (kept verbatim), `<code>`/`<strong>`/`<em>`/`<a>`/`<h1>`..`<h6>`
+    their markdown forms, list items `- ` (`1. ` inside `<ol>`), numeric `<sup>` superscript
+    digits; other tags are dropped and lines are unindented so indented HTML is not read as code.
+    """
     import html, re
 
-    t = re.sub(r"<pre[^>]*>(.*?)</pre>", lambda m: "\n```\n" + re.sub(r"<[^>]+>", "", m.group(1)).strip("\n") + "\n```\n", text, flags=re.S | re.I)
-    t = re.sub(r"<code[^>]*>(.*?)</code>", r"`\1`", t, flags=re.S | re.I)
-    t = re.sub(r"<(strong|b)(\s[^>]*)?>(.*?)</\1>", r"**\3**", t, flags=re.S | re.I)
-    t = re.sub(r"<(em|i)(\s[^>]*)?>(.*?)</\1>", r"*\3*", t, flags=re.S | re.I)
-    t = re.sub(r"<sup>(.*?)</sup>", r"^\1", t, flags=re.S | re.I)
+    flags = re.S | re.I
+    blocks = []
+
+    def keep(block):
+        blocks.append(block)
+        return "\n\n\x00%d\x00\n\n" % (len(blocks) - 1)
+
+    def pre(m):
+        body = html.unescape(re.sub(r"<[^>]+>", "", m.group(1))).replace("\xa0", " ").strip("\n")
+        return keep("```\n" + body + "\n```")
+
+    def sup(m):
+        inner = m.group(1).strip()
+        digits = str.maketrans("0123456789+-", "\u2070\u00b9\u00b2\u00b3\u2074\u2075\u2076\u2077\u2078\u2079\u207a\u207b")
+        return inner.translate(digits) if re.fullmatch(r"[0-9+-]+", inner) else "^" + inner
+
+    def wrap(mark):
+        return lambda m: mark + m.group(3).strip() + mark if m.group(3).strip() else ""
+
+    t = re.sub(r"<pre[^>]*>(.*?)</pre>", pre, text, flags=flags)
+    t = re.sub(r"<code[^>]*>(.*?)</code>", lambda m: "`" + m.group(1) + "`", t, flags=flags)
+    t = re.sub(r"<(strong|b)(\s[^>]*)?>(.*?)</\1>", wrap("**"), t, flags=flags)
+    t = re.sub(r"<(em|i)(\s[^>]*)?>(.*?)</\1>", wrap("*"), t, flags=flags)
+    t = re.sub(r"<sup>(.*?)</sup>", sup, t, flags=flags)
+    t = re.sub(r"<a\s[^>]*href=[\"']([^\"']*)[\"'][^>]*>(.*?)</a>", r"[\2](\1)", t, flags=flags)
+    t = re.sub(r"<h([1-6])[^>]*>(.*?)</h\1>", lambda m: "\n\n" + "#" * int(m.group(1)) + " " + m.group(2).strip() + "\n\n", t, flags=flags)
+    t = re.sub(r"<ol[^>]*>(.*?)</ol>", lambda m: "\n\n" + re.sub(r"\s*<li[^>]*>", "\n1. ", m.group(1), flags=re.I) + "\n\n", t, flags=flags)
     t = re.sub(r"\s*<li[^>]*>", "\n- ", t, flags=re.I)
-    t = re.sub(r"<br\s*/?>|</?p[^>]*>", "\n\n", t, flags=re.I)
+    t = re.sub(r"<br\s*/?>|</?(p|div|ul|ol)(\s[^>]*)?>", "\n\n", t, flags=re.I)
     t = re.sub(r"<[^>]+>", "", t)
     t = html.unescape(t).replace("\xa0", " ")
-    t = re.sub(r"[ \t]+\n", "\n", t)
-    return re.sub(r"\n{3,}", "\n\n", t).strip()
+    t = "\n".join(line.strip() for line in t.split("\n"))
+    t = re.sub(r"\n{3,}", "\n\n", t).strip()
+    return re.sub("\x00(\\d+)\x00", lambda m: blocks[int(m.group(1))], t)
 
 
 def marimo_markdown(source: str) -> str | None:
@@ -51,6 +79,7 @@ def marimo_markdown(source: str) -> str | None:
     statement are written). Anything else is None: it needs the kernel.
     """
     import ast
+    import inspect
 
     try:
         body = ast.parse(source).body
@@ -70,7 +99,7 @@ def marimo_markdown(source: str) -> str | None:
             raise ValueError
         name, arg = node.func.attr, node.args[0]
         if name in ("md", "Html") and not node.keywords and isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-            return arg.value if name == "md" else html_to_markdown(arg.value)
+            return inspect.cleandoc(arg.value) if name == "md" else html_to_markdown(arg.value)
         if name in ("vstack", "hstack") and isinstance(arg, (ast.List, ast.Tuple)):
             return ("\n\n" if name == "vstack" else "  ").join(md(item) for item in arg.elts)
         raise ValueError
@@ -181,10 +210,12 @@ class MarkdownView(Widget):
         def control(self) -> MarkdownView:
             return self.view
 
-    def __init__(self, text: str = "", *, placeholder: str | None = PLACEHOLDER, **kwargs) -> None:
+    def __init__(self, text: str = "", *, placeholder: str | None = PLACEHOLDER, marimo: bool = False, **kwargs) -> None:
         super().__init__(**kwargs)
         self._text = text
         self.placeholder = placeholder
+        self.marimo = marimo
+        self._display: str | None = None
         self._parsed: tuple[tuple[str, bool], _LinesByWidth] | None = None
         self.set_class(not text.strip(), "-empty")
 
@@ -194,10 +225,18 @@ class MarkdownView(Widget):
 
     @property
     def shown(self) -> str:
-        """The markdown on screen: the text, or the placeholder when it is blank."""
+        """The markdown on screen: the text, or the placeholder when it is blank.
+
+        With `marimo=True`, text that is a marimo display expression (`mo.vstack([mo.md(...),
+        mo.Html(...)])`) shows what marimo would draw for it; `text` stays the source.
+        """
         if not self._text.strip() and self.placeholder:
             return self.placeholder
-        return self._text
+        if self._display is None:
+            self._display = self._text
+            if self.marimo and "mo." in self._text:
+                self._display = marimo_markdown(self._text) or self._text
+        return self._display
 
     def render(self) -> RenderableType:
         dark = getattr(getattr(self.app, "palette", None), "dark", True)
@@ -210,6 +249,7 @@ class MarkdownView(Widget):
     async def update(self, text: str) -> None:
         """Replace the text and re-render it."""
         self._text = text
+        self._display = None
         self.set_class(not text.strip(), "-empty")
         self._parsed = None
         self.refresh(layout=True)
