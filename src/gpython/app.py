@@ -429,8 +429,6 @@ class GPython(App):
         if (existing := self.find_open(path)) is not None:
             if existing in self.workspace.panes():
                 self.workspace.set_active(existing)
-                if existing is not current:
-                    self.notify(f"{path.name} is already open")
             elif how == "here" and current is not None:
                 await self.workspace.show(existing, current)
             else:
