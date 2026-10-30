@@ -148,6 +148,13 @@ class VimTextArea(TextArea):
             super().__init__()
             self.editor = editor
 
+    class RunByNumber(Message):
+        """space r: the app waits for a cell number and runs that cell."""
+
+        def __init__(self, editor: VimTextArea) -> None:
+            super().__init__()
+            self.editor = editor
+
     class TabSwitch(Message):
         """gt / gT: go to tab `tab` (1-based) when given, else `step` tabs forward."""
 
@@ -412,6 +419,8 @@ class VimTextArea(TextArea):
         if pending in (" ", " f"):
             if pending == " " and key == "f":
                 self.pending = " f"
+            elif pending == " " and key == "r":
+                self.post_message(self.RunByNumber(self))
             elif pending == " f" and key == "f":
                 self.post_message(self.FindFiles(self))
             return True

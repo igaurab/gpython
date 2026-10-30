@@ -208,6 +208,7 @@ class GPython(App):
         self._status_key: tuple | None = None
         self._cell_clipboard: CellSnapshot | None = None
         self._prompt_mode = "normal"
+        self._run_number = None
 
     def get_default_screen(self) -> Screen:
         return NotebookScreen(id="_default")
@@ -377,6 +378,10 @@ class GPython(App):
         pane = self.pane
         if kernel_state is not None:
             pane.set_kernel_state(kernel_state)
+            return
+        if self._run_number is not None:
+            self._status_key = None
+            self._status.update(self._run_number.status(), layout=False)
             return
         mode = self.ui_mode
         name = pane.title
@@ -715,6 +720,42 @@ class GPython(App):
                 self.notify(f"ctrl+w {key}: not a window command (s v h j k l w p q o T = + - < >)", severity="warning")
 
 
+    def start_run_by_number(self, pane: NotebookPane | None = None) -> None:
+        """r (cell mode) / space r (vim normal mode): wait for a cell number, then run that cell."""
+        from .runnumber import RunByNumber
+
+        if self._run_number is not None:
+            self._run_number.cancel()
+        self._run_number = RunByNumber(self, pane or self.pane)
+        self.update_status()
+
+    def end_run_by_number(self, sequence) -> None:
+        if self._run_number is sequence:
+            self._run_number = None
+            self.update_status()
+
+    async def on_event(self, event: events.Event) -> None:
+        """While a run-by-number waits, its keys go to it instead of the focused widget."""
+        if (
+            self._run_number is not None
+            and isinstance(event, events.Key)
+            and not event.is_forwarded
+            and isinstance(self.screen, NotebookScreen)
+        ):
+            key = "escape" if _is_escape(event) else event.character if event.is_printable and event.character else event.key
+            self._run_number.key(key)
+            return
+        await super().on_event(event)
+
+    def _ex_run(self, arg: str = "") -> None:
+        arg = arg.strip()
+        if not arg:
+            self.action_run_all()
+        elif arg.removeprefix("c").isdigit():
+            self.run_worker(self.pane.run_number(int(arg.removeprefix("c"))), group="run-number")
+        else:
+            self.notify(f"Not a cell number: {arg}  (:run 6 runs c6, :run alone runs all)", severity="error")
+
     async def action_run_cell(self, advance: str = "stay") -> None:
         await self.pane.run_cell(advance)
 
@@ -828,6 +869,10 @@ class GPython(App):
     def _find_files(self) -> None:
         self.action_find_files()
 
+    @on(VimTextArea.RunByNumber)
+    def _run_by_number(self) -> None:
+        self.start_run_by_number()
+
     @on(VimTextArea.TabSwitch)
     def _tab_switch(self, event: VimTextArea.TabSwitch) -> None:
         self.tab_switch(event.tab, event.step)
@@ -878,7 +923,7 @@ class GPython(App):
             (("bd", "bdelete"), "Delete buffer N or name (default: this one); stops its kernel", lambda arg="": self.delete_buffer(arg)),
             (("bd!", "bdelete!"), "Delete buffer without asking about unsaved changes", lambda arg="": self.delete_buffer(arg, force=True)),
             (("Ex", "Explore", "explorer", "tree", "Lex", "Vex"), "Toggle the file explorer (ctrl+b)", lambda arg="": self._ex_explore(arg)),
-            (("run", "runall"), "Run all cells", lambda arg="": self.action_run_all()),
+            (("run", "runall"), "Run all cells; :run 6 runs cell c6 (stale cells it uses first)", self._ex_run),
             (("runabove",), "Run the cells above the current one", lambda arg="": self.pane.run_relative(False)),
             (("runbelow",), "Run the current cell and the cells below", lambda arg="": self.pane.run_relative(True)),
             (("stale", "runstale"), "Run stale cells", lambda arg="": self.action_run_stale()),

@@ -485,12 +485,9 @@ class NotebookPane(Vertical):
         if cell is None:
             return
         mode = self.app.ui_mode
-        if cell.kind == "markdown":
-            if self.app.focused is not cell:
-                cell.focus(scroll_visible=False)
-            await cell.show_rendered()
-        else:
-            self.run_worker(self.run_cells([cell.cid]), group="run")
+        if cell.kind == "markdown" and self.app.focused is not cell:
+            cell.focus(scroll_visible=False)
+        await self._run_one(cell)
         if advance == "next":
             cells = self.cells()
             if cells[-1] is cell and self._pending_sources:
@@ -504,6 +501,30 @@ class NotebookPane(Vertical):
         if advance == "insert":
             new = await self._insert(cell)
             self.select(new, "insert")
+
+    async def _run_one(self, cell: Cell) -> None:
+        """Run one code cell (stale ancestors first, then dependents), or render a markdown one."""
+        if cell.kind == "markdown":
+            await cell.show_rendered()
+        else:
+            self.run_worker(self.run_cells([cell.cid]), group="run")
+
+    def cell_count(self) -> int:
+        """Cells in the notebook, counting the ones not mounted yet."""
+        return len(self.cells()) + len(self._pending_sources)
+
+    async def run_number(self, n: int) -> bool:
+        """Run cell c`n` (display position) without moving the focus or the selection."""
+        total = self.cell_count()
+        if not 1 <= n <= total:
+            self.notify(f"No cell c{n} (there are {total})", severity="warning")
+            return False
+        await self.loaded.wait()
+        cell = self.cells()[n - 1]
+        if cell.kind == "markdown" and self.app.focused is cell.editor:
+            cell.focus(scroll_visible=False)
+        await self._run_one(cell)
+        return True
 
     def run_all(self) -> None:
         self.run_worker(self.run_cells([c.cid for c in self.cells()], downstream=True), group="run")
@@ -769,6 +790,9 @@ class NotebookPane(Vertical):
     async def cell_command(self, cell: Cell, key: str) -> bool:
         """One key in cell mode (the cell itself has focus). Returns False if unknown."""
         app = self.app
+        if app._run_number is not None:
+            app._run_number.key(key)
+            return True
         if key.isdigit() and (key != "0" or self._cmd_count):
             self._cmd_count += key
             return True
@@ -790,6 +814,8 @@ class NotebookPane(Vertical):
         if pending in (" ", " f"):
             if pending == " " and key == "f":
                 self._cmd_pending = " f"
+            elif pending == " " and key == "r":
+                app.start_run_by_number(self)
             elif pending == " f" and key == "f":
                 app.action_find_files()
             return True
@@ -834,6 +860,8 @@ class NotebookPane(Vertical):
                 self.move_cell(1)
             case "K" | "shift+k":
                 self.move_cell(-1)
+            case "r":
+                app.start_run_by_number(self)
             case "m":
                 await self.set_cell_kind(cell, "markdown")
             case "h":
