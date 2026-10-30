@@ -1,7 +1,10 @@
 # Plan 03 – Jupyter/marimo keybindings and cell UX
 
 Read `docs/plans/README.md` first. Plans 01 and 02 are done (outputs.py, themes.py, config.py,
-`-focused` cell class, `app.loaded`, possibly `statusbar.py`).
+`-focused` cell class, `app.loaded`). Important existing facts: the vim mode is **global**
+(`VimTextArea.mode` class attribute, re-applied on focus); the bottom `Static#status` line is updated by
+`GPython.update_status()`; ex commands live in the `GPython.ex_commands()` table that also feeds the
+command palette – add rows there, never a separate `match`.
 
 ## Goal
 
@@ -19,10 +22,10 @@ Run keys (work in every mode; `priority=True` on the App):
 
 | Key | Action | Notes |
 |---|---|---|
-| `shift+enter` | run cell **and select next** (create an empty cell below if it was the last) | Jupyter semantics |
-| `ctrl+enter`, `ctrl+shift+enter`, `ctrl+e` | run cell, stay | `ctrl+e` is the fallback for terminals without the kitty protocol |
-| `alt+enter` | run cell and **insert** a new cell below (INSERT mode) | |
-| `ctrl+shift+r` → palette "Run all" stays; `f5` | run all | |
+| `shift+enter` | run cell and **insert** a new cell below (INSERT mode) – existing `action_run_and_add`; the user chose this mapping, keep it | if the next cell exists and is **empty**, reuse it instead of inserting another |
+| `ctrl+enter`, `ctrl+shift+enter`, `ctrl+e` | run cell, stay | existing + the user's explicit ask for `ctrl+shift+enter`; `ctrl+e` is the fallback for terminals without the kitty protocol |
+| `alt+enter` | run cell and **select next** (create an empty cell below if it was the last) | Jupyter's shift+enter semantics |
+| `f5` | run all | also palette / `:run` |
 | `f4` | run stale | existing |
 | `ctrl+k` | interrupt | existing |
 
@@ -61,15 +64,15 @@ Escape chain: INSERT —esc→ NORMAL —esc→ CELL —esc→ (stay in CELL, cl
 When `--no-vim` (`VimTextArea.enabled is False`), `escape` in the editor goes straight to CELL mode.
 
 Visuals:
-- `Cell.-selected` (CELL mode) border `thick $accent` and header mode chip `CELL` (reverse style);
+- `Cell.-selected` (CELL mode) border `thick $accent` plus a `reverse` header background;
   `-focused` (editor focused) keeps the current look. Only one cell is ever `-selected`.
-- Header line: `● c3 [4] 0.42s  NORMAL  defines x · uses y` → `[n]` is the **execution counter**
+- Header line: `● c3 [4] 0.42s  defines x · uses y` → `[n]` is the **execution counter**
   (`GPython.exec_counter` incremented per cell run, like Jupyter `In [n]`), and the duration appears when
   a run took ≥ 0.1 s (`time.perf_counter()` around `kernel.execute`). While running show `●  running…`
   with elapsed seconds updated once per second via `set_interval(1, …)` (stop it when done).
-- Status bar (create `statusbar.py` if plan 01 kept `Footer`; otherwise extend it): left `MODE`,
-  middle file name + `•` when dirty, right `kernel: ready|busy|starting|dead`, `reactive|lazy`, theme
-  name. Keep `Footer` only if plan 01 kept it; never both a Footer and a status bar showing the same keys.
+- Status line (`#status`, extend `update_status`): left mode chip `INSERT`/`NORMAL`/`CELL` (CELL when
+  the focused widget is a `Cell` itself; expose `GPython.ui_mode` property returning it), file name +
+  `•` when dirty, `reactive|lazy`, kernel state, theme name. Cell headers do **not** show the mode.
 
 ## Dirty tracking and quitting
 
@@ -89,7 +92,7 @@ Visuals:
 - Cell clipboard `GPython._cell_clipboard: CellSnapshot | None` for `yy`/`x`/`p`/`P`.
 - Cut (`x`) behaves as delete (dependents re-run) plus copy.
 
-## Ex commands (extend `_run_ex`)
+## Ex commands (add rows to `ex_commands()`)
 
 `:w [file]`, `:q`, `:q!`, `:wq`/`:x`, `:run` (all), `:runabove`, `:runbelow` (relative to current cell,
 dependency order within the subset via `graph.sort`), `:restart`, `:clear` (all outputs), `:theme [name]`,
@@ -112,11 +115,13 @@ generated from/consistent with `KEYMAP` (at minimum, a test asserts every App `B
 
 ## Implementation notes
 
-- `Cell.can_focus = True`; in `Cell.on_focus` → `add_class("-selected")`, `post_message(ModeChanged("cell"))`
-  to the status bar; `on_blur` → remove it. `GPython.current_cell()` must return the cell when the
+- `Cell.can_focus = True`; in `Cell.on_focus` → `add_class("-selected")` and `self.app.update_status()`;
+  `on_blur` → remove the class and `update_status()` again. `GPython.current_cell()` must return the cell when the
   Cell itself is focused (it already walks up from `self.focused`).
 - `action_run_cell(advance: str = "stay")` with `advance in {"stay", "next", "insert"}`; bind the three
-  run variants to it with arguments: `Binding("shift+enter", "run_cell('next')", ...)`.
+  run variants to it with arguments: `Binding("alt+enter", "run_cell('next')", ...)`,
+  `Binding("shift+enter", "run_cell('insert')", ...)` (replaces `action_run_and_add`; keep that name as a
+  thin alias so nothing else breaks).
   After `run_cells` is **scheduled** (not awaited), move selection: for `next`, select the next cell in
   CELL mode if the current mode was CELL, else focus its editor in NORMAL mode; create an empty cell if
   none exists. For `insert`, mount a new cell below and focus it in INSERT mode.

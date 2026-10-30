@@ -94,21 +94,21 @@ animation timers.
   `self.set_classes(...)`-style update or `remove_class(*others)` + `add_class(new)` and early-return when
   the status is unchanged. `_render_header` only when the header text actually changes (cache last Text
   string).
-- Check `Footer` cost: run the moves benchmark with `Footer` temporarily removed. If Footer accounts for
-  > 30 % of the move time, replace it with a lightweight `StatusBar(Static)` docked at the bottom that
-  shows: mode (`NORMAL`/`INSERT`), kernel state (`starting…`/`ready`/`running`/`dead`),
-  `reactive`/`lazy`, and the 6 most important keys as plain text
-  (`shift+enter run · ctrl+n new · ctrl+d delete · ctrl+s save · ctrl+k interrupt · ctrl+p palette`).
-  Put it in `src/gpython/statusbar.py`; `App.update_subtitle` keeps working. If Footer is cheap, keep it.
+- Check `Footer` cost: run the moves benchmark with `Footer` temporarily removed. The app already has a
+  bottom `Static#status` line (`update_status`). If Footer accounts for > 30 % of the move time, remove
+  `Footer` and append the 6 most important keys to the status line as dim text
+  (`ctrl+enter run · shift+enter run+new · ctrl+n new · ctrl+d delete · ctrl+s save · ctrl+p palette`).
+  If Footer is cheap, keep it. Either way `update_status()` keeps its signature.
 
 ## Step 3 – fast startup (fixes `mount_N`, first frame)
 
 Profile `mount_60` with cProfile (`run_test` construction until the body). Expected culprits:
 
-1. `VimTextArea.on_mount` builds and registers a `TextAreaTheme` per instance → build the normal-mode
-   variant **once** at module level (a dict keyed by base theme name) and register it per instance
-   (cheap) or only on the focused editor. Plan 02 will replace this with `themes.py`; keep the hook
-   shape `VimTextArea.set_editor_theme(insert_name: str, normal_name: str)`.
+1. `VimTextArea.on_mount` builds (`dataclasses.replace`) and registers a `TextAreaTheme` per instance →
+   build the normal-mode variant **once** at module level and only `register_theme` it per instance.
+   Introduce `VimTextArea.set_editor_theme(insert: TextAreaTheme, normal: TextAreaTheme)` that
+   registers both and remembers their names; `_apply_mode()` uses the remembered names instead of the
+   `"monokai"`/`"monokai-normal"` literals (default pair = monokai). Plan 02 builds on this hook.
 2. Tree-sitter language/highlight query loading per `TextArea`. Check whether Textual caches the
    `Language`/`Query` (look at `textual/widgets/_text_area.py` and `textual/document/_syntax_aware_document.py`).
    If it does not, add a module-level cache (e.g. memoize `textual.widgets.text_area` helper that builds
@@ -132,6 +132,8 @@ Profile `mount_60` with cProfile (`run_test` construction until the body). Expec
 
 Profile the 30-key press with cProfile sorted by `tottime` and by `cumtime`. Known contributors:
 
+- The vim `mode` is a class attribute and `_apply_mode()` runs on every focus; it sets `self.theme`
+  (cheap if unchanged? verify – if setting `theme` to the same name re-renders, guard it).
 - Each edit in a `height: auto` TextArea triggers a full-screen layout (`_refresh_layout` →
   `_arrange_root` over ~200 widgets). Mitigations, in order, keeping whichever measurably helps:
   a. `Cell` and `.cell-output` and `#cells` should have no `margin`/`padding` that forces re-measure of

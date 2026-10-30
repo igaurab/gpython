@@ -91,7 +91,7 @@ Rules:
   2 000 stream chunks into one cell 5.33 s · run trivial cell end-to-end 42 ms · `refresh_info` 6.6 ms ·
   kernel start 0.53 s · `import textual` 95 ms.
 
-## Current architecture (after peer commit e067085)
+## Current architecture (after peer commit 8c80d5e)
 
 - `graph.py` – `analyze()`, `mutations()`, `build(cells) -> Graph` with `defs/refs/mutates/owner/
   parents/children/errors`, `run_order()`, `sort()`, `expand_roots()`, `descendants()`, `ancestors()`.
@@ -100,10 +100,19 @@ Rules:
   clear_output`; `delete(names)`, `variables(names)`, `complete(code, pos)`, `set_file(path)`.
 - `notebook.py` – `load(path) -> (list[str], uses_markers)`, `save(path, sources, markers)`,
   `split_script()`, `parse()`, `dump()`. Peer will add `CellSpec(source, kind)` (plan 05).
-- `vim.py` – `VimTextArea(TextArea)`: normal/insert modes, counts, motions, operators, registers,
-  `:` → `ExCommand`, j/k at edge → `EdgeReached`, Tab completion via kernel → `CompletionPopup`.
-  Theme hardcoded to `monokai` + a `monokai-normal` variant with a yellow block cursor.
-- `app.py` – `Cell(Vertical)` = header `Static` + `VimTextArea` + output `Vertical` of `Static`/`Image`;
-  `GPython(App)` with bindings, `run_cells()`, lazy mode, `Prompt` modal for `:` and save-as,
-  ex commands `w q wq x run restart`, system commands in the palette.
-- `app.tcss` – layout + status border colors (`-ok -error -stale -running -queued -skipped` classes).
+- `vim.py` – `VimTextArea(TextArea)`: **global** vim mode (`VimTextArea.mode` is a class attribute;
+  each editor re-applies it on focus via `_apply_mode()`), `VimTextArea.enabled` class flag, counts,
+  motions, operators, registers, `:` → `ExCommand`, j/k at edge → `EdgeReached`, `escape`/`ctrl+[`
+  (`_is_escape`), Tab + as-you-type completion via kernel → `CompletionPopup` (0.12 s timer), Python
+  auto-indent (`indent_after`, `_newline`, `_dedent_on_backspace`). Theme hardcoded to `monokai` + a
+  `monokai-normal` variant (yellow block cursor) registered per instance in `on_mount`.
+- `app.py` – `Cell(Vertical)` = header `Static` + `VimTextArea` + output `Vertical` of `Static`/`Image`
+  (`Cell.source` falls back to `initial_source` before compose); `GPython(App)`: bindings
+  (`ctrl+enter`/`ctrl+e` run in place, `shift+enter` run + new cell below = `action_run_and_add`,
+  `ctrl+n`, `ctrl+d`, `alt/ctrl+up/down`, `ctrl+s`, `ctrl+k`, `f2`, `f3`, `f4`), `run_cells()`, lazy mode,
+  `Prompt` modal for `:` and save-as, a bottom `Static#status` line updated by
+  `update_status(kernel_state=None)` showing mode/file/reactive|lazy/kernel state (plus `Footer`),
+  **ex commands as a table** `ex_commands() -> [(names, desc, handler(arg))]` shared by `_run_ex` and the
+  command palette (`get_system_commands`). To add a command, add one row there.
+- `app.tcss` – layout + status border colors (`-ok -error -stale -running -queued -skipped` classes),
+  `#status` docked bottom.

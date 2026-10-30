@@ -165,6 +165,11 @@ class Cell(Vertical):
         header = Text.assemble((f"{icon} ", style), (self.cid, "bold"), ("  " + self.info, "dim"))
         self.query_one(".cell-header", Static).update(header)
 
+    def on_click(self, event) -> None:
+        """Clicking anywhere in the cell (header, margin, output) focuses its editor."""
+        if not isinstance(event.widget, VimTextArea):
+            self.editor.focus()
+
     @on(VimTextArea.Changed)
     def _mark_stale(self) -> None:
         if self.ran_source is not None and self.status != "running":
@@ -434,6 +439,11 @@ class GPython(App):
                 cell.set_status("stale")
         self.query_one("#vars", DataTable).clear()
         self.update_status("kernel ready")
+
+    def on_click(self, event) -> None:
+        """Clicking the empty space below the last cell focuses the nearest cell."""
+        if event.widget is self.query_one("#cells") and (cells := self.cells()):
+            cells[-1].editor.focus()
 
     # ── vim glue ─────────────────────────────────────────────────────────
 

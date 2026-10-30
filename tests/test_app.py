@@ -193,3 +193,18 @@ def test_ex_commands(tmp_path, monkeypatch):
             assert (tmp_path / "out.py").read_text() == "# %%\na = 1\n\n# %%\n\n"
 
     asyncio.run(main())
+
+
+def test_click_anywhere_in_cell_focuses_it():
+    async def main():
+        app = GPython(None)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.press("ctrl+n")
+            first, second = app.cells()
+            assert app.focused is second.editor
+            await pilot.click(first.query_one(".cell-header"))
+            assert app.focused is first.editor
+            await pilot.click("#cells", offset=(10, 25))  # empty area below the last cell
+            assert app.focused is second.editor
+
+    asyncio.run(main())

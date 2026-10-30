@@ -167,11 +167,12 @@ cursor_normal #e6db74 (what `vim.py` uses today).
    Also store `self.palette` so `Cell._render_header` colors status icons with
    `palette`/theme colors: ok=`theme.success`, stale=`theme.warning`, error/skipped=`theme.error`,
    running/queued=`theme.primary`, idle=`comment`. Save the choice to config (step 4) unless it equals
-   what was loaded.
-3. `VimTextArea.set_editor_theme(insert: TextAreaTheme, normal: TextAreaTheme)`: `register_theme` both,
-   remember their names, and set `self.theme` according to the current mode. `set_mode` uses the
-   remembered names instead of the `monokai` literals. New editors mounted later (`action_add_cell`,
-   progressive mount) must get the current pair in `on_mount`: read `self.app.editor_theme_pair` if present.
+   what was loaded. Also call `update_status()` so the status line can show the theme name.
+3. `VimTextArea.set_editor_theme(insert: TextAreaTheme, normal: TextAreaTheme)` (added in plan 01;
+   if missing, add it): `register_theme` both, remember their names, and set `self.theme` according to
+   the current (global) mode. `_apply_mode` uses the remembered names instead of the `monokai` literals.
+   New editors mounted later (`action_add_cell`, progressive mount) must get the current pair in
+   `on_mount`: read `self.app.editor_theme_pair` if present.
 4. Persistence – `config.py`:
    ```python
    CONFIG_PATH = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "gpython" / "config.toml"
