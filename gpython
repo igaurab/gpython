@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Launch gpython. Usage: ./gpython [notebook.py]
+# With no argument, opens demo.py next to this script (created on first run).
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [[ $# -eq 0 ]]; then
+  demo="$here/demo.py"
+  if [[ ! -f "$demo" ]]; then
+    cat > "$demo" <<'PY'
+# %%
+import math
+radius = 3
+
+# %%
+area = math.pi * radius ** 2
+print(f"area = {area:.2f}")
+
+# %%
+squares = [i * i for i in range(radius)]
+squares
+
+# %%
+# Change radius above to 5 and press ctrl+r there: this cell re-runs too.
+f"circumference = {2 * math.pi * radius:.2f}"
+PY
+  fi
+  set -- "$demo"
+fi
+
+# --project keeps your current directory, so relative notebook paths work.
+exec uv run --quiet --project "$here" gpython "$@"

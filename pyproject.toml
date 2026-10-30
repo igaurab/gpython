@@ -1,0 +1,28 @@
+[project]
+name = "gpython"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "igaurab", email = "dev@igaurab.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "ipykernel>=7.4.0",
+    "jupyter-client>=8.10.0",
+    "pillow>=13.0.0",
+    "textual-image>=0.14.2",
+    "textual[syntax]>=8.2.8",
+]
+
+[project.scripts]
+gpython = "gpython:main"
+
+[build-system]
+requires = ["uv_build>=0.9.28,<0.10.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
