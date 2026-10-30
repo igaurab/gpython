@@ -958,10 +958,10 @@ class GPython(App):
         `:N` (a number) jumps to the N-th cell, like `/N`.
         """
         return [
-            (("w", "write"), "Save notebook (:w name.py saves as)", self._ex_write),
+            (("w", "write", "w!", "write!"), "Save notebook (:w name.py saves as)", self._ex_write),
             (("wa", "wall"), "Save every open notebook", lambda arg="": self._save_all()),
-            (("wq", "x"), "Save and close this window", lambda arg="": self._ex_write_quit(arg)),
-            (("wqa", "wqall", "xa", "xall"), "Save every notebook and quit (:wqa name.py names an untitled one)", self._ex_write_quit_all),
+            (("wq", "x", "wq!", "x!", "exit"), "Save and close this window", lambda arg="": self._ex_write_quit(arg)),
+            (("wqa", "wqall", "xa", "xall", "wqa!", "xa!"), "Save every notebook and quit (:wqa name.py names an untitled one)", self._ex_write_quit_all),
             (("q", "quit", "close", "clo"), "Close this window (quits when it is the last; asks if unsaved)", lambda arg="": self.close_window()),
             (("q!", "quit!"), "Close this window without saving", lambda arg="": self.close_window(force=True)),
             (("qa", "qall", "quitall"), "Quit (asks if anything is unsaved)", lambda arg="": self.action_quit()),

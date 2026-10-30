@@ -414,7 +414,7 @@ def test_shift_enter_keeps_the_viewport(tmp_path):
 def test_wq_saves_and_quits(tmp_path):
     async def test(app, pilot):
         app.cells()[0].editor.focus()
-        await pilot.press("i", *"x = 9", "escape", ":", *"wq", "enter")
+        await pilot.press("i", *"x = 9", "escape", ":", *"wq!", "enter")
         await pilot.pause()
         assert app.return_code == 0
         assert (tmp_path / "nb.py").read_text().startswith("# %%\nx = 9a = 1\n")
