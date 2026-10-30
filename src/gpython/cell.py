@@ -151,14 +151,12 @@ class Cell(Vertical):
         self._header = Static(classes="cell-header")
         markdown = self.kind == "markdown"
         self._editor = VimTextArea(self.initial_source, language="markdown" if markdown else "python")
-        self._outputs = OutputArea()
         yield self._header
         yield self._editor
         if markdown:
             self._editor.display = False
             self._view = MarkdownView(self.initial_source, marimo=True)
             yield self._view
-        yield self._outputs
 
     def on_mount(self) -> None:
         if self.code_hidden and self._editor is not None:
@@ -190,7 +188,16 @@ class Cell(Vertical):
 
     @property
     def output_box(self) -> OutputArea:
-        return self._outputs or self.query_one(OutputArea)
+        """The output area, mounted on the first output: most cells never need one, and
+        each widget costs about a millisecond of CSS and layout at start-up."""
+        if self._outputs is None:
+            self._outputs = OutputArea()
+            self.mount(self._outputs, after=self._view or self._editor)
+        return self._outputs
+
+    @property
+    def output_clear_pending(self) -> bool:
+        return self._outputs is not None and self._outputs.clear_pending
 
     @property
     def source(self) -> str:
@@ -198,7 +205,7 @@ class Cell(Vertical):
 
     @property
     def output_text(self) -> str:
-        return self.output_box.text
+        return self._outputs.text if self._outputs is not None else ""
 
     def set_label(self, n: int) -> None:
         """Show the 1-based display position (c1, c2, ...) in the header."""
@@ -373,7 +380,8 @@ class Cell(Vertical):
     def clear_output(self) -> None:
         self._log.clear()
         self._log_clear_pending = False
-        self.output_box.clear()
+        if self._outputs is not None:
+            self._outputs.clear()
         self._update_note()
 
     def show_error(self, message: str) -> None:
@@ -388,7 +396,8 @@ class Cell(Vertical):
         log = self._log
         if kind == "clear_output" and content.get("wait"):
             self._log_clear_pending = True
-            self.output_box.add(kind, content)
+            if self._outputs is not None:
+                self._outputs.add(kind, content)
             return
         if self._log_clear_pending:
             log.clear()
@@ -403,6 +412,9 @@ class Cell(Vertical):
                 log.append(("stream", content["name"], [content["text"]]))
         elif kind == "clear_output":
             log.clear()
+            if self._outputs is not None:
+                self._outputs.add(kind, content)
+            return
         else:
             log.append((kind, content, None))
         self.output_box.add(kind, content)

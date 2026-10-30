@@ -355,7 +355,7 @@ class NotebookPane(Vertical):
                 self.exec_counter += 1
                 cell.begin_run(self.exec_counter)
                 ok = await self.kernel.execute(source, cell.add_output)
-                if cell.output_box.clear_pending:
+                if cell.output_clear_pending:
                     cell.clear_output()
                 cell.ran_source = source
                 cell.last_defs = graph.defs[cid]

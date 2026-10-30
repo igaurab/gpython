@@ -365,6 +365,18 @@ class VimTextArea(TextArea):
         super()._on_focus(event)
         self._apply_mode()
 
+    @classmethod
+    def _get_component_classes(cls) -> frozenset[str]:
+        """TextArea declares eight component classes (text-area--cursor, --gutter, ...) and Textual
+        runs a full stylesheet match for each of them on every editor at mount and on every theme
+        change. They are only fallbacks for theme fields left unset, and every gpython theme sets
+        them all, so the editor has none; `get_component_rich_style` below covers the lookups
+        TextArea still makes."""
+        return frozenset()
+
+    def get_component_rich_style(self, *names: str, partial: bool = False, default: Style | None = None) -> Style:
+        return super().get_component_rich_style(*names, partial=partial, default=Style() if default is None else default)
+
     def watch_has_focus(self, has_focus: bool) -> None:
         """Textual re-applies the stylesheet to a widget and its component classes whenever its
         focus changes, for `:focus` rules. No rule depends on an editor's focus (a cell's TextArea
