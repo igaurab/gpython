@@ -1,4 +1,4 @@
-from gpython.graph import analyze, build
+from gpython.graph import analyze, build, mutations
 
 
 def test_analyze_basic():
@@ -52,3 +52,25 @@ def test_syntax_error():
 
 def test_builtins_are_not_refs():
     assert analyze("print(len(data))") == (set(), {"data"})
+
+
+def test_mutations_detected():
+    src = "data.append(1)\nconfig['k'] = 2\nobj.attr = 3\ndel cache[0]\ndef f():\n    hidden.append(1)\n_p.append(1)"
+    assert mutations(src) == {"data", "config", "obj", "cache"}
+
+
+def test_mutation_orders_readers_and_reruns_owner():
+    g = build({"own": "xs = []", "mut": "xs.append(1)", "read": "n = len(xs)", "other": "z = 1"})
+    assert g.errors == {}
+    assert g.mutates["mut"] == {"xs"}
+    # Reader runs after the mutator, so it sees the appended item.
+    assert g.run_order(["own"]) == ["own", "mut", "read"]
+    # Running the mutator alone would append twice, so the owner re-runs first.
+    assert g.expand_roots(["mut"]) == ["mut", "own"]
+    assert g.run_order(g.expand_roots(["mut"])) == ["own", "mut", "read"]
+
+
+def test_reader_above_mutator_is_not_reordered():
+    g = build({"own": "xs = []", "read": "n = len(xs)", "mut": "xs.append(1)"})
+    assert g.errors == {}
+    assert "mut" not in g.parents["read"]

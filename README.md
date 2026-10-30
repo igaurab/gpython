@@ -4,28 +4,56 @@ A reactive Python notebook in the terminal, inspired by marimo.
 Run a cell and every cell that uses its variables re-runs automatically.
 
 ```sh
-uv run gpython notebook.py
+./gpython                 # empty untitled notebook
+./gpython script.py       # a plain script is split into cells automatically
+./gpython --no-vim nb.py  # plain editing, no modal keys
 ```
+
+## Keys
 
 | Key | Action |
 |---|---|
-| `ctrl+r` | Run cell (and everything downstream) |
-| `ctrl+n` | New cell below |
+| `shift+enter` / `ctrl+enter` / `ctrl+e` | Run cell (and everything downstream) |
+| `ctrl+n` | New cell below (starts in insert mode) |
 | `ctrl+d` | Delete cell (dependents re-run) |
-| `alt+↑/↓` or `ctrl+↑/↓` | Previous / next cell |
-| `ctrl+s` | Save |
+| `alt+↑/↓` | Previous / next cell (`j`/`k` past the edge also work) |
+| `ctrl+s` / `:w` | Save (asks for a name if untitled) |
 | `ctrl+k` | Interrupt running code |
 | `f2` | Toggle variables panel |
-| `ctrl+p` | Command palette: run all, restart kernel, save |
-| `ctrl+q` | Quit |
+| `f3` | Toggle lazy mode (dependents only marked stale) |
+| `f4` | Run stale cells |
+| `tab` | Complete (from the kernel) |
+| `ctrl+p` | Command palette: run all, restart kernel, … |
+| `:q` / `ctrl+q` | Quit |
 
-Rules (same as marimo):
+Vim keys in normal mode: `h j k l w b e 0 ^ $ gg G`, counts, `i a I A o O`,
+`x X s S dd dw d$ D cc cw C yy p P J u ctrl+r`. `escape` leaves insert mode.
+Ex commands: `:w [file]`, `:q`, `:wq`, `:run`, `:restart`.
+
+`shift+enter` needs a terminal that reports it (Ghostty, Kitty, WezTerm,
+iTerm2). In Terminal.app use `ctrl+e`.
+
+## Rules (same as marimo)
+
 - A name may be defined in only one cell.
 - Names starting with `_` are private to their cell.
-- Mutating another cell's object (`x.append(1)`) is not tracked; reassign instead.
+- In-place changes (`xs.append(1)`, `d["k"] = v`) at a cell's top level are
+  tracked: readers below run after the mutator, and running the mutator first
+  re-runs the cell that created the object so it starts fresh.
 
-Notebooks are plain `.py` files with `# %%` cell markers, so they diff cleanly
-and open in VS Code / Jupytext.
+## Files
 
-Layout: `graph.py` (dependency analysis), `kernel.py` (IPython kernel in a
-subprocess via jupyter_client), `notebook.py` (file format), `app.py` (Textual UI).
+Notebooks are plain `.py` files. `# %%` markers (VS Code / Jupytext) are
+honoured; files without markers are split at top-level statements and saved
+back without markers, so a script stays a script. `__file__` and the working
+directory match the notebook, like running it as a script.
+
+## Layout
+
+`graph.py` dependency analysis · `kernel.py` IPython kernel in a subprocess
+via jupyter_client · `notebook.py` file format · `vim.py` modal editor and
+completion popup · `app.py` + `app.tcss` Textual UI.
+
+```sh
+uv run pytest -q
+```

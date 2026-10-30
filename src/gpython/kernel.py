@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import queue
 import subprocess
 from collections.abc import Callable
+from pathlib import Path
 
 from jupyter_client.manager import AsyncKernelManager
 
@@ -35,32 +37,51 @@ def _gp_vars(names):
                 r = f"<repr failed: {e!r}>"
             out.append([n, type(v).__name__, r.replace("\n", " ")[:80]])
     return out
+
+def _gp_setup(file):
+    import os, sys
+    if file:
+        globals()["__file__"] = file
+        folder = os.path.dirname(file) or os.getcwd()
+        os.chdir(folder)
+        if folder not in sys.path:
+            sys.path.insert(0, folder)
 """
 
 
 class Kernel:
-    def __init__(self, kernel_name: str = "python3") -> None:
+    def __init__(self, kernel_name: str = "python3", file: Path | None = None) -> None:
         self.manager = AsyncKernelManager(kernel_name=kernel_name)
         self.client = None
+        self.file = file
         self.ready = asyncio.Event()
         self._lock = asyncio.Lock()
 
     async def start(self) -> None:
+        cwd = str(self.file.parent) if self.file else os.getcwd()
         # The kernel's own stdout/stderr would draw over the TUI; user output
         # still arrives through the Jupyter protocol.
-        await self.manager.start_kernel(stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        await self.manager.start_kernel(cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.client = self.manager.client()
         self.client.start_channels()
-        await self.client.wait_for_ready(timeout=60)
-        await self._execute(_HELPERS, None, store_history=False)
-        self.ready.set()
+        await self._prepare()
 
     async def restart(self) -> None:
         self.ready.clear()
         await self.manager.restart_kernel(now=True)
+        await self._prepare()
+
+    async def _prepare(self) -> None:
         await self.client.wait_for_ready(timeout=60)
         await self._execute(_HELPERS, None, store_history=False)
+        await self.set_file(self.file)
         self.ready.set()
+
+    async def set_file(self, file: Path | None) -> None:
+        """Make `__file__` and the working directory match the notebook, like a script."""
+        self.file = file
+        if file is not None:
+            await self._execute(f"_gp_setup({str(file.resolve())!r})", None, store_history=False)
 
     async def shutdown(self) -> None:
         if self.client:
@@ -96,6 +117,26 @@ class Kernel:
         except json.JSONDecodeError:
             return []
 
+    async def complete(self, code: str, cursor_pos: int) -> tuple[list[str], int, int]:
+        """Return (matches, start, end) offsets into code, via the kernel's completer."""
+        await self.ready.wait()
+        async with self._lock:
+            msg_id = self.client.complete(code, cursor_pos)
+            reply = await self._shell_reply(msg_id, timeout=3)
+        content = reply["content"] if reply else {}
+        if content.get("status") != "ok":
+            return [], cursor_pos, cursor_pos
+        return content["matches"], content["cursor_start"], content["cursor_end"]
+
+    async def _shell_reply(self, msg_id: str, timeout: float) -> dict | None:
+        while True:
+            try:
+                reply = await self.client.get_shell_msg(timeout=timeout)
+            except queue.Empty:
+                return None
+            if reply["parent_header"].get("msg_id") == msg_id:
+                return reply
+
     async def _execute(self, code: str, on_output: OutputCallback | None, store_history: bool) -> bool:
         async with self._lock:
             msg_id = self.client.execute(code, store_history=store_history)
@@ -118,13 +159,7 @@ class Kernel:
                     ok = False
                 if on_output and kind in ("stream", "execute_result", "display_data", "error", "clear_output"):
                     on_output(kind, content)
-            # Drain the matching shell reply so the queue doesn't grow.
-            while True:
-                try:
-                    reply = await self.client.get_shell_msg(timeout=5)
-                except queue.Empty:
-                    break
-                if reply["parent_header"].get("msg_id") == msg_id:
-                    ok = ok and reply["content"].get("status") == "ok"
-                    break
+            reply = await self._shell_reply(msg_id, timeout=5)
+            if reply is not None:
+                ok = ok and reply["content"].get("status") == "ok"
             return ok

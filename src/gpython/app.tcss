@@ -1,3 +1,7 @@
+Screen {
+    layers: base overlay;
+}
+
 #cells {
     width: 1fr;
     padding: 0 1;
@@ -33,7 +37,7 @@ Cell.-running, Cell.-queued {
 
 Cell TextArea {
     height: auto;
-    max-height: 30;
+    max-height: 40;
     border: none;
     padding: 0;
 }
@@ -47,9 +51,45 @@ Cell TextArea:focus {
 }
 
 .cell-output {
+    display: none;
     height: auto;
     max-height: 40;
     overflow-y: auto;
     padding: 0 1;
     background: $boost;
+}
+
+.cell-output Static {
+    height: auto;
+}
+
+.cell-output Image {
+    height: 20;
+    width: auto;
+    margin: 1 0;
+}
+
+Prompt {
+    align: center bottom;
+    background: transparent;
+}
+
+#prompt {
+    dock: bottom;
+    height: 3;
+    background: $surface;
+    border-top: solid $accent;
+}
+
+#prompt Label {
+    padding: 1 0 0 1;
+    color: $accent;
+    text-style: bold;
+}
+
+#prompt Input {
+    border: none;
+    height: 3;
+    padding: 1 0 0 0;
+    background: transparent;
 }

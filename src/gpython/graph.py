@@ -13,6 +13,12 @@ from dataclasses import dataclass, field
 
 _SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
 _BUILTINS = set(dir(builtins))
+# Methods that change their object in place (list, dict, set, deque, DataFrame...).
+_MUTATORS = {
+    "append", "extend", "insert", "pop", "remove", "clear", "sort", "reverse",
+    "update", "setdefault", "popitem", "add", "discard", "appendleft", "extendleft",
+    "popleft", "rotate", "fillna", "drop", "rename", "set_index", "reset_index",
+}
 _COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
 
 
@@ -76,46 +82,100 @@ def analyze(source: str) -> tuple[set[str], set[str]]:
     return defs, public(refs) - defs - _BUILTINS
 
 
+def _base_name(node: ast.AST) -> str | None:
+    """`a.b[0].c` -> "a"."""
+    while isinstance(node, (ast.Attribute, ast.Subscript)):
+        node = node.value
+    return node.id if isinstance(node, ast.Name) else None
+
+
+def mutations(source: str) -> set[str]:
+    """Names a cell changes in place at top level: `x.append(1)`, `x[0] = 1`, `x.a = 1`, `del x[0]`.
+
+    Code inside functions is ignored, because it only runs when called.
+    """
+    found: set[str] = set()
+
+    def visit(node: ast.AST) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, _SCOPES):
+                continue
+            targets = []
+            if isinstance(child, ast.Assign):
+                targets = child.targets
+            elif isinstance(child, (ast.AugAssign, ast.AnnAssign)):
+                targets = [child.target]
+            elif isinstance(child, ast.Delete):
+                targets = child.targets
+            for target in targets:
+                if isinstance(target, (ast.Attribute, ast.Subscript)):
+                    found.add(_base_name(target))
+            if (
+                isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Attribute)
+                and child.func.attr in _MUTATORS
+            ):
+                found.add(_base_name(child.func.value))
+            visit(child)
+
+    visit(ast.parse(source))
+    return {n for n in found if n and not n.startswith("_")}
+
+
 @dataclass
 class Graph:
     order: list[str]  # cell ids in display order
     defs: dict[str, set[str]] = field(default_factory=dict)
     refs: dict[str, set[str]] = field(default_factory=dict)
+    mutates: dict[str, set[str]] = field(default_factory=dict)
+    owner: dict[str, str] = field(default_factory=dict)
     parents: dict[str, set[str]] = field(default_factory=dict)
     children: dict[str, set[str]] = field(default_factory=dict)
     errors: dict[str, str] = field(default_factory=dict)
 
-    def descendants(self, roots: list[str]) -> set[str]:
+    def _reach(self, roots, edges) -> set[str]:
         seen = set(roots)
         stack = list(roots)
         while stack:
-            for child in self.children[stack.pop()]:
-                if child not in seen:
-                    seen.add(child)
-                    stack.append(child)
+            for nxt in edges[stack.pop()]:
+                if nxt not in seen:
+                    seen.add(nxt)
+                    stack.append(nxt)
         return seen
 
-    def run_order(self, roots: list[str]) -> list[str]:
-        """Roots plus everything downstream, parents before children.
+    def descendants(self, roots: list[str]) -> set[str]:
+        return self._reach(roots, self.children)
 
-        Ties are broken by display order, so independent cells run top to bottom.
+    def ancestors(self, roots: list[str]) -> set[str]:
+        return self._reach(roots, self.parents)
+
+    def sort(self, cells: set[str]) -> list[str]:
+        """Topological order of a subset, ties broken by display order.
+
         Cells stuck in a cycle are appended last (they carry an error anyway).
         """
-        wanted = self.descendants(roots)
-        indegree = {c: len(self.parents[c] & wanted) for c in wanted}
+        indegree = {c: len(self.parents[c] & cells) for c in cells}
         result: list[str] = []
-        ready = [c for c in self.order if c in wanted and indegree[c] == 0]
+        ready = [c for c in self.order if c in cells and indegree[c] == 0]
         while ready:
             cell = ready.pop(0)
             result.append(cell)
             for child in self.children[cell]:
-                if child in wanted:
+                if child in cells:
                     indegree[child] -= 1
                     if indegree[child] == 0:
                         ready.append(child)
                         ready.sort(key=self.order.index)
-        result += [c for c in self.order if c in wanted and c not in result]
-        return result
+        return result + [c for c in self.order if c in cells and c not in result]
+
+    def run_order(self, roots: list[str]) -> list[str]:
+        """Roots plus everything downstream, parents before children."""
+        return self.sort(self.descendants(roots))
+
+    def expand_roots(self, roots: list[str]) -> list[str]:
+        """A cell that mutates `x` must start from a fresh `x`, so its owner runs too."""
+        extra = {self.owner[n] for r in roots for n in self.mutates.get(r, ()) if n in self.owner}
+        return list(dict.fromkeys([*roots, *sorted(extra, key=self.order.index)]))
 
 
 def build(cells: dict[str, str]) -> Graph:
@@ -124,8 +184,9 @@ def build(cells: dict[str, str]) -> Graph:
     for cid, source in cells.items():
         try:
             g.defs[cid], g.refs[cid] = analyze(source)
+            g.mutates[cid] = mutations(source) & g.refs[cid]
         except SyntaxError as e:
-            g.defs[cid], g.refs[cid] = set(), set()
+            g.defs[cid], g.refs[cid], g.mutates[cid] = set(), set(), set()
             g.errors[cid] = f"SyntaxError: {e.msg} (line {e.lineno})"
 
     owners: dict[str, list[str]] = {}
@@ -133,6 +194,7 @@ def build(cells: dict[str, str]) -> Graph:
         for name in g.defs[cid]:
             owners.setdefault(name, []).append(cid)
     for name, cids in owners.items():
+        g.owner[name] = cids[0]
         if len(cids) > 1:
             for cid in cids:
                 g.errors.setdefault(
@@ -148,6 +210,20 @@ def build(cells: dict[str, str]) -> Graph:
                 if owner != cid:
                     g.parents[cid].add(owner)
                     g.children[owner].add(cid)
+
+    # Mutations: a cell that changes `x` in place runs before the other cells
+    # below it that read `x`, so they see the change.
+    for cid in g.order:
+        for name in g.mutates[cid]:
+            for reader in g.order[g.order.index(cid) + 1 :]:
+                if (
+                    name in g.refs[reader]
+                    and reader != g.owner.get(name)
+                    and reader not in g.children[cid]
+                    and cid not in g.descendants([reader])  # would make a cycle
+                ):
+                    g.parents[reader].add(cid)
+                    g.children[cid].add(reader)
 
     # Kahn's algorithm over the whole graph; leftovers are in or behind a cycle.
     indegree = {c: len(g.parents[c]) for c in g.order}

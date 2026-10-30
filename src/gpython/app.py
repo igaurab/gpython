@@ -3,20 +3,25 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import io
 import itertools
 from pathlib import Path
 
-from rich.console import Group
 from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import DataTable, Footer, Header, Static, TextArea
+from textual.message import Message
+from textual.screen import ModalScreen
+from textual.widgets import DataTable, Footer, Header, Input, Label, Static
+from textual_image.widget import Image  # must be imported before the app starts
 
 from . import notebook
 from .graph import Graph, build
 from .kernel import Kernel
+from .vim import VimTextArea
 
 STATUS_ICONS = {
     "idle": ("○", "dim"),
@@ -32,43 +37,63 @@ MAX_STREAM_CHARS = 50_000
 _ids = itertools.count(1)
 
 
-def _render(kind: str, text: str) -> Text:
-    if kind == "error":
-        return Text(text, style="bold red")
-    if kind == "note":
-        return Text(text, style="dim italic")
-    return Text.from_ansi(text, style="red" if kind == "stderr" else "")
+class Prompt(ModalScreen[str | None]):
+    """A one-line input at the bottom, used for ':' commands and 'save as'."""
+
+    BINDINGS = [Binding("escape", "dismiss(None)", show=False)]
+
+    def __init__(self, label: str, value: str = "", placeholder: str = "") -> None:
+        super().__init__()
+        self.label, self.value, self.placeholder = label, value, placeholder
+
+    def compose(self) -> ComposeResult:
+        with Horizontal(id="prompt"):
+            yield Label(self.label)
+            yield Input(value=self.value, placeholder=self.placeholder)
+
+    @on(Input.Submitted)
+    def _submit(self, event: Input.Submitted) -> None:
+        self.dismiss(event.value.strip() or None)
 
 
 class Cell(Vertical):
     """One code cell: a header line, an editor and an output area."""
 
-    def __init__(self, source: str = "") -> None:
+    def __init__(self, source: str = "", mode: str = "normal") -> None:
         self.cid = f"c{next(_ids)}"
         super().__init__(id=self.cid)
         self.initial_source = source
+        self.initial_mode = mode
         self.ran_source: str | None = None
         self.last_defs: set[str] = set()
         self.status = "idle"
-        self.outputs: list[tuple[str, str]] = []  # (kind, text)
         self.info = ""
+        self.mode = mode
+        self._last_text: tuple[str, Static, str] | None = None  # (kind, widget, text)
 
     def compose(self) -> ComposeResult:
         yield Static(classes="cell-header")
-        yield TextArea.code_editor(self.initial_source, language="python", theme="monokai")
-        yield Static(classes="cell-output")
+        yield VimTextArea(self.initial_source, mode=self.initial_mode)
+        yield Vertical(classes="cell-output")
 
     def on_mount(self) -> None:
         self._render_header()
-        self._render_output()
 
     @property
-    def editor(self) -> TextArea:
-        return self.query_one(TextArea)
+    def editor(self) -> VimTextArea:
+        return self.query_one(VimTextArea)
+
+    @property
+    def output_box(self) -> Vertical:
+        return self.query_one(".cell-output", Vertical)
 
     @property
     def source(self) -> str:
         return self.editor.text
+
+    @property
+    def output_text(self) -> str:
+        return "".join(w.gp_text for w in self.output_box.query(Static) if hasattr(w, "gp_text"))
 
     def set_status(self, status: str) -> None:
         self.status = status
@@ -82,82 +107,118 @@ class Cell(Vertical):
             parts.append("defines " + ", ".join(sorted(graph.defs[self.cid])))
         if graph.refs.get(self.cid):
             parts.append("uses " + ", ".join(sorted(graph.refs[self.cid])))
+        if graph.mutates.get(self.cid):
+            parts.append("mutates " + ", ".join(sorted(graph.mutates[self.cid])))
         self.info = "  ·  ".join(parts)
         self._render_header()
 
     def clear_output(self) -> None:
-        self.outputs = []
-        self._render_output()
+        self._last_text = None
+        box = self.output_box
+        box.remove_children()
+        box.display = False
 
     def show_error(self, message: str) -> None:
-        self.outputs = [("error", message)]
-        self._render_output()
+        self.clear_output()
+        self._add_text("error", message)
 
     def add_output(self, kind: str, content: dict) -> None:
         if kind == "clear_output":
-            self.outputs = []
+            self.clear_output()
         elif kind == "stream":
-            name = content["name"]
-            if self.outputs and self.outputs[-1][0] == name:
-                name, text = self.outputs.pop()
-                self.outputs.append((name, (text + content["text"])[-MAX_STREAM_CHARS:]))
-            else:
-                self.outputs.append((name, content["text"]))
+            self._add_text(content["name"], content["text"])
         elif kind in ("execute_result", "display_data"):
             data = content.get("data", {})
-            if "text/plain" in data:
-                self.outputs.append(("result", data["text/plain"]))
+            if "image/png" in data:
+                self._add_image(data["image/png"])
+            elif "text/plain" in data:
+                self._add_text("result", data["text/plain"])
             else:
-                self.outputs.append(("note", f"[{', '.join(data)} output not supported yet]"))
+                self._add_text("note", f"[{', '.join(data)} output not supported yet]")
         elif kind == "error":
-            self.outputs.append(("traceback", "\n".join(content["traceback"])))
-        self._render_output()
+            self._add_text("traceback", "\n".join(content["traceback"]))
+
+    def _add_text(self, kind: str, text: str) -> None:
+        box = self.output_box
+        box.display = True
+        if kind in ("stdout", "stderr") and self._last_text and self._last_text[0] == kind:
+            _, widget, old = self._last_text
+            text = (old + text)[-MAX_STREAM_CHARS:]
+        else:
+            widget = Static()
+            box.mount(widget)
+        widget.gp_text = text
+        self._last_text = (kind, widget, text) if kind in ("stdout", "stderr") else None
+        widget.update(_render(kind, text))
+
+    def _add_image(self, b64: str) -> None:
+        from PIL import Image as PILImage
+
+        self._last_text = None
+        box = self.output_box
+        box.display = True
+        box.mount(Image(PILImage.open(io.BytesIO(base64.b64decode(b64)))))
 
     def _render_header(self) -> None:
         if not self.is_mounted:
             return
         icon, style = STATUS_ICONS[self.status]
-        header = Text.assemble((f"{icon} ", style), (self.cid, "bold"), ("  " + self.info, "dim"))
+        mode = ("INSERT", "bold green") if self.mode == "insert" else ("NORMAL", "bold yellow")
+        header = Text.assemble((f"{icon} ", style), (self.cid, "bold"), "  ", mode, ("  " + self.info, "dim"))
         self.query_one(".cell-header", Static).update(header)
 
-    def _render_output(self) -> None:
-        if not self.is_mounted:
-            return
-        out = self.query_one(".cell-output", Static)
-        out.display = bool(self.outputs)
-        out.update(Group(*(_render(kind, text) for kind, text in self.outputs)))
-
-    @on(TextArea.Changed)
+    @on(VimTextArea.Changed)
     def _mark_stale(self) -> None:
         if self.ran_source is not None and self.status != "running":
             self.set_status("stale" if self.source != self.ran_source else "ok")
+
+    @on(VimTextArea.ModeChanged)
+    def _mode_changed(self, event: VimTextArea.ModeChanged) -> None:
+        self.mode = event.mode
+        self._render_header()
+
+
+def _render(kind: str, text: str) -> Text:
+    if kind == "error":
+        return Text(text, style="bold red")
+    if kind == "note":
+        return Text(text, style="dim italic")
+    return Text.from_ansi(text, style="red" if kind == "stderr" else "")
 
 
 class GPython(App):
     CSS_PATH = "app.tcss"
     TITLE = "gpython"
     BINDINGS = [
-        Binding("ctrl+r", "run_cell", "Run", priority=True),
+        Binding("shift+enter,ctrl+enter,ctrl+e", "run_cell", "Run", priority=True),
         Binding("ctrl+n", "add_cell", "New cell", priority=True),
         Binding("ctrl+d", "delete_cell", "Delete cell", priority=True),
-        Binding("ctrl+up,alt+up", "focus_cell(-1)", "Prev cell", show=False, priority=True),
-        Binding("ctrl+down,alt+down", "focus_cell(1)", "Next cell", show=False, priority=True),
+        Binding("alt+up,ctrl+up", "focus_cell(-1)", "Prev cell", show=False, priority=True),
+        Binding("alt+down,ctrl+down", "focus_cell(1)", "Next cell", show=False, priority=True),
         Binding("ctrl+s", "save", "Save", priority=True),
         Binding("ctrl+k", "interrupt", "Interrupt", priority=True),
         Binding("f2", "toggle_vars", "Variables"),
+        Binding("f3", "toggle_lazy", "Lazy"),
+        Binding("f4", "run_stale", "Run stale"),
     ]
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path | None = None, vim: bool = True) -> None:
         super().__init__()
+        VimTextArea.enabled = vim
         self.path = path
-        self.kernel = Kernel()
+        self.markers = True
+        self.lazy = False
+        self.kernel = Kernel(file=path)
         self._run_lock = asyncio.Lock()
 
     def compose(self) -> ComposeResult:
         yield Header()
+        sources = [""]
+        if self.path is not None:
+            sources, self.markers = notebook.load(self.path)
         with Horizontal():
             with VerticalScroll(id="cells"):
-                for source in notebook.load(self.path):
+                for source in sources:
                     yield Cell(source)
             table = DataTable(id="vars", cursor_type="row", zebra_stripes=True)
             table.add_columns("name", "type", "value")
@@ -165,19 +226,23 @@ class GPython(App):
         yield Footer()
 
     async def on_mount(self) -> None:
-        self.sub_title = f"{self.path}  ·  starting kernel…"
+        self.update_subtitle("starting kernel…")
         self.cells()[0].editor.focus()
         self.refresh_info()
         self.run_worker(self._start_kernel(), group="kernel")
 
     async def _start_kernel(self) -> None:
         await self.kernel.start()
-        self.sub_title = f"{self.path}  ·  kernel ready"
+        self.update_subtitle("kernel ready")
 
     async def on_unmount(self) -> None:
         await self.kernel.shutdown()
 
     # ── helpers ──────────────────────────────────────────────────────────
+
+    def update_subtitle(self, state: str) -> None:
+        name = str(self.path) if self.path else "untitled"
+        self.sub_title = f"{name}  ·  {'lazy' if self.lazy else 'reactive'}  ·  {state}"
 
     def cells(self) -> list[Cell]:
         return list(self.query(Cell))
@@ -197,12 +262,20 @@ class GPython(App):
             cell.set_info(graph)
         return graph
 
-    async def run_cells(self, roots: list[str]) -> None:
-        """Run roots and every cell downstream of them, in dependency order."""
+    async def run_cells(self, roots: list[str], downstream: bool | None = None) -> None:
+        """Run roots (and, unless lazy, every cell downstream) in dependency order."""
         async with self._run_lock:
             graph = self.refresh_info()
             by_id = {c.cid: c for c in self.cells()}
-            order = [cid for cid in graph.run_order([r for r in roots if r in by_id])]
+            roots = graph.expand_roots([r for r in roots if r in by_id])
+            if downstream is None:
+                downstream = not self.lazy
+            if downstream:
+                order = graph.run_order(roots)
+            else:
+                order = graph.sort(set(roots))
+                for cid in graph.descendants(roots) - set(roots):
+                    by_id[cid].set_status("stale")
             for cid in order:
                 by_id[cid].set_status("queued")
 
@@ -243,6 +316,10 @@ class GPython(App):
         for row in rows:
             table.add_row(*row)
 
+    def write_file(self) -> None:
+        notebook.save(self.path, [c.source for c in self.cells()], self.markers)
+        self.notify(f"Saved {self.path}")
+
     # ── actions ──────────────────────────────────────────────────────────
 
     def action_run_cell(self) -> None:
@@ -250,10 +327,15 @@ class GPython(App):
             self.run_worker(self.run_cells([cell.cid]), group="run")
 
     def action_run_all(self) -> None:
-        self.run_worker(self.run_cells([c.cid for c in self.cells()]), group="run")
+        self.run_worker(self.run_cells([c.cid for c in self.cells()], downstream=True), group="run")
+
+    def action_run_stale(self) -> None:
+        stale = [c.cid for c in self.cells() if c.status in ("stale", "idle") and c.source.strip()]
+        if stale:
+            self.run_worker(self.run_cells(stale, downstream=True), group="run")
 
     async def action_add_cell(self) -> None:
-        cell = Cell()
+        cell = Cell(mode="insert")
         current = self.current_cell()
         container = self.query_one("#cells", VerticalScroll)
         if current:
@@ -291,12 +373,26 @@ class GPython(App):
         current = self.current_cell()
         index = cells.index(current) + step if current in cells else 0
         if 0 <= index < len(cells):
-            cells[index].editor.focus()
+            editor = cells[index].editor
+            editor.focus()
+            # Land on the nearest line, like moving through one long buffer.
+            editor.move_cursor((0, 0) if step > 0 else (editor.document.line_count - 1, 0))
             cells[index].scroll_visible()
 
     def action_save(self) -> None:
-        notebook.save(self.path, [c.source for c in self.cells()])
-        self.notify(f"Saved {self.path}")
+        if self.path is None:
+            self.push_screen(Prompt("Save as: ", placeholder="notebook.py"), self._saved_as)
+        else:
+            self.write_file()
+
+    async def _saved_as(self, name: str | None) -> None:
+        if not name:
+            return
+        self.path = Path(name)
+        self.write_file()
+        self.update_subtitle("kernel ready" if self.kernel.ready.is_set() else "starting kernel…")
+        if self.kernel.ready.is_set():
+            await self.kernel.set_file(self.path)
 
     async def action_interrupt(self) -> None:
         await self.kernel.interrupt()
@@ -305,20 +401,63 @@ class GPython(App):
         table = self.query_one("#vars")
         table.display = not table.display
 
+    def action_toggle_lazy(self) -> None:
+        self.lazy = not self.lazy
+        self.update_subtitle("kernel ready" if self.kernel.ready.is_set() else "starting kernel…")
+        self.notify("Lazy: dependents are marked stale, run them with f4" if self.lazy else "Reactive: dependents re-run automatically")
+
     async def action_restart_kernel(self) -> None:
-        self.sub_title = f"{self.path}  ·  restarting kernel…"
+        self.update_subtitle("restarting kernel…")
         await self.kernel.restart()
         for cell in self.cells():
             cell.last_defs = set()
             if cell.ran_source is not None:
                 cell.set_status("stale")
         self.query_one("#vars", DataTable).clear()
-        self.sub_title = f"{self.path}  ·  kernel ready"
+        self.update_subtitle("kernel ready")
+
+    # ── vim glue ─────────────────────────────────────────────────────────
+
+    @on(VimTextArea.EdgeReached)
+    def _edge(self, event: VimTextArea.EdgeReached) -> None:
+        self.action_focus_cell(event.step)
+
+    @on(VimTextArea.ExCommand)
+    def _ex(self) -> None:
+        self.push_screen(Prompt(":"), self._run_ex)
+
+    async def _run_ex(self, command: str | None) -> None:
+        if not command:
+            return
+        name, _, arg = command.partition(" ")
+        match name:
+            case "w" | "write":
+                if arg:
+                    self.path = Path(arg)
+                    await self._saved_as(arg)
+                else:
+                    self.action_save()
+            case "q" | "q!" | "quit":
+                self.exit()
+            case "wq" | "x":
+                if self.path is None and not arg:
+                    self.notify("No file name. Use :w name.py", severity="warning")
+                    return
+                await self._saved_as(arg or str(self.path))
+                self.exit()
+            case "run":
+                self.action_run_all()
+            case "restart":
+                await self.action_restart_kernel()
+            case _:
+                self.notify(f"Unknown command: {command}", severity="error")
 
     def get_system_commands(self, screen):
         yield from super().get_system_commands(screen)
         yield SystemCommand("Run all cells", "Run every cell in dependency order", self.action_run_all)
+        yield SystemCommand("Run stale cells", "Run cells that changed since they last ran", self.action_run_stale)
+        yield SystemCommand("Toggle lazy mode", "Mark dependents stale instead of re-running them", self.action_toggle_lazy)
         yield SystemCommand(
             "Restart kernel", "Start a fresh Python process", lambda: self.run_worker(self.action_restart_kernel())
         )
-        yield SystemCommand("Save notebook", f"Write cells to {self.path}", self.action_save)
+        yield SystemCommand("Save notebook", "Write cells to disk", self.action_save)
