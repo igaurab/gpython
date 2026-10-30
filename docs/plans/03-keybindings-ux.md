@@ -105,7 +105,11 @@ Visuals:
    vim meaning inside the current cell's editor (first / last / N-th line). File-level navigation uses
    `ctrl+home` (first cell) and `ctrl+end` (last cell) in every mode, and in CELL mode `gg` / `G` select the
    first / last cell. `tests/test_vim.py::test_motions` stays unchanged.
-5. **Markdown cells** – full implementation is plan 04; this plan only guarantees the hooks exist
+5. **`dd` in vim NORMAL mode deletes the current cell (user ask).** `VimTextArea._operator` posts
+   `VimTextArea.DeleteCell(editor, count)` for `dd` instead of deleting lines; the app routes it through
+   `action_delete_cell` (undo snapshot, dependents re-run), a count deletes n cells from the current one.
+   `cc`, `S`, `D`, `d$`, `dw`, `dj`/`dk` keep their text meaning; `0D` clears a line without removing the cell.
+6. **Markdown cells** – full implementation is plan 04; this plan only guarantees the hooks exist
    (`set_cell_kind` stub, `m`/`y`, `:md`/`:code` rows) so plan 04 is a drop-in.
 
 ## Dirty tracking and quitting
