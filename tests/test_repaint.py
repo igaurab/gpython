@@ -7,6 +7,7 @@ screen shows) with a forced full render.
 
 import asyncio
 
+from textual.color import Color
 from textual.geometry import Region
 
 from gpython.app import GPython
@@ -78,26 +79,27 @@ def test_cell_bar_follows_status_and_focus(tmp_path):
             first, second = app.cells()
             colors = app.bar_colors
             bar = lambda cell: cell.styles.outline_left[1].hex.upper()
-            assert bar(first) == colors["accent"].upper()  # focused
-            assert bar(second) == colors["panel"].upper()
+            hexof = lambda c: Color.parse(c).hex.upper()
+            assert bar(first) == hexof(colors["accent"])  # focused
+            assert bar(second) == hexof(colors["panel"])
             await pilot.press("escape", "escape", "j")  # cell mode, select the second cell
             await pilot.pause()
-            assert bar(second) == colors["accent"].upper() and bar(first) == colors["panel"].upper()
+            assert bar(second) == hexof(colors["accent"]) and bar(first) == hexof(colors["panel"])
             assert second.selected and second.has_class("-selected") and not first.has_class("-selected")
             header = str(second.query_one(".cell-header").render())
             assert "c2" in header
             second.set_status("error")
-            assert bar(second) == colors["accent"].upper()  # selection wins while selected
+            assert bar(second) == hexof(colors["accent"])  # selection wins while selected
             await pilot.press("k")
             await pilot.pause()
-            assert bar(second) == colors["error"].upper()
+            assert bar(second) == hexof(colors["error"])
             second.set_status("stale")
-            assert bar(second) == colors["warning"].upper()
+            assert bar(second) == hexof(colors["warning"])
             second.set_status("running")
-            assert bar(second) == colors["primary"].upper()
+            assert bar(second) == hexof(colors["primary"])
             # Theme change recolours every bar.
             app.theme = "nord"
             await pilot.pause()
-            assert bar(second) == app.bar_colors["primary"].upper() and bar(first) == app.bar_colors["accent"].upper()
+            assert bar(second) == hexof(app.bar_colors["primary"]) and bar(first) == hexof(app.bar_colors["accent"])
 
     asyncio.run(asyncio.wait_for(main(), 60))

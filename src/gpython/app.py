@@ -15,6 +15,7 @@ from rich.text import Text
 from textual import events, on
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
+from textual.color import Color
 from textual.containers import Horizontal
 from textual.reactive import Reactive
 from textual.screen import ModalScreen, Screen
@@ -40,15 +41,6 @@ _MODE_STYLES = {
     "cell": "bold black on cyan",
     "files": "bold black on magenta",
 }
-# The header's mode chip: what the mode is and what its most-confused keys do there.
-_MODE_HINTS = {
-    "normal": "dd line · esc → cell",
-    "insert": "esc → normal",
-    "cell": "dd cell · u undo · enter → edit",
-    "files": "enter open · t tab · q hide",
-    "edit": "esc → cell",  # vim off
-}
-_MODE_HINT_WIDTH = max(map(len, _MODE_HINTS.values()))
 EXPLORER_WIDTH = 34
 
 # ctrl+w <key>: vim's window commands.
@@ -233,10 +225,10 @@ class GPython(App):
     async def on_mount(self) -> None:
         VimTextArea.mode = "normal"
         header = self.query_one(Header)
-        self._kernel_chip = KernelChip(id="kernel")
-        await header.mount(self._kernel_chip, after=header.query_one(HeaderIcon))
-        self._mode_chip = Static(id="mode-chip")
-        await header.mount(self._mode_chip)
+        self._mode_chip = Static(id="mode-chip")  # left: CELL or EDIT
+        await header.mount(self._mode_chip, after=header.query_one(HeaderIcon))
+        self._kernel_chip = KernelChip(id="kernel")  # right: Python version · env
+        await header.mount(self._kernel_chip)
         for pane in self._initial_panes:
             await self.workspace.add(pane, "tab")
         self.workspace.switch(0)
@@ -330,6 +322,8 @@ class GPython(App):
         self.editor_theme_pair = pair
         variables = self.get_css_variables()
         self.bar_colors = {role: variables[role] for role in ("panel", "accent", "warning", "primary", "error")}
+        if Color.parse(self.bar_colors["panel"]).a == 0:  # "terminal": panel is the terminal's own background
+            self.bar_colors["panel"] = "ansi_bright_black"
         if self.is_running:
             for editor in self.query(VimTextArea):
                 editor.set_editor_theme(*pair)
@@ -377,15 +371,13 @@ class GPython(App):
             version, _, env = pane.kernel_label.partition(" · ")
             # width: auto, so a layout
             self._kernel_chip.update(Text.assemble((version, "dim"), (f" · {env}" if env else "", "bold"), (" ▾", "dim")))
-        chip_mode = mode if show_mode else "edit"
+        # The header says only whether a cell is selected (CELL) or being edited (EDIT); the
+        # bottom bar has the vim detail. Same width both ways: a repaint, never a layout.
+        chip_mode = "cell" if mode == "cell" else "edit"
         if self._mode_chip is not None and chip_mode != self._mode_chip_mode:
             self._mode_chip_mode = chip_mode
-            style = _MODE_STYLES.get(chip_mode, _MODE_STYLES["insert"])
-            # Fixed width (label and hint padded): a mode change repaints the chip, no layout.
-            self._mode_chip.update(
-                Text.assemble((f" {chip_mode.upper():<6} ", style), (f" {_MODE_HINTS[chip_mode]:<{_MODE_HINT_WIDTH}} ", "dim")),
-                layout=False,
-            )
+            style = _MODE_STYLES["cell"] if chip_mode == "cell" else _MODE_STYLES["insert"]
+            self._mode_chip.update(Text(f" {chip_mode.upper()} ", style=style), layout=False)
         # The file name lives in the header subtitle; the bottom bar shows the vim mode
         # chip, run mode, kernel state, theme and key hints.
         self._status.update(

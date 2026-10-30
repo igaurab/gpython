@@ -157,13 +157,13 @@ def test_vim_dd_deletes_a_line_cell_mode_dd_deletes_the_cell(tmp_path):
         assert len(app.cells()) == 3 and second.editor.text == "b2 = 3"
         assert app.focused is second.editor and app.ui_mode == "normal"
         chip = lambda: str(app.query_one("#mode-chip").render())
-        assert "NORMAL" in chip() and "dd line" in chip()
+        assert chip().strip() == "EDIT"
         await pilot.press("u")
         assert second.editor.text == "b = 2\nb2 = 3"
         # esc → cell mode: dd deletes the cell, u brings it back.
         await pilot.press("escape")
         await pilot.pause()
-        assert "CELL" in chip() and "dd cell" in chip()
+        assert chip().strip() == "CELL"
         await pilot.press("d", "d")
         await app.workers.wait_for_complete()
         assert sources(app) == ["a = 1", "print('c')"]

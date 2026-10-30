@@ -149,9 +149,10 @@ Prompt {
 
 #prompt {
     dock: bottom;
-    height: 2;  /* the accent line + one line of text, no blank row */
+    height: 3;  /* a line, the text, a line: no blank rows */
     background: $surface;
     border-top: solid $accent;
+    border-bottom: solid $accent;
 }
 
 #prompt Label {
@@ -226,7 +227,7 @@ EnvPicker {
 }
 
 #kernel {
-    dock: left;
+    dock: right;
     width: auto;
     height: 100%;
     padding: 0 1;
@@ -234,7 +235,7 @@ EnvPicker {
 }
 
 #mode-chip {
-    dock: right;
+    dock: left;
     width: auto;
     height: 100%;
     content-align: center middle;
