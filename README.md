@@ -11,7 +11,9 @@ since, or their inputs changed), then the cell. What happens to the cells
   when you want, without moving: `r 6` runs cell c6, `r r` this cell, `r C` the
   cells down to this one, `r a` the cells after it, `r A` all, `r s` the stale
   ones (`f4`); `r k` restarts the kernel, `r R` restarts and runs all, `r i`
-  interrupts (the same keys work in the editor's normal mode, where `space r …` is a synonym).
+  interrupts; `r t 5` times this cell over five runs and prints the mean, median,
+  min and max under it, like `%%timeit` (`r t` alone runs it once; `:timeit 5`).
+  The same keys work in the editor's normal mode, where `space r …` is a synonym.
 - **reactive**: they re-run automatically, like marimo.
 
 <img width="1372" height="1034" alt="image" src="https://github.com/user-attachments/assets/c93ed22f-cf15-4a26-9322-c62c940febf5" />
@@ -125,7 +127,7 @@ selected as a cell), deleting, undoing, searching or switching tabs keeps it; `e
 
 Ex commands: `:w [file]`, `:wa`, `:q`, `:q!`, `:wq`, `:qa`, `:wqa`, `:e file`,
 `:sp [file]`, `:vs [file]`, `:only`, `:tabnew [file]`, `:tabclose`, `:tabn`,
-`:tabp`, `:ls`, `:noh`, `:Ex`, `:run`, `:runabove`, `:runbelow`, `:stale`, `:restart`,
+`:tabp`, `:ls`, `:noh`, `:Ex`, `:run`, `:timeit [n]`, `:runabove`, `:runbelow`, `:stale`, `:restart`,
 `:clear`, `:set vim|novim|lazy|nolazy|nu|nonu|time|notime`, `:vars`, `:md`, `:code`,
 `:theme [name]`, `:N` (go to cell N), `:help`. `:set novim`, line numbers, the
 run time display, the run mode and the theme are remembered in

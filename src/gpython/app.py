@@ -51,6 +51,12 @@ _MODE_STYLES = {
     "visual": "bold black on bright_magenta",
     "v-line": "bold black on bright_magenta",
 }
+_CHIP_VIM_STYLES = {
+    "insert": "bold green",
+    "normal": "bold yellow",
+    "visual": "bold bright_magenta",
+    "v-line": "bold bright_magenta",
+}
 EXPLORER_WIDTH = 34
 
 _WINDOW_KEYS = {
@@ -407,11 +413,14 @@ class GPython(App):
             self._chip_label = pane.kernel_label
             version, _, env = pane.kernel_label.partition(" · ")
             self._kernel_chip.update(Text.assemble((version, "dim"), (f" · {env}" if env else "", "bold"), (" ▾", "dim")))
-        chip_mode = "cell" if mode == "cell" else "edit"
+        chip_mode = mode if mode in ("cell", "files") or VimTextArea.enabled else "edit"
         if self._mode_chip is not None and chip_mode != self._mode_chip_mode:
             self._mode_chip_mode = chip_mode
-            style = _MODE_STYLES["cell"] if chip_mode == "cell" else _MODE_STYLES["insert"]
-            self._mode_chip.update(Text(f" {chip_mode.upper()} ", style=style), layout=False)
+            if chip_mode in ("cell", "files", "edit"):
+                text = Text(f" {chip_mode.upper()} ", style=_MODE_STYLES.get(chip_mode, _MODE_STYLES["insert"]))
+            else:
+                text = Text.assemble((" EDIT ", _MODE_STYLES["insert"]), (f" {chip_mode.upper()}", _CHIP_VIM_STYLES[chip_mode]))
+            self._mode_chip.update(text, layout=False)
         self._status.update(
             Text.assemble(
                 (f" {mode.upper()} ", _MODE_STYLES[mode]) if show_mode else "",
@@ -756,6 +765,12 @@ class GPython(App):
 
         self._start_number_sequence(RunByNumber(self, pane or self.pane))
 
+    def start_time_runs(self, pane: NotebookPane | None = None) -> None:
+        """r t: wait for a number of runs, then time the current cell that many times."""
+        from .runnumber import TimeRuns
+
+        self._start_number_sequence(TimeRuns(self, pane or self.pane))
+
     def start_goto_by_number(self, pane: NotebookPane | None = None, count: int | None = None) -> None:
         """g (cell mode): wait for a cell number and select that cell; g g, g t, g T still work."""
         from .runnumber import GotoByNumber
@@ -785,6 +800,10 @@ class GPython(App):
             self._number_sequence.key(key)
             return
         await super().on_event(event)
+
+    def _ex_timeit(self, arg: str = "") -> None:
+        runs = int(arg) if arg.strip().isdigit() else 1
+        self.pane.run_worker(self.pane.time_cell(runs), group="run")
 
     def _ex_run(self, arg: str = "") -> None:
         arg = arg.strip()
@@ -996,6 +1015,7 @@ class GPython(App):
             (("Ex", "Explore", "explorer", "tree", "Lex", "Vex"), "Toggle the file explorer (ctrl+b)", lambda arg="": self._ex_explore(arg)),
             (("noh", "nohlsearch"), "Stop highlighting search matches (n shows them again)", lambda arg="": self.pane.clear_search_highlight()),
             (("run", "runall"), "Run all cells; :run 6 runs cell c6 (stale cells it uses first)", self._ex_run),
+            (("timeit", "profile"), "Time this cell: run it n times and print mean · median · min · max (:timeit 5; r t 5)", self._ex_timeit),
             (("runabove",), "Run the cells above the current one", lambda arg="": self.pane.run_relative(False)),
             (("runbelow",), "Run the current cell and the cells below", lambda arg="": self.pane.run_relative(True, inclusive=True)),
             (("stale", "runstale"), "Run stale cells", lambda arg="": self.action_run_stale()),

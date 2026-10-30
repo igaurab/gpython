@@ -6,8 +6,9 @@ cell, on enter, or after a short pause; with no digit at all it gives up after
 TIMEOUT seconds, like a vim key sequence. Before any digit, a sequence may also take
 letters. After `r`: `r` or `c` runs the current cell, `C` the cells from the first one
 down to it, `a` the cells after it, `A` all of them, `s` the stale ones, `k` restarts the
-kernel, `R` restarts it and runs all, `i` interrupts; the focus never moves. After `g`:
-`g` goes to the first cell (or the counted one), `t` / `T` switch tabs.
+kernel, `R` restarts it and runs all, `i` interrupts, `t` times the current cell (`r t 5`
+runs it five times and reports mean, median, min and max); the focus never moves. After
+`g`: `g` goes to the first cell (or the counted one), `t` / `T` switch tabs.
 """
 
 from __future__ import annotations
@@ -84,7 +85,7 @@ class RunByNumber(CellNumberSequence):
     badge = "RUN"
     badge_style = "bold black on green"
     verb = "run"
-    letters_hint = "r/c this · C to here · a after · A all · s stale · k restart · R restart+all · i stop"
+    letters_hint = "r/c this · C to here · a after · A all · s stale · t time · k restart · R restart+all · i stop"
     finish_hint = "enter runs"
 
     def letter(self, key: str) -> bool:
@@ -110,6 +111,7 @@ def _in_worker(method_name: str, group: str = "run"):
 RUN_LETTERS = {
     "r": _in_worker("run_cell"),
     "c": _in_worker("run_cell"),
+    "t": lambda pane: pane.app.start_time_runs(pane),
     "C": lambda pane: pane.run_relative(False, inclusive=True),
     "a": lambda pane: pane.run_relative(True),
     "A": lambda pane: pane.run_all(),
@@ -118,6 +120,43 @@ RUN_LETTERS = {
     "R": _in_worker("restart_and_run_all", "kernel"),
     "i": _in_worker("interrupt", "kernel"),
 }
+
+
+class TimeRuns(CellNumberSequence):
+    """r t [n]: run the current cell n times (once by default) and report mean, median, min and max."""
+
+    badge = "TIME"
+    badge_style = "bold black on magenta"
+
+    def __init__(self, app, pane) -> None:
+        super().__init__(app, pane)
+        self._restart_timer(PAUSE, self.finish)
+
+    def status(self) -> Text:
+        return Text.assemble((f" {self.badge} ", self.badge_style), f"  time cell: {self.digits}_ runs", ("   number of runs (1) · enter · esc cancels", "dim"))
+
+    def key(self, key: str) -> None:
+        if key.isdigit() and len(self.digits) < 3:
+            self.digits += key
+            self._restart_timer(PAUSE, self.finish)
+            self.app.update_status()
+        elif key == "backspace" and self.digits:
+            self.digits = self.digits[:-1]
+            self._restart_timer(PAUSE, self.finish)
+            self.app.update_status()
+        elif key == "enter" or key.isdigit():
+            self.finish()
+        else:
+            self.cancel()
+
+    def finish(self) -> None:
+        runs = int(self.digits or 1)
+        self.cancel()
+        if self.pane.is_attached:
+            self.perform(runs)
+
+    def perform(self, runs: int) -> None:
+        self.pane.run_worker(self.pane.time_cell(runs), group="run")
 
 
 class GotoByNumber(CellNumberSequence):

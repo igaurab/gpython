@@ -424,3 +424,33 @@ def test_r_k_R_i_reach_the_kernel(tmp_path, monkeypatch):
         assert calls == ["restart", "interrupt", "restart", "run_all"]
 
     ui(tmp_path, test, cells=CHAIN)
+
+
+def test_r_t_times_the_cell_over_n_runs(tmp_path):
+    async def test(app, pilot):
+        first, _, show, last = app.cells()
+        last.focus()
+        await pilot.press("r", "t")
+        assert isinstance(app._number_sequence, runnumber.TimeRuns)
+        assert "TIME" in status(app)
+        await pilot.press("3", "enter")
+        assert app._number_sequence is None
+        await settle(app, pilot)
+        assert last.status == "ok" and app.focused is last
+        assert "3 runs: mean" in last.output_text and "median" in last.output_text and "max" in last.output_text
+        await pilot.press(":", *"timeit", "enter")
+        await settle(app, pilot)
+        assert "1 run:" in last.output_text
+        first.editor.focus()
+        await pilot.press("r", "t", "2", "enter")
+        await settle(app, pilot)
+        assert "2 runs: mean" in first.output_text and app.focused is first.editor
+
+    ui(tmp_path, test, kernel=True)
+
+
+def test_time_summary():
+    from gpython.cell import time_summary
+
+    assert time_summary([0.5]) == "1 run: 500ms"
+    assert time_summary([1.0, 2.0, 6.0]) == "3 runs: mean 3.00s · median 2.00s · min 1.00s · max 6.00s"

@@ -95,6 +95,19 @@ class CellSnapshot:
     spec: notebook.CellSpec | None = None
 
 
+def time_summary(durations: list[float]) -> str:
+    """What `r t` prints under a cell: one run's time, or mean · median · min · max of several."""
+    import statistics
+
+    if len(durations) == 1:
+        return f"1 run: {format_duration(durations[0])}"
+    mean, median = statistics.mean(durations), statistics.median(durations)
+    return (
+        f"{len(durations)} runs: mean {format_duration(mean)} · median {format_duration(median)}"
+        f" · min {format_duration(min(durations))} · max {format_duration(max(durations))}"
+    )
+
+
 def format_duration(seconds: float) -> str:
     """A run time as people read it: 12ms, 0.42s, 1m 05s."""
     if seconds < 1:

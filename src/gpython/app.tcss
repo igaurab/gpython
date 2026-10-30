@@ -224,9 +224,9 @@ EnvPicker {
 
 #mode-chip {
     dock: left;
-    width: auto;
+    width: 14;
     height: 100%;
-    content-align: center middle;
+    content-align: left middle;
 }
 
 #kernel:hover {
