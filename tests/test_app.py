@@ -64,17 +64,21 @@ def test_reactive_run_edit_delete_save(tmp_path):
             await pilot.press("ctrl+s")
             assert [c.source for c in parse(path.read_text())] == ["y = x * 2\ny", "print('independent')"]
 
-            # shift+enter runs and opens a new cell below in insert mode; the mode is global.
+            # shift+enter (Jupyter): run, then go to the cell below; a new cell only on the last one.
             second.editor.focus()
-            await pilot.press("escape", "shift+enter")
+            await pilot.press("shift+enter")
+            await app.workers.wait_for_complete()
+            assert len(app.cells()) == 2 and app.focused is third.editor
+            await pilot.press("shift+enter")
             await app.workers.wait_for_complete()
             cells = app.cells()
-            assert len(cells) == 3 and app.focused is cells[1].editor
-            assert cells[1].editor.mode == "insert" and cells[0].editor.mode == "insert"
+            assert len(cells) == 3 and app.focused is cells[2].editor
+            assert cells[2].editor.mode == "insert" and cells[0].editor.mode == "insert"  # the mode is global
             await pilot.press("escape")
-            assert cells[2].editor.mode == "normal"
+            assert cells[1].editor.mode == "normal"
             assert "NORMAL" in str(app.query_one("#status").render())
-            assert "NORMAL" not in app.sub_title and app.sub_title == str(path)
+            assert "NORMAL" not in app.sub_title and app.sub_title.startswith(str(path))
+            assert app.dirty and app.sub_title.endswith("•")  # a cell was added
 
             # The mode chip in the top bar follows the global vim mode.
             mode = app.query_one("#mode", Static)
@@ -184,13 +188,14 @@ def test_ex_commands(tmp_path, monkeypatch):
         app = GPython(None)
         async with app.run_test(size=(120, 40)) as pilot:
             table = app.query_one("#vars")
-            await pilot.press("escape", ":")
+            assert table.display is False  # hidden until asked for
+            await pilot.press(":")
             await pilot.press(*"variables", "enter")
             await pilot.pause()
-            assert table.display is False
+            assert table.display is True
             await pilot.press(":", *"vars", "enter")
             await pilot.pause()
-            assert table.display is True
+            assert table.display is False
             await pilot.press(":", *"new", "enter")
             await pilot.pause()
             assert len(app.cells()) == 2
@@ -211,6 +216,8 @@ def test_click_anywhere_in_cell_focuses_it():
             first, second = app.cells()
             assert app.focused is second.editor
             await pilot.click(first.query_one(".cell-header"))
+            assert app.focused is first and app.ui_mode == "cell"  # the header selects the cell
+            await pilot.click(first.editor)
             assert app.focused is first.editor
             await pilot.click("#cells", offset=(10, 25))  # empty area below the last cell
             assert app.focused is second.editor

@@ -36,6 +36,27 @@ Cell.-running, Cell.-queued {
     border-left: thick $primary;
 }
 
+/* Cell mode: the cell itself is selected (keys act on cells). After the status
+   colours so the selection always shows. */
+Cell.-selected {
+    border-left: thick $accent;
+}
+
+Cell.-selected > .cell-header {
+    text-style: reverse;
+}
+
+Cell.-collapsed OutputArea {
+    max-height: 3;
+}
+
+.collapsed-note {
+    height: 1;
+    color: $text-muted;
+    text-style: italic;
+    padding: 0 1;
+}
+
 Cell TextArea {
     height: auto;
     max-height: 40;
@@ -108,4 +129,17 @@ Prompt {
     height: 1;
     background: $panel;
     color: $text-muted;
+}
+
+HelpScreen {
+    align: center middle;
+}
+
+#help {
+    width: 90;
+    max-width: 100%;
+    height: 80%;
+    border: round $accent;
+    background: $surface;
+    padding: 0 1;
 }

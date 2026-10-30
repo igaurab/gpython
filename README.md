@@ -11,26 +11,71 @@ Run a cell and every cell that uses its variables re-runs automatically.
 
 ## Keys
 
+Three modes, shown in the top bar: **INSERT** (typing), **NORMAL** (vim keys in
+the editor) and **CELL** (Jupyter's command mode: the whole cell is selected and
+keys act on cells). `escape` goes INSERT → NORMAL → CELL; `enter` or `i` goes back
+into the editor. Clicking a cell's header selects it. `f1` (or `?` in cell mode)
+shows every key; the list lives in `src/gpython/keymap.py`.
+
+Everywhere:
+
 | Key | Action |
 |---|---|
-| `shift+enter` | Run cell and open a new cell below |
-| `ctrl+enter` / `ctrl+e` | Run cell in place (and everything downstream) |
-| `ctrl+n` | New cell below (starts in insert mode) |
-| `ctrl+d` | Delete cell (dependents re-run) |
-| `alt+↑/↓` | Previous / next cell (`j`/`k` past the edge also work) |
-| `ctrl+s` / `:w` | Save (asks for a name if untitled) |
+| `shift+enter` | Run cell, then go to the cell below (a new cell only on the last one) |
+| `ctrl+enter` / `ctrl+shift+enter` / `ctrl+e` | Run cell, stay |
+| `alt+enter` | Run cell and insert a new cell below |
+| `f5` / `f4` | Run all / run stale cells |
 | `ctrl+k` | Interrupt running code |
-| `f2` | Toggle variables panel |
+| `ctrl+n` / `ctrl+shift+n` | New cell below / above |
+| `ctrl+d` | Delete cell (dependents re-run; `z` in cell mode undoes) |
+| `alt+↑/↓`, `ctrl+↑/↓` | Previous / next cell |
+| `ctrl+home` / `ctrl+end` | First / last cell |
+| `alt+shift+↑/↓` | Move the cell up / down |
+| `ctrl+s` / `:w` | Save (asks for a name if untitled) |
+| `f1` | Help |
+| `f2` | Toggle variables panel (hidden at start) |
 | `f3` | Toggle lazy mode (dependents only marked stale) |
-| `f4` | Run stale cells |
-| `tab` | Complete (from the kernel); matches also pop up as you type |
 | `ctrl+p` | Command palette: run all, restart kernel, … |
-| `:q` / `ctrl+q` | Quit |
+| `ctrl+q` / `:q` | Quit (asks when there are unsaved changes; `:q!` does not) |
 
-The vim mode is global (one mode for all cells) and shown in the status line.
-Normal mode: `h j k l w b e 0 ^ $ gg G`, counts, `i a I A o O`,
-`x X s S dd dw d$ D cc cw C yy p P J u ctrl+r`. `escape` or `ctrl+[` leaves
-insert mode. Ex commands: `:w [file]`, `:q`, `:wq`, `:run`, `:restart`.
+Vim normal mode (in the editor):
+
+| Key | Action |
+|---|---|
+| `escape` | Leave the editor: cell mode |
+| `J` / `K` | Next / previous cell (`3J` jumps three) |
+| `j` / `k` | Down / up a line; past the edge moves to the next cell |
+| `gg` / `G` / `3G` | First / last / third line of this cell |
+| `dd` | Delete this cell (`3dd` three cells; `0D` clears just the line) |
+| `gJ` | Join lines (vim's `J`) |
+| `/` | Jump: `/3` third cell (as numbered in the headers), `/text` next cell containing text |
+| `:` | Ex command |
+
+Also `h j k l w b e 0 ^ $`, counts, `i a I A o O`, `x X s S dw d$ dj D cc cw C yy p P u ctrl+r`.
+
+Cell mode:
+
+| Key | Action |
+|---|---|
+| `j` / `k` (`3j`) | Select next / previous cell |
+| `gg` / `G` / `3G` | Select first / last / third cell |
+| `enter` / `i` | Edit the cell (normal / insert mode) |
+| `a` / `b` | Insert a cell above / below |
+| `dd` / `z` | Delete cell / undo the deletion |
+| `yy` / `x` / `p` / `P` | Copy / cut / paste below / paste above |
+| `J` / `K` | Move the cell down / up |
+| `m` / `y` | Markdown / code cell |
+| `o` / `O` | Collapse output / clear output |
+| `l` | Toggle line numbers |
+| `/`, `:`, `?` | Jump, ex command, help |
+
+Ex commands: `:w [file]`, `:q`, `:q!`, `:wq`, `:run`, `:runabove`, `:runbelow`,
+`:stale`, `:restart`, `:clear`, `:set vim|novim|lazy|nolazy|nu|nonu`, `:vars`,
+`:md`, `:code`, `:N` (go to cell N), `:help`. `:set novim` and line numbers are
+remembered in `~/.config/gpython/config.toml`.
+
+Cell headers read `✓ c3 [4] 0.42s  defines x · uses y`: display position,
+execution count (like Jupyter's `In [4]`) and run time.
 
 Editing: Enter indents after `:` or an open bracket and dedents after
 `return`/`pass`/…; backspace in leading whitespace removes one indent level;

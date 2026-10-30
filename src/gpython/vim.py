@@ -1,8 +1,11 @@
 """A TextArea with vim-style modal editing and kernel-backed Tab completion.
 
 Supported in normal mode: h j k l w b e 0 ^ $ gg G, counts, i a I A o O,
-x X s S dd dw d$ D cc cw c$ C yy yw p P J u ctrl+r, ":" for ex commands.
-j/k past the first/last line moves to the neighbouring cell.
+x X s S dw d$ dj D cc cw c$ C yy yw p P gJ u ctrl+r, ":" for ex commands.
+Cell-level keys are posted as messages for the app: j/k past the first/last
+line and J/K move to a neighbouring cell (EdgeReached), dd deletes the cell
+(DeleteCell), "/" asks for a jump (SearchRequested), escape with nothing
+pending leaves the editor (LeaveEditor).
 """
 
 from __future__ import annotations
@@ -85,6 +88,7 @@ class CompletionPopup(OptionList):
 
 class VimTextArea(TextArea):
     enabled = True  # set False for plain (insert-only) editing
+    line_numbers = True  # gutter on new editors (the app toggles existing ones)
     mode = "normal"  # one mode for the whole app, like a single vim buffer
     register = ""  # shared yank buffer
     register_linewise = False
@@ -108,6 +112,28 @@ class VimTextArea(TextArea):
             super().__init__()
             self.editor = editor
 
+    class SearchRequested(Message):
+        """'/' in normal mode: the app asks where to jump."""
+
+        def __init__(self, editor: VimTextArea) -> None:
+            super().__init__()
+            self.editor = editor
+
+    class LeaveEditor(Message):
+        """escape in normal mode with nothing pending: the cell takes focus (cell mode)."""
+
+        def __init__(self, editor: VimTextArea) -> None:
+            super().__init__()
+            self.editor = editor
+
+    class DeleteCell(Message):
+        """dd in normal mode: delete `count` cells starting at this one."""
+
+        def __init__(self, editor: VimTextArea, count: int = 1) -> None:
+            super().__init__()
+            self.editor = editor
+            self.count = count
+
     def __init__(self, text: str = "", language: str | None = "python", **kwargs) -> None:
         # The language is set after construction so the document is only built once.
         super().__init__(
@@ -115,7 +141,7 @@ class VimTextArea(TextArea):
             theme="monokai",
             soft_wrap=False,
             tab_behavior="indent",
-            show_line_numbers=True,
+            show_line_numbers=kwargs.pop("show_line_numbers", self.line_numbers),
             **kwargs,
         )
         self.pending = ""
@@ -212,6 +238,10 @@ class VimTextArea(TextArea):
                 if not self.cursor_at_start_of_line:
                     self.action_cursor_left()
                 self.set_mode("normal")
+            elif _is_escape(event):  # no vim: escape goes straight to cell mode
+                event.stop()
+                event.prevent_default()
+                self.post_message(self.LeaveEditor(self))
             elif event.key == "tab" and self._word_before_cursor():
                 event.stop()
                 event.prevent_default()
@@ -231,7 +261,10 @@ class VimTextArea(TextArea):
         if _is_escape(event):
             event.stop()
             event.prevent_default()
-            self.pending = self.count = ""
+            if self.pending or self.count:
+                self.pending = self.count = ""
+            else:
+                self.post_message(self.LeaveEditor(self))
             return
         key = event.character if event.is_printable and event.character else event.key
         # Unhandled non-printable keys (f-keys, ctrl combos) still reach app bindings.
@@ -250,12 +283,17 @@ class VimTextArea(TextArea):
         n = int(self.count or 1)
         pending, self.pending, self.count = self.pending, "", ""
 
+        if pending == "d" and key == "d":  # dd works on cells, not lines
+            self.post_message(self.DeleteCell(self, n))
+            return True
         if pending in ("d", "c", "y"):
             self._operator(pending, key, n)
             return True
         if pending == "g":
             if key == "g":
-                self.move_cursor((0, 0))
+                self.move_cursor((0, 0) if n == 1 else (min(self.document.line_count - 1, n - 1), 0))
+            elif key == "J":
+                self._join(n)
             return True
 
         row, col = self.cursor_location
@@ -302,15 +340,10 @@ class VimTextArea(TextArea):
                 self._operator("c", "$", n)
             case "p" | "P":
                 self._paste(key == "p", n)
-            case "J":
-                for _ in range(n):
-                    row, _ = self.cursor_location
-                    if row + 1 < self.document.line_count:
-                        nxt = self.document.get_line(row + 1)
-                        cur = self.document.get_line(row)
-                        sep = " " if cur and nxt.strip() else ""
-                        self.replace(sep + nxt.lstrip(), (row, len(cur)), (row + 1, len(nxt)))
-                        self.move_cursor((row, len(cur)))
+            case "J" | "K":
+                self.post_message(self.EdgeReached(self, n if key == "J" else -n))
+            case "/":
+                self.post_message(self.SearchRequested(self))
             case "u":
                 self.undo()
             case "ctrl+r":
@@ -327,6 +360,17 @@ class VimTextArea(TextArea):
                 else:
                     self._clamp()
         return True
+
+    def _join(self, n: int) -> None:
+        """gJ: join the next line onto this one (vim's J; J itself moves between cells)."""
+        for _ in range(n):
+            row, _ = self.cursor_location
+            if row + 1 < self.document.line_count:
+                nxt = self.document.get_line(row + 1)
+                cur = self.document.get_line(row)
+                sep = " " if cur and nxt.strip() else ""
+                self.replace(sep + nxt.lstrip(), (row, len(cur)), (row + 1, len(nxt)))
+                self.move_cursor((row, len(cur)))
 
     # ── python editing helpers ───────────────────────────────────────────
 
