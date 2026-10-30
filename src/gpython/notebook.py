@@ -552,21 +552,6 @@ def load_cells(path: Path) -> tuple[list[CellSpec], bool]:
     return split_script(text), False
 
 
-def load(path: Path) -> tuple[list[str], bool]:
-    """Transitional: like load_cells() but markdown cells come back as comment blocks.
-
-    The UI will switch to load_cells(); until then nothing is lost on save.
-    """
-    cells, markers = load_cells(path)
-    sources = []
-    for cell in cells:
-        if cell.kind == "markdown":
-            sources.append("\n".join(f"# {line}" if line.strip() else "#" for line in cell.source.splitlines()))
-        else:
-            sources.append(cell.source)
-    return sources, markers
-
-
 def save(path: Path, cells: list[CellSpec | str], markers: bool = True) -> None:
     specs = [_spec(c) for c in cells]
     if _is_ipynb(path):

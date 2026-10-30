@@ -1,6 +1,6 @@
 import json
 
-from gpython.notebook import CellSpec, dump, dump_ipynb, load, load_cells, parse, parse_ipynb, save, split_script
+from gpython.notebook import CellSpec, dump, dump_ipynb, load_cells, parse, parse_ipynb, save, split_script
 
 
 def test_roundtrip():
@@ -102,9 +102,3 @@ def test_ipynb_roundtrip(tmp_path):
     assert saved["cells"][1]["outputs"] == [] and saved["cells"][1]["execution_count"] is None
     assert saved["cells"][1]["source"] == ["x = 1\n", "x"]
     assert parse_ipynb(dump_ipynb(cells)) == cells
-
-
-def test_transitional_load_keeps_markdown_as_comments(tmp_path):
-    path = tmp_path / "nb.py"
-    path.write_text("# %% [markdown]\n# Title\n#\n# body\n\n# %%\nx = 1\n")
-    assert load(path) == (["# Title\n#\n# body", "x = 1"], True)
