@@ -133,6 +133,24 @@ def test_uv_env_kernel_switch_and_magics(tmp_path):
     asyncio.run(main())
 
 
+def test_python_m_venv_env_end_to_end(tmp_path):
+    """No uv: `python -m venv`, pip installs ipykernel, the kernel runs there (~10 s)."""
+
+    async def main():
+        env = await envs.create(tmp_path / "plain", "venv")
+        assert env.kind == "venv" and env.has_ipykernel
+        k = Kernel(env=env)
+        await k.start()
+        try:
+            out = []
+            assert await k.execute("import sys; print(sys.prefix)", lambda kind, c: out.append(c.get("text", "")))
+            assert Path("".join(out).strip()) == tmp_path / "plain"
+        finally:
+            await k.shutdown()
+
+    asyncio.run(main())
+
+
 def test_switch_while_a_cell_runs():
     async def main():
         k = Kernel()
