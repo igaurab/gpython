@@ -209,3 +209,10 @@ Run `uv run python3 scripts/bench.py` – no metric regresses > 10 %; paste the 
 
 Files changed, tests summary, bench table, README key table updated, requests for peer-owned files
 (none expected).
+
+## Addendum (user ask): general cell-level undo
+
+`u` in CELL mode undoes the last cell-level action, not just deletions: moves (`J`/`K`,
+`alt+shift+↑/↓`), inserts (`a`/`b`/`ctrl+n`/paste), deletions, kind changes. One stack
+`_undo` of typed actions, capped at `MAX_UNDO`; `z` stays as an alias. Vim NORMAL `u` remains the
+editor's text undo. Implemented together with plan 04's integration.
