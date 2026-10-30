@@ -88,6 +88,8 @@ Cell {
     height: auto;
     margin-bottom: 1;
     padding-left: 1;
+    border-top: blank;
+    border-title-align: left;
     outline-left: thick $panel;
 }
 
@@ -107,10 +109,6 @@ Cell TextArea {
     max-height: 40;
     border: none;
     padding: 0;
-}
-
-.cell-header {
-    height: 1;
 }
 
 .cell-output {

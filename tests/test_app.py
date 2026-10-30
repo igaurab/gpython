@@ -207,7 +207,7 @@ def test_click_anywhere_in_cell_focuses_it():
             await pilot.press("ctrl+n")
             first, second = app.cells()
             assert app.focused is second.editor
-            await pilot.click(first.query_one(".cell-header"))
+            await pilot.click(first, offset=(3, 0))
             assert app.focused is first and app.ui_mode == "cell"
             await pilot.click(first.editor)
             assert app.focused is first.editor

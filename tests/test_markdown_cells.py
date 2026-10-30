@@ -53,7 +53,7 @@ def test_markdown_cell_loads_rendered(tmp_path):
         assert view.display is True and "Hello" in view_text(md)
         assert md.editor.language == "markdown"
         assert not code.query(MarkdownView)
-        header = str(md.query_one(".cell-header").render())
+        header = md.header_text
         assert "¶" in header and "MARKDOWN" in header and "defines" not in header
         assert md.info == ""
 
@@ -264,7 +264,7 @@ def test_h_folds_a_markdown_cell(tmp_path):
         assert not app.dirty
         await pilot.press("h")
         assert md.folded and md.query_one(MarkdownView).display is False
-        assert "folded" in str(md.query_one(".cell-header").render())
+        assert "folded" in md.header_text
         assert not app.dirty
         await pilot.press("h")
         assert not md.folded and md.query_one(MarkdownView).display is True

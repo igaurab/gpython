@@ -139,6 +139,29 @@ profiled mount, half of it `_process_component_classes`) and the import profile:
 | first_paint | 0.07–0.08 s | 0.07 s |
 | pty first_frame / j → paint | 0.28–0.29 s / 3–15 ms | same (the spread is the machine) |
 
+### Perf round 5 (2026-10-30): the cell header is the cell's border title, not a widget
+
+A 300-widget probe (`scripts/memprof.py` has the method) put every Textual widget at ~40 kB
+of RSS and ~1 ms at mount, whatever it shows; a cell was three (Cell, header `Static`,
+`VimTextArea`). The header is now the title of the cell's own top border
+(`Cell { border-top: blank; border-title-align: left }`, `Cell._set_header`), so a cell is two
+widgets. `_set_header` writes `_border_title` and refreshes only the border row: assigning
+`border_title` repaints the whole cell, and `refresh(region)` takes content-relative regions,
+so the border row is `Region(-1, -1, width, 1)`. The frame is byte-identical to before.
+
+| metric (2 ms tick) | before | after |
+|---|---|---|
+| moves_30_proc / moves_30_net | 0.35 / 0.22 s | 0.30–0.31 / 0.19 s |
+| loaded_60 | 0.27 s | 0.24 s |
+| first_paint / keys_30_net | 0.07 / 0.07–0.09 s | 0.065 / 0.07 s |
+| RSS at 60 / 200 / 1000 cells | 75 / 92 / 193 MB | 74 / 88 / 166 MB |
+
+Tried the same day and parked (branch `worktree-virtual-cells`, `docs/plans/08-sleeping-cells.md`):
+cells below the first screen mounting only their header and building the editor near the
+viewport. It saves memory (1000 cells: 134 MB) and 40 ms of `loaded_60`, but the deferred
+editor mounts land on scrolling (`moves_30_proc` 0.35 → 0.39 s), and the user wants speed
+first. A widget-free off-screen cell list has the same scroll-time mounting by construction.
+
 ### Memory (2026-10-30): two leaks fixed, what a cell costs, what is left
 
 `uv run python3 scripts/memprof.py` (headless, 60 cells, tracemalloc + live object counts

@@ -44,7 +44,7 @@ def test_ipynb_outputs_show_on_load_and_survive_save(tmp_path):
     async def test(app, pilot):
         first, second = app.cells()
         assert "hello\nworld\n" in first.output_text and "42" in first.output_text
-        assert first.exec_count == 7 and "[7]" in str(first.query_one(".cell-header").render())
+        assert first.exec_count == 7 and "[7]" in first.header_text
         assert first.status == "idle" and second.output_text == ""
         second.editor.text = "b = 3"
         await pilot.pause()
@@ -94,7 +94,7 @@ def test_marimo_hide_code_cells_start_collapsed_and_h_toggles(tmp_path):
     async def test(app, pilot):
         hidden, shown = app.cells()
         assert hidden.code_hidden and not hidden.editor.display
-        assert "code hidden" in str(hidden.query_one(".cell-header").render())
+        assert "code hidden" in hidden.header_text
         assert shown.editor.display
         assert app.focused is hidden and app.ui_mode == "cell"
         await pilot.press("h")

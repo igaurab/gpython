@@ -85,7 +85,7 @@ def test_cell_bar_follows_status_and_focus(tmp_path):
             await pilot.pause()
             assert bar(second) == colors["accent"] and bar(first) == colors["panel"]
             assert second.selected and second.has_class("-selected") and not first.has_class("-selected")
-            header = str(second.query_one(".cell-header").render())
+            header = second.header_text
             assert "c2" in header
             second.set_status("error")
             assert bar(second) == colors["accent"]
