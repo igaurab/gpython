@@ -3,7 +3,6 @@
 import asyncio
 
 import pytest
-from textual.widgets import Markdown
 
 from gpython import notebook
 from gpython.app import GPython, ends_with_string
@@ -41,8 +40,8 @@ def ui(tmp_path, test, cells=CELLS, kernel=False):
 
 
 def view_text(cell) -> str:
-    """The text the rendered Markdown widget is showing."""
-    return cell.query_one(MarkdownView).query_one(Markdown).source
+    """The markdown the rendered view is showing."""
+    return cell.query_one(MarkdownView).shown
 
 
 def test_markdown_cell_loads_rendered(tmp_path):
@@ -289,11 +288,32 @@ def test_hidden_marimo_text_cell_shows_its_text_before_running(tmp_path):
     async def test(app, pilot):
         _, problem, plain = app.cells()
         assert problem.kind == "code" and problem.code_hidden and problem.exec_count == 0
-        markdown = problem.output_box.query_one(Markdown)
-        assert "3Sum" in markdown._markdown and "Return **triplets**" in markdown._markdown
-        assert "\\n" not in markdown._markdown
+        shown = problem.output_box.query_one(MarkdownView).shown
+        assert "3Sum" in shown and "Return **triplets**" in shown
+        assert "\\n" not in shown
         assert not problem.outputs_snapshot()  # a preview, not an output that gets saved
         assert not plain.output_box.has_output
 
     path = ui(tmp_path, test, cells)
     assert "@app.cell(hide_code=True)" in path.read_text()
+
+
+def test_markdown_follows_the_theme(tmp_path):
+    from rich.color import Color
+    from textual.geometry import Region
+
+    def heading_color(view) -> Color | None:
+        strip = view.render_lines(Region(0, 0, view.size.width, 1))[0]
+        return next(seg.style.color for seg in strip if seg.text.strip() and seg.style and seg.style.color)
+
+    async def test(app, pilot):
+        view = app.cells()[1].query_one(MarkdownView)
+        app.theme = "nord"
+        await pilot.pause()
+        nord = heading_color(view)
+        assert nord == Color.parse(app.palette.type)  # ### is markdown.h3: the palette's type colour
+        app.theme = "catppuccin-latte"
+        await pilot.pause()
+        assert heading_color(view) == Color.parse(app.palette.type) != nord
+
+    ui(tmp_path, test)

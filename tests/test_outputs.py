@@ -7,7 +7,7 @@ import functools
 import asyncio
 
 from textual.app import App, ComposeResult
-from textual.widgets import Markdown, Static
+from textual.widgets import Static
 
 from gpython import outputs
 from gpython.markdown import MarkdownView
@@ -146,7 +146,7 @@ async def test_markdown_display_mounts_markdown_view():
         view = out.query_one(MarkdownView)
         assert view.text == "## Title here"
         assert "Title here" in out.text
-        assert out.query_one(Markdown).source == "## Title here"
+        assert view.shown == "## Title here"
 
 
 @sync

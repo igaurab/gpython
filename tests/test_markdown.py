@@ -6,7 +6,7 @@ import asyncio
 import functools
 
 from textual.app import App, ComposeResult
-from textual.widgets import Markdown
+from textual.geometry import Region
 
 from gpython.markdown import PLACEHOLDER, MarkdownView
 
@@ -35,7 +35,8 @@ class MdApp(App):
 
 
 def headings_text(view: MarkdownView) -> str:
-    return " ".join(str(block._content) for block in view.markdown.children)
+    """The text the view draws on screen."""
+    return " ".join(strip.text for strip in view.render_lines(Region(0, 0, view.size.width, view.size.height)))
 
 
 @sync
@@ -44,7 +45,7 @@ async def test_renders_heading():
     async with app.run_test() as pilot:
         await pilot.pause()
         view = app.query_one(MarkdownView)
-        assert view.markdown.source == "### Hello"
+        assert view.shown == "### Hello"
         assert "Hello" in headings_text(view)
         assert not view.has_class("-empty")
 
@@ -55,7 +56,7 @@ async def test_blank_shows_placeholder():
     async with app.run_test() as pilot:
         await pilot.pause()
         view = app.query_one(MarkdownView)
-        assert view.markdown.source == PLACEHOLDER
+        assert view.shown == PLACEHOLDER
         assert "press enter to edit" in headings_text(view)
         assert view.has_class("-empty")
         assert view.text == "   \n"
@@ -69,11 +70,11 @@ async def test_update_roundtrips_text():
         await view.update("# Title\n\nbody")
         await pilot.pause()
         assert view.text == "# Title\n\nbody"
-        assert view.markdown.source == "# Title\n\nbody"
+        assert view.shown == "# Title\n\nbody"
         assert "Title" in headings_text(view)
         await view.update("")
         await pilot.pause()
-        assert view.text == "" and view.markdown.source == PLACEHOLDER
+        assert view.text == "" and view.shown == PLACEHOLDER
 
 
 @sync

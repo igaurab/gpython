@@ -26,6 +26,7 @@ from . import config
 from .cell import Cell, CellSnapshot, ends_with_string
 from .explorer import Explorer
 from .help import HelpScreen
+from .markdown import MarkdownView, markdown_theme
 from .pane import NotebookPane
 from . import envpicker
 from .envpicker import KernelChip
@@ -157,6 +158,7 @@ class GPython(App):
         settings = config.load()
         VimTextArea.mode = "normal"
         self._editor_theme_cache: dict[str, tuple] = {}
+        self._markdown_theme_pushed = False
         self._theme_warning: str | None = None
         for custom in (*CUSTOM_APP_THEMES.values(), TERMINAL_THEME):
             self.register_theme(custom)
@@ -325,6 +327,10 @@ class GPython(App):
         if pair is None:
             pair = self._editor_theme_cache[self.palette.name] = editor_themes(self.palette)
         self.editor_theme_pair = pair
+        if self._markdown_theme_pushed:  # MarkdownView draws with Rich: its markdown.* styles
+            self.console.pop_theme()
+        self.console.push_theme(markdown_theme(self.palette))
+        self._markdown_theme_pushed = True
         variables = self.get_css_variables()
         self.bar_colors = {role: variables[role] for role in ("panel", "accent", "warning", "primary", "error")}
         try:
@@ -339,6 +345,8 @@ class GPython(App):
                 cell._header_key = None
                 cell._render_header()
                 cell.paint_bar()
+            for view in self.query(MarkdownView):
+                view.restyle()
             self.update_status()
         if name != self._loaded_theme and not self._previewing_theme:
             config.save({"theme": name})
