@@ -1,4 +1,8 @@
-"""Tiny persistent config: a flat TOML file of str/bool/int values."""
+"""Tiny persistent config: a flat TOML file of str/bool/int values.
+
+A table is read as dotted keys: `[experimental]` + `true_markdown = true` is
+`experimental.true_markdown`, the same key as `"experimental.true_markdown" = true`.
+"""
 
 from __future__ import annotations
 
@@ -21,7 +25,9 @@ def load() -> dict:
             data = tomllib.load(f)
     except Exception:
         return {}
-    return {k: v for k, v in data.items() if isinstance(v, (str, bool, int))}
+    flat = {f"{k}.{sub}": v for k, table in data.items() if isinstance(table, dict) for sub, v in table.items()}
+    flat.update(data)
+    return {k: v for k, v in flat.items() if isinstance(v, (str, bool, int))}
 
 
 def _value(v: str | bool | int) -> str:

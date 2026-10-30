@@ -9,6 +9,7 @@ double-clicked. Colours come from the app theme: see `markdown_theme`.
 
 from __future__ import annotations
 
+from functools import cache
 from typing import TYPE_CHECKING
 
 from textual import events
@@ -112,6 +113,27 @@ def markdown_theme(palette: Palette) -> Theme:
     })
 
 
+@cache
+def _markdown_class() -> type:
+    """Rich's Markdown with h1–h3 drawn big (bigtext) where the terminal can, else as Rich draws them."""
+    from rich.markdown import Heading, Markdown
+
+    from . import bigtext
+
+    class BigHeading(Heading):
+        def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+            big = bigtext.heading(self.text.plain, int(self.tag[1:]), options.max_width) if bigtext.supported() else None
+            if big is None:
+                yield from super().__rich_console__(console, options)
+            else:
+                yield big
+
+    class BigMarkdown(Markdown):
+        elements = {**Markdown.elements, "heading_open": BigHeading}
+
+    return BigMarkdown
+
+
 class _LinesByWidth:
     """A renderable that lays `renderable` out once per width.
 
@@ -181,9 +203,7 @@ class MarkdownView(Widget):
         dark = getattr(getattr(self.app, "palette", None), "dark", True)
         key = (self.shown, dark)
         if self._parsed is None or self._parsed[0] != key:
-            from rich.markdown import Markdown
-
-            markdown = Markdown(key[0], code_theme="ansi_dark" if dark else "ansi_light", hyperlinks=False)
+            markdown = _markdown_class()(key[0], code_theme="ansi_dark" if dark else "ansi_light", hyperlinks=False)
             self._parsed = key, _LinesByWidth(markdown)
         return self._parsed[1]
 

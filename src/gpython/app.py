@@ -22,7 +22,7 @@ from textual.screen import ModalScreen, Screen
 from textual.widgets import Header, Input, Label, Static
 from textual.widgets._header import HeaderIcon
 
-from . import config
+from . import bigtext, config
 from .cell import Cell, CellSnapshot, ends_with_string
 from .explorer import Explorer
 from .help import HelpScreen
@@ -176,6 +176,7 @@ class GPython(App):
             vim = settings.get("vim", True) is not False
         VimTextArea.enabled = vim
         VimTextArea.line_numbers = settings.get("line_numbers", True) is not False
+        bigtext.enabled = settings.get("experimental.true_markdown") is True
 
         files = [p for p in ([path] if path is not None else []) + list(paths or [])]
         self.explorer_root = Path.cwd()
