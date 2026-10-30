@@ -28,6 +28,11 @@ MOUNT_BATCH = 10
 MAX_UNDO = 50
 
 
+def needs_run(cell: Cell) -> bool:
+    """A non-empty code cell that never ran, was edited since it ran, or whose inputs changed (marimo's "stale")."""
+    return bool(cell.source.strip()) and (cell.inputs_stale or cell.ran_source != cell.source)
+
+
 class NotebookPane(Vertical):
     """A window showing one notebook (vim: a window showing a buffer)."""
 
@@ -304,7 +309,8 @@ class NotebookPane(Vertical):
         async with self._run_lock:
             graph = self.refresh_info()
             by_id = {c.cid: c for c in self.cells() if c.kind == "code"}
-            roots = graph.expand_roots([r for r in roots if r in by_id])
+            roots = [r for r in roots if r in by_id]
+            roots = graph.expand_roots(roots + self._stale_ancestors(graph, by_id, roots))
             if downstream is None:
                 downstream = not self.app.lazy
             if downstream:
@@ -312,7 +318,7 @@ class NotebookPane(Vertical):
             else:
                 order = graph.sort(set(roots))
                 for cid in graph.descendants(roots) - set(roots):
-                    by_id[cid].set_status("stale")
+                    by_id[cid].mark_inputs_stale()
             for cid in order:
                 by_id[cid].set_status("queued")
 
@@ -328,6 +334,7 @@ class NotebookPane(Vertical):
                     continue
                 if graph.parents[cid] & failed:
                     cell.show_error("not run: an upstream cell failed")
+                    cell.inputs_stale = True
                     cell.set_status("skipped")
                     failed.add(cid)
                     continue
@@ -349,6 +356,15 @@ class NotebookPane(Vertical):
                 self._keep_focus_visible(cell)
 
             await self.refresh_vars(graph)
+
+    @staticmethod
+    def _stale_ancestors(graph: Graph, by_id: dict[str, Cell], roots: list[str]) -> list[str]:
+        """Upstream code cells that are stale: never ran, edited since, or their inputs changed.
+
+        Like marimo, a run first brings everything it depends on up to date; clean cells do not re-run.
+        """
+        upstream = graph.ancestors(roots) - set(roots)
+        return [cid for cid in graph.order if cid in upstream and cid in by_id and needs_run(by_id[cid])]
 
     def _keep_focus_visible(self, ran: Cell) -> None:
         """New output above the focused cell pushes it down; keep the user's cell on screen."""
@@ -493,7 +509,7 @@ class NotebookPane(Vertical):
         self.run_worker(self.run_cells([c.cid for c in self.cells()], downstream=True), group="run")
 
     def run_stale(self) -> None:
-        stale = [c.cid for c in self.cells() if c.kind == "code" and c.status in ("stale", "idle") and c.source.strip()]
+        stale = [c.cid for c in self.cells() if c.kind == "code" and needs_run(c)]
         if stale:
             self.run_worker(self.run_cells(stale, downstream=True), group="run")
 
@@ -713,7 +729,7 @@ class NotebookPane(Vertical):
         for cell in self.cells():
             cell.last_defs = set()
             if cell.ran_source is not None:
-                cell.set_status("stale")
+                cell.mark_inputs_stale()
         if self._vars is not None:
             self._vars.clear()
 

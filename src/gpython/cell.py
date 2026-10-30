@@ -121,6 +121,8 @@ class Cell(Vertical):
         self.ran_source: str | None = None
         self.last_defs: set[str] = set()
         self.status = "idle"
+        self.run_status = "idle"
+        self.inputs_stale = False
         self.info = ""
         self.exec_count = 0
         self.duration: float | None = None
@@ -281,6 +283,7 @@ class Cell(Vertical):
         self.folded = False
         self.set_class(kind == "markdown", "-markdown")
         self.ran_source = None
+        self.inputs_stale = False
         self.last_defs = set()
         self.exec_count = 0
         self.duration = None
@@ -339,6 +342,7 @@ class Cell(Vertical):
     def begin_run(self, count: int) -> None:
         """Mark the cell running as In [count]; the header counts seconds while it runs."""
         self.exec_count = count
+        self.inputs_stale = False
         self.duration = None
         self._run_start = time.perf_counter()
         self.set_status("running")
@@ -350,8 +354,14 @@ class Cell(Vertical):
         if self._ticker is not None:
             self._ticker.stop()
             self._ticker = None
+        self.run_status = status
         self.set_status(status)
         self._render_header()
+
+    def mark_inputs_stale(self) -> None:
+        """Something it depends on changed in the kernel (an ancestor re-ran, a restart): stale until it runs."""
+        self.inputs_stale = True
+        self.set_status("stale")
 
 
     def clear_output(self) -> None:
@@ -524,4 +534,4 @@ class Cell(Vertical):
             return
         document = self.editor.document
         same = document.line_count == self.ran_source.count("\n") + 1 and document.text == self.ran_source
-        self.set_status("ok" if same else "stale")
+        self.set_status(self.run_status if same and not self.inputs_stale else "stale")
