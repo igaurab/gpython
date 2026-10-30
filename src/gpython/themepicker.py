@@ -17,7 +17,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Input, OptionList
 from textual.widgets.option_list import Option
 
-from .themes import PALETTES
+from .themes import PALETTES, TERMINAL
 
 OTHER_ID = "__other__"  # id of the disabled "other" divider row
 
@@ -26,7 +26,8 @@ def _row(name: str, dark: bool) -> Table:
     grid = Table.grid(expand=True)
     grid.add_column()
     grid.add_column(justify="right")
-    grid.add_row(name, Text("dark" if dark else "light", style="dim"))
+    kind = "your terminal's colours" if name == TERMINAL else "dark" if dark else "light"
+    grid.add_row(name, Text(kind, style="dim"))
     return grid
 
 
@@ -44,13 +45,14 @@ class ThemePicker(ModalScreen[str | None]):
         self._original = ""
 
     def ordered_names(self) -> list[str]:
-        """Our palettes first (dark sorted, then light sorted), then the other app themes."""
+        """"terminal" (the terminal's own colours), our palettes (dark sorted, then light
+        sorted), then the other app themes."""
         themes = self.app.available_themes
         ours = [n for n in PALETTES if n in themes]
         dark = sorted(n for n in ours if themes[n].dark)
         light = sorted(n for n in ours if not themes[n].dark)
-        other = sorted(n for n in themes if n not in PALETTES)
-        return dark + light + [OTHER_ID] + other
+        other = sorted(n for n in themes if n not in PALETTES and n != TERMINAL)
+        return [TERMINAL] + dark + light + [OTHER_ID] + other
 
     def compose(self) -> ComposeResult:
         with Vertical(id="theme-picker"):

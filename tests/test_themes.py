@@ -11,6 +11,8 @@ from gpython.themes import (
     CUSTOM_APP_THEMES,
     DEFAULT_THEME,
     PALETTES,
+    TERMINAL_PALETTE,
+    TERMINAL_THEME,
     Palette,
     editor_themes,
     palette_for,
@@ -51,7 +53,32 @@ def app_theme(name):
 
 def test_supported_set_and_default_present():
     assert set(SUPPORTED) <= set(PALETTES)
-    assert DEFAULT_THEME == "material-darker" and DEFAULT_THEME in PALETTES
+    assert DEFAULT_THEME == "terminal" and palette_for(TERMINAL_THEME) is TERMINAL_PALETTE
+
+
+def test_terminal_theme_uses_the_terminals_own_colours(notebook_path):
+    """Native ANSI colours (terminal background and palette) while "terminal" is on, and
+    back to truecolor after switching to a regular theme."""
+    assert TERMINAL_THEME.ansi and TERMINAL_THEME.background == "ansi_default"
+    insert, normal = editor_themes(TERMINAL_PALETTE)  # every colour usable by rich
+    assert insert.cursor_style.reverse
+
+    async def main():
+        app = GPython(notebook_path)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            assert app.theme == "terminal" and app.native_ansi_color
+            assert editor_names(app) == {"terminal-normal"}
+            app.cells()[0].set_status("ok")  # header icon colour from theme.success ("ansi_green")
+            await pilot.pause()
+            app.theme = "nord"
+            await pilot.pause()
+            assert not app.native_ansi_color
+            await app._run_ex("theme default")
+            await pilot.pause()
+            assert app.theme == "terminal" and app.native_ansi_color
+
+    asyncio.run(main())
 
 
 @pytest.mark.parametrize("name", sorted(PALETTES))

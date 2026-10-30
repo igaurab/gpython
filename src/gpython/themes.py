@@ -8,15 +8,20 @@ themes we do not ship explicit data for.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from rich.style import Style
 from textual.color import Color
-from textual.theme import Theme
+from textual.theme import BUILTIN_THEMES, Theme
 from textual.widgets.text_area import TextAreaTheme
 
-DEFAULT_THEME = "material-darker"
-THEME_ALIASES = {"material-dark": "material-darker", "material": "material-darker", "gruvbox-dark": "gruvbox", "catppuccin": "catppuccin-mocha"}
+TERMINAL = "terminal"  # the terminal's own colours and background
+DEFAULT_THEME = TERMINAL
+THEME_ALIASES = {
+    "default": TERMINAL, "ansi": TERMINAL,
+    "material-dark": "material-darker", "material": "material-darker",
+    "gruvbox-dark": "gruvbox", "catppuccin": "catppuccin-mocha",
+}  # fmt: skip
 
 
 @dataclass(frozen=True)
@@ -329,6 +334,19 @@ CUSTOM_APP_THEMES: dict[str, Theme] = {
 }  # fmt: skip
 
 
+# "terminal": Textual's ANSI theme under our name. Colours are the terminal's 16 named
+# ones and the background is the terminal's own, so gpython looks like the terminal it
+# runs in (whatever colorscheme that is) instead of painting its own.
+TERMINAL_THEME = replace(BUILTIN_THEMES["ansi-dark"], name=TERMINAL)
+TERMINAL_PALETTE = Palette(
+    name=TERMINAL, dark=True,
+    bg="default", fg="default", gutter_fg="bright_black", cursor_line_bg="default",
+    selection_bg="bright_black", comment="bright_black", keyword="magenta", string="green",
+    number="yellow", function="blue", type="cyan", operator="default", builtin="red",
+    constant="yellow", punctuation="default", cursor_insert="default", cursor_normal="yellow",
+)  # fmt: skip
+
+
 # --------------------------------------------------------------------------- factories
 
 
@@ -383,8 +401,12 @@ def editor_themes(palette: Palette) -> tuple[TextAreaTheme, TextAreaTheme]:
             syntax_styles=dict(syntax),
         )
 
-    insert = make(p.name, Style(color=p.bg, bgcolor=p.cursor_insert))
-    normal = make(f"{p.name}-normal", Style(color=p.bg, bgcolor=p.cursor_normal, bold=True))
+    if p.bg == "default":  # terminal colours: no known background to draw the cursor text in
+        insert = make(p.name, Style(reverse=True))
+        normal = make(f"{p.name}-normal", Style(color="black", bgcolor=p.cursor_normal, bold=True))
+    else:
+        insert = make(p.name, Style(color=p.bg, bgcolor=p.cursor_insert))
+        normal = make(f"{p.name}-normal", Style(color=p.bg, bgcolor=p.cursor_normal, bold=True))
     return insert, normal
 
 
@@ -405,6 +427,8 @@ def palette_for(app_theme: Theme) -> Palette:
     """PALETTES[name] if supported, else a generic palette derived from the app theme's colors."""
     if app_theme.name in PALETTES:
         return PALETTES[app_theme.name]
+    if app_theme.name == TERMINAL:
+        return TERMINAL_PALETTE
     dark = app_theme.dark
     bg = _hex(app_theme.background, "#1e1e1e" if dark else "#fafafa")
     fg = _hex(app_theme.foreground, "#d4d4d4" if dark else "#1f1f1f")

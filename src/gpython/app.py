@@ -29,7 +29,7 @@ from .pane import NotebookPane
 from . import envpicker
 from .envpicker import KernelChip
 from .themepicker import ThemePicker
-from .themes import CUSTOM_APP_THEMES, DEFAULT_THEME, THEME_ALIASES, editor_themes, palette_for
+from .themes import CUSTOM_APP_THEMES, DEFAULT_THEME, TERMINAL_THEME, THEME_ALIASES, editor_themes, palette_for
 from .vim import VimTextArea, _is_escape
 from .windows import TabBar, Workspace
 
@@ -168,7 +168,7 @@ class GPython(App):
         VimTextArea.mode = "normal"  # before compose, so every editor mounts in the same mode
         self._editor_theme_cache: dict[str, tuple] = {}
         self._theme_warning: str | None = None
-        for custom in CUSTOM_APP_THEMES.values():
+        for custom in (*CUSTOM_APP_THEMES.values(), TERMINAL_THEME):
             self.register_theme(custom)
         self._loaded_theme = settings.get("theme")
         name = theme or self._loaded_theme or DEFAULT_THEME
@@ -320,6 +320,9 @@ class GPython(App):
 
     def watch_theme(self, name: str) -> None:
         """Point every editor and cell header at the new theme; remember the choice."""
+        # Textual reads theme.ansi only at start-up: keep native ANSI colours (the terminal's
+        # own palette and background) in step with the theme being switched to.
+        self.ansi_color = self.current_theme.ansi
         self.palette = palette_for(self.current_theme)
         pair = self._editor_theme_cache.get(self.palette.name)
         if pair is None:

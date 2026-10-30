@@ -181,11 +181,14 @@ unsaved), `:wqa` saves everything and quits.
 the whole notebook (editor syntax colours included) changes as you go;
 `enter` keeps the theme and writes it to `~/.config/gpython/config.toml`,
 `escape` restores the one you had. Every later session starts in the saved
-theme (the default is material-darker). `:theme name` does the same without
-the picker and is saved too; `--theme name` applies to that run only;
-`:theme` alone shows the current one.
+theme. `:theme name` does the same without the picker and is saved too;
+`--theme name` applies to that run only; `:theme` alone shows the current one.
 
-Themes: catppuccin (mocha, macchiato, frappe, latte), gruvbox (dark, light),
+The default theme, `terminal` (also `:theme default`), uses your terminal's
+own colours and background, so gpython looks like whatever colorscheme the
+terminal has. Syntax colours are the terminal's 16 named colours.
+
+Themes: terminal, catppuccin (mocha, macchiato, frappe, latte), gruvbox (dark, light),
 material (oceanic, palenight, darker, lighter), nord, dracula, tokyo-night,
 solarized (dark, light), monokai, plus Textual's built-in themes.
 

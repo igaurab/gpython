@@ -432,6 +432,7 @@ class Cell(Vertical):
             theme = self.app.current_theme
             role = {"ok": "success", "stale": "warning", "error": "error", "skipped": "error"}.get(self.status, "primary")
             style = palette.comment if self.status == "idle" else (getattr(theme, role, None) or style)
+            style = style.removeprefix("ansi_")  # the terminal theme's "ansi_green" is rich's "green"
         parts: list[tuple[str, str]] = [(f"{icon} ", style), (self.label, "bold")]
         if self.status == "running":
             parts.append((f"  running… {elapsed}s", "cyan"))

@@ -149,21 +149,21 @@ Prompt {
 
 #prompt {
     dock: bottom;
-    height: 3;
+    height: 2;  /* the accent line + one line of text, no blank row */
     background: $surface;
     border-top: solid $accent;
 }
 
 #prompt Label {
-    padding: 1 0 0 1;
+    padding: 0 0 0 1;
     color: $accent;
     text-style: bold;
 }
 
 #prompt Input {
     border: none;
-    height: 3;
-    padding: 1 0 0 0;
+    height: 1;
+    padding: 0;
     background: transparent;
 }
 
@@ -203,7 +203,7 @@ EnvPicker {
 }
 
 #env-picker.-ask {
-    height: 7;
+    height: 6;
 }
 
 #env-title {
@@ -216,7 +216,6 @@ EnvPicker {
     border: none;
     height: 1;
     padding: 0 1;
-    margin-top: 1;
     background: transparent;
 }
 

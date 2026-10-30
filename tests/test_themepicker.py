@@ -6,7 +6,7 @@ from textual.widgets import OptionList
 from gpython import config
 from gpython.app import GPython
 from gpython.themepicker import OTHER_ID, ThemePicker
-from gpython.themes import DEFAULT_THEME, PALETTES
+from gpython.themes import DEFAULT_THEME, PALETTES, TERMINAL
 from gpython.vim import VimTextArea
 
 
@@ -37,8 +37,9 @@ def test_order_and_current_highlighted(notebook_path):
         async with app.run_test(size=(120, 40)) as pilot:
             await open_picker(app, pilot)
             ids = option_ids(app)
+            assert ids[0] == TERMINAL  # the terminal's own colours come first
             split = ids.index(OTHER_ID)
-            ours, others = ids[:split], ids[split + 1 :]
+            ours, others = ids[1:split], ids[split + 1 :]
             assert set(ours) == set(PALETTES) & set(app.available_themes)
             darks = [n for n in ours if app.available_themes[n].dark]
             assert ours[: len(darks)] == sorted(darks)  # dark group first, sorted
