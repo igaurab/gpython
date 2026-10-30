@@ -3,24 +3,22 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import io
 import itertools
 from pathlib import Path
 
 from rich.text import Text
-from textual import on
+from textual import events, on
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import DataTable, Footer, Header, Input, Label, Static
-from textual_image.widget import Image  # must be imported before the app starts
+from textual.widgets import DataTable, Header, Input, Label, Static
+from textual.widgets._header import HeaderIcon
 
 from . import notebook
 from .graph import Graph, build
 from .kernel import Kernel
+from .outputs import OutputArea
 from .vim import VimTextArea
 
 STATUS_ICONS = {
@@ -32,7 +30,9 @@ STATUS_ICONS = {
     "error": ("✗", "red"),
     "skipped": ("⊘", "red"),
 }
-MAX_STREAM_CHARS = 50_000
+KEY_HINTS = "ctrl+enter run · shift+enter run+new · ctrl+n new · ctrl+d delete · ctrl+s save · ctrl+p palette"
+INITIAL_CELLS = 12  # cells composed before the first frame; the rest mount right after
+MOUNT_BATCH = 10
 
 _ids = itertools.count(1)
 
@@ -67,37 +67,45 @@ class Cell(Vertical):
         self.last_defs: set[str] = set()
         self.status = "idle"
         self.info = ""
-        self._last_text: tuple[str, Static, str] | None = None  # (kind, widget, text)
+        self._header: Static | None = None
+        self._editor: VimTextArea | None = None
+        self._outputs: OutputArea | None = None
+        self._header_key: tuple[str, str] | None = None
 
     def compose(self) -> ComposeResult:
-        yield Static(classes="cell-header")
-        yield VimTextArea(self.initial_source)
-        yield Vertical(classes="cell-output")
+        self._header = Static(classes="cell-header")
+        self._editor = VimTextArea(self.initial_source)
+        self._outputs = OutputArea()
+        yield self._header
+        yield self._editor
+        yield self._outputs
 
     def on_mount(self) -> None:
         self._render_header()
 
     @property
     def editor(self) -> VimTextArea:
-        return self.query_one(VimTextArea)
+        return self._editor or self.query_one(VimTextArea)
 
     @property
-    def output_box(self) -> Vertical:
-        return self.query_one(".cell-output", Vertical)
+    def output_box(self) -> OutputArea:
+        return self._outputs or self.query_one(OutputArea)
 
     @property
     def source(self) -> str:
-        editors = self.query(VimTextArea)  # may not be composed yet right after mounting
-        return editors.first().text if editors else self.initial_source
+        # The editor does not exist until the cell is composed.
+        return self._editor.text if self._editor is not None else self.initial_source
 
     @property
     def output_text(self) -> str:
-        return "".join(w.gp_text for w in self.output_box.query(Static) if hasattr(w, "gp_text"))
+        return self.output_box.text
 
     def set_status(self, status: str) -> None:
+        if status == self.status:
+            return
+        self.remove_class(f"-{self.status}")
+        self.add_class(f"-{status}")
         self.status = status
-        for name in STATUS_ICONS:
-            self.set_class(name == status, f"-{name}")
         self._render_header()
 
     def set_info(self, graph: Graph) -> None:
@@ -112,58 +120,26 @@ class Cell(Vertical):
         self._render_header()
 
     def clear_output(self) -> None:
-        self._last_text = None
-        box = self.output_box
-        box.remove_children()
-        box.display = False
+        self.output_box.clear()
 
     def show_error(self, message: str) -> None:
-        self.clear_output()
-        self._add_text("error", message)
+        self.output_box.show_error(message)
 
     def add_output(self, kind: str, content: dict) -> None:
-        if kind == "clear_output":
-            self.clear_output()
-        elif kind == "stream":
-            self._add_text(content["name"], content["text"])
-        elif kind in ("execute_result", "display_data"):
-            data = content.get("data", {})
-            if "image/png" in data:
-                self._add_image(data["image/png"])
-            elif "text/plain" in data:
-                self._add_text("result", data["text/plain"])
-            else:
-                self._add_text("note", f"[{', '.join(data)} output not supported yet]")
-        elif kind == "error":
-            self._add_text("traceback", "\n".join(content["traceback"]))
-
-    def _add_text(self, kind: str, text: str) -> None:
-        box = self.output_box
-        box.display = True
-        if kind in ("stdout", "stderr") and self._last_text and self._last_text[0] == kind:
-            _, widget, old = self._last_text
-            text = (old + text)[-MAX_STREAM_CHARS:]
-        else:
-            widget = Static()
-            box.mount(widget)
-        widget.gp_text = text
-        self._last_text = (kind, widget, text) if kind in ("stdout", "stderr") else None
-        widget.update(_render(kind, text))
-
-    def _add_image(self, b64: str) -> None:
-        from PIL import Image as PILImage
-
-        self._last_text = None
-        box = self.output_box
-        box.display = True
-        box.mount(Image(PILImage.open(io.BytesIO(base64.b64decode(b64)))))
+        self.output_box.add(kind, content)
 
     def _render_header(self) -> None:
-        if not self.is_mounted:
+        if self._header is None or (self.status, self.info) == self._header_key:
             return
+        self._header_key = (self.status, self.info)
         icon, style = STATUS_ICONS[self.status]
-        header = Text.assemble((f"{icon} ", style), (self.cid, "bold"), ("  " + self.info, "dim"))
-        self.query_one(".cell-header", Static).update(header)
+        self._header.update(Text.assemble((f"{icon} ", style), (self.cid, "bold"), ("  " + self.info, "dim")))
+
+    def _on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        self.add_class("-focused")
+
+    def _on_descendant_blur(self, event: events.DescendantBlur) -> None:
+        self.remove_class("-focused")
 
     def on_click(self, event) -> None:
         """Clicking anywhere in the cell (header, margin, output) focuses its editor."""
@@ -172,16 +148,11 @@ class Cell(Vertical):
 
     @on(VimTextArea.Changed)
     def _mark_stale(self) -> None:
-        if self.ran_source is not None and self.status != "running":
-            self.set_status("stale" if self.source != self.ran_source else "ok")
-
-
-def _render(kind: str, text: str) -> Text:
-    if kind == "error":
-        return Text(text, style="bold red")
-    if kind == "note":
-        return Text(text, style="dim italic")
-    return Text.from_ansi(text, style="red" if kind == "stderr" else "")
+        if self.ran_source is None or self.status == "running":
+            return
+        document = self.editor.document
+        same = document.line_count == self.ran_source.count("\n") + 1 and document.text == self.ran_source
+        self.set_status("ok" if same else "stale")
 
 
 class GPython(App):
@@ -210,28 +181,51 @@ class GPython(App):
         self.kernel_state = "starting kernel…"
         self.kernel = Kernel(file=path)
         self._run_lock = asyncio.Lock()
+        self.loaded = asyncio.Event()  # set once every cell of the file is mounted
+        self._pending_sources: list[str] = []  # cells not mounted yet (progressive mount)
+        self._cells_box: VerticalScroll | None = None
+        self._status: Static | None = None
+        self._mode: Static | None = None
+
+    def on_load(self) -> None:
+        # Boot the kernel while the widgets are being built.
+        self.run_worker(self._start_kernel(), group="kernel")
 
     def compose(self) -> ComposeResult:
         yield Header()
         sources = [""]
         if self.path is not None:
-            sources, self.markers = notebook.load(self.path)
+            specs, self.markers = notebook.load_cells(self.path)
+            sources = [spec.source for spec in specs] or [""]
+        sources, self._pending_sources = sources[:INITIAL_CELLS], sources[INITIAL_CELLS:]
         with Horizontal():
-            with VerticalScroll(id="cells"):
+            with VerticalScroll(id="cells") as self._cells_box:
                 for source in sources:
                     yield Cell(source)
             table = DataTable(id="vars", cursor_type="row", zebra_stripes=True)
             table.add_columns("name", "type", "value")
             yield table
-        yield Static(id="status")
-        yield Footer()
+        self._status = Static(id="status")
+        yield self._status  # no Footer: it rebuilt itself on every focus change (half the cost of a cell move)
 
     async def on_mount(self) -> None:
         VimTextArea.mode = "normal"
+        header = self.query_one(Header)
+        self._mode = Static(id="mode")
+        await header.mount(self._mode, after=header.query_one(HeaderIcon))
         self.update_status()
         self.cells()[0].editor.focus()
+        self.call_after_refresh(lambda: self.run_worker(self._mount_rest(), group="mount"))
+
+    async def _mount_rest(self) -> None:
+        """Mount the cells left out of compose(), a batch at a time, after the first frame."""
+        while self._pending_sources:
+            batch = [Cell(source) for source in self._pending_sources[:MOUNT_BATCH]]
+            del self._pending_sources[:MOUNT_BATCH]
+            await self._cells_box.mount_all(batch)
+            await asyncio.sleep(0)  # let keys and repaints through between batches
         self.refresh_info()
-        self.run_worker(self._start_kernel(), group="kernel")
+        self.loaded.set()
 
     async def _start_kernel(self) -> None:
         await self.kernel.start()
@@ -246,6 +240,8 @@ class GPython(App):
         """One status line for the whole app: vim mode, file, run mode, kernel."""
         if kernel_state is not None:
             self.kernel_state = kernel_state
+        if self._status is None:  # not composed yet (the kernel boots during compose)
+            return
         name = str(self.path) if self.path else "untitled"
         if not VimTextArea.enabled:
             mode = ("", "")
@@ -253,14 +249,25 @@ class GPython(App):
             mode = (" INSERT ", "bold black on green")
         else:
             mode = (" NORMAL ", "bold black on yellow")
-        # Header (top) and status line (bottom) both show the mode.
-        self.sub_title = f"{name}  ·  -- {mode[0].strip()} --" if mode[0] else name
-        self.query_one("#status", Static).update(
-            Text.assemble(mode, f"  {name}  ·  {'lazy' if self.lazy else 'reactive'}  ·  {self.kernel_state}")
+        self.sub_title = name
+        if self._mode is not None:
+            self._mode.display = VimTextArea.enabled
+            chip = mode[0].strip()
+            self._mode.update(Text(chip, style="bold green" if chip == "INSERT" else "bold yellow"))
+        self._status.update(
+            Text.assemble(
+                mode,
+                f"  {name}  ·  {'lazy' if self.lazy else 'reactive'}  ·  {self.kernel_state}",
+                (f"    {KEY_HINTS}", "dim"),
+            )
         )
 
     def cells(self) -> list[Cell]:
-        return list(self.query(Cell))
+        """Cells in document order. They are the direct children of #cells, so no DOM search."""
+        box = self._cells_box
+        if box is None:
+            return list(self.query(Cell))
+        return [node for node in box.children if isinstance(node, Cell)]
 
     def current_cell(self) -> Cell | None:
         node = self.focused
@@ -279,6 +286,7 @@ class GPython(App):
 
     async def run_cells(self, roots: list[str], downstream: bool | None = None) -> None:
         """Run roots (and, unless lazy, every cell downstream) in dependency order."""
+        await self.loaded.wait()  # the graph needs every cell
         async with self._run_lock:
             graph = self.refresh_info()
             by_id = {c.cid: c for c in self.cells()}
@@ -332,7 +340,8 @@ class GPython(App):
             table.add_row(*row)
 
     def write_file(self) -> None:
-        notebook.save(self.path, [c.source for c in self.cells()], self.markers)
+        sources = [c.source for c in self.cells()] + self._pending_sources
+        notebook.save(self.path, sources, self.markers)
         self.notify(f"Saved {self.path}")
 
     # ── actions ──────────────────────────────────────────────────────────
@@ -357,9 +366,9 @@ class GPython(App):
             await container.mount(cell, after=current)
         else:
             await container.mount(cell)
-        cell.editor.focus()
+        cell.editor.focus(scroll_visible=False)  # Textual's own scroll is animated
         cell.editor.set_mode("insert")
-        cell.scroll_visible()
+        cell.scroll_visible(animate=False)
 
     async def action_run_and_add(self) -> None:
         """shift+enter: run this cell, then start typing in a fresh cell below."""
@@ -398,10 +407,10 @@ class GPython(App):
         index = cells.index(current) + step if current in cells else 0
         if 0 <= index < len(cells):
             editor = cells[index].editor
-            editor.focus()
+            editor.focus(scroll_visible=False)  # Textual's own scroll is animated
             # Land on the nearest line, like moving through one long buffer.
             editor.move_cursor((0, 0) if step > 0 else (editor.document.line_count - 1, 0))
-            cells[index].scroll_visible()
+            cells[index].scroll_visible(animate=False, immediate=True)
 
     def action_save(self) -> None:
         if self.path is None:
@@ -442,7 +451,7 @@ class GPython(App):
 
     def on_click(self, event) -> None:
         """Clicking the empty space below the last cell focuses the nearest cell."""
-        if event.widget is self.query_one("#cells") and (cells := self.cells()):
+        if event.widget is self._cells_box and (cells := self.cells()):
             cells[-1].editor.focus()
 
     # ── vim glue ─────────────────────────────────────────────────────────

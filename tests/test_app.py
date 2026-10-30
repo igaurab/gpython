@@ -1,6 +1,6 @@
 import asyncio
 
-from textual.widgets import DataTable
+from textual.widgets import DataTable, Static
 
 from gpython.app import GPython
 from gpython.notebook import parse
@@ -62,7 +62,7 @@ def test_reactive_run_edit_delete_save(tmp_path):
             assert second.status == "error" and "NameError" in second.output_text
 
             await pilot.press("ctrl+s")
-            assert parse(path.read_text()) == ["y = x * 2\ny", "print('independent')"]
+            assert [c.source for c in parse(path.read_text())] == ["y = x * 2\ny", "print('independent')"]
 
             # shift+enter runs and opens a new cell below in insert mode; the mode is global.
             second.editor.focus()
@@ -74,7 +74,15 @@ def test_reactive_run_edit_delete_save(tmp_path):
             await pilot.press("escape")
             assert cells[2].editor.mode == "normal"
             assert "NORMAL" in str(app.query_one("#status").render())
-            assert app.sub_title.endswith("-- NORMAL --")
+            assert "NORMAL" not in app.sub_title and app.sub_title == str(path)
+
+            # The mode chip in the top bar follows the global vim mode.
+            mode = app.query_one("#mode", Static)
+            assert "NORMAL" in str(mode.render())
+            await pilot.press("i")
+            assert "INSERT" in str(mode.render())
+            await pilot.press("escape")
+            assert "NORMAL" in str(mode.render())
 
     asyncio.run(main())
 

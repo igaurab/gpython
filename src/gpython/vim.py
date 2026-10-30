@@ -8,11 +8,17 @@ j/k past the first/last line moves to the neighbouring cell.
 from __future__ import annotations
 
 import dataclasses
+import functools
 import os
 import re
 
 from rich.style import Style
 from textual import events
+from textual._tree_sitter import TREE_SITTER, get_language
+from textual.document._document_navigator import DocumentNavigator
+from textual.document._syntax_aware_document import SyntaxAwareDocument
+from textual.document._wrapped_document import WrappedDocument
+from textual.geometry import Size
 from textual.message import Message
 from textual.widgets import OptionList, TextArea
 from textual.widgets.text_area import Location, TextAreaTheme
@@ -23,6 +29,26 @@ _IDENT = re.compile(r"[\w.]$")
 _DEDENT_AFTER = ("return", "break", "continue", "pass", "raise")
 AUTOCOMPLETE_DELAY = 0.12  # seconds after the last keystroke
 INDENT = "    "
+
+
+MONOKAI = TextAreaTheme.get_builtin_theme("monokai")
+MONOKAI_NORMAL = dataclasses.replace(  # normal mode: a yellow block cursor
+    MONOKAI, name="monokai-normal", cursor_style=Style(color="#272822", bgcolor="#e6db74", bold=True)
+)
+
+
+@functools.cache
+def _highlight_query(language: str):
+    """The compiled tree-sitter highlight query for a builtin language, shared by all editors.
+
+    Textual compiles it again for every TextArea (about 15 ms for Python), which made
+    opening a 60-cell notebook take seconds. Returns None when the language is unknown.
+    """
+    if not TREE_SITTER or (lang := get_language(language)) is None:
+        return None
+    from tree_sitter import Query
+
+    return Query(lang, TextArea._get_builtin_highlight_query(language))
 
 
 def _is_escape(event: events.Key) -> bool:
@@ -82,10 +108,10 @@ class VimTextArea(TextArea):
             super().__init__()
             self.editor = editor
 
-    def __init__(self, text: str = "", **kwargs) -> None:
+    def __init__(self, text: str = "", language: str | None = "python", **kwargs) -> None:
+        # The language is set after construction so the document is only built once.
         super().__init__(
             text,
-            language="python",
             theme="monokai",
             soft_wrap=False,
             tab_behavior="indent",
@@ -97,16 +123,59 @@ class VimTextArea(TextArea):
         self._popup: CompletionPopup | None = None
         self._popup_start: Location = (0, 0)
         self._auto_timer = None
+        self._theme_names = ("monokai", "monokai-normal")
+        self.set_editor_theme(MONOKAI, MONOKAI_NORMAL)
+        if language:
+            self.language = language
         if not self.enabled:
             VimTextArea.mode = "insert"
 
     def on_mount(self) -> None:
-        base = TextAreaTheme.get_builtin_theme("monokai")
-        normal = dataclasses.replace(
-            base, name="monokai-normal", cursor_style=Style(color="#272822", bgcolor="#e6db74", bold=True)
-        )
-        self.register_theme(normal)
         self._apply_mode()
+
+    def set_editor_theme(self, insert: TextAreaTheme, normal: TextAreaTheme) -> None:
+        """Use `insert` in insert mode and `normal` (e.g. with a block cursor) in normal mode."""
+        self.register_theme(insert)
+        self.register_theme(normal)
+        self._theme_names = (insert.name, normal.name)
+        self._apply_mode()
+
+    # ── speed ────────────────────────────────────────────────────────────
+
+    def _set_document(self, text: str, language: str | None) -> None:
+        """Like TextArea._set_document, but reuses the compiled highlight query."""
+        query = _highlight_query(language) if language else None
+        if query is None or language in self._languages:
+            super()._set_document(text, language)
+            return
+        document = SyntaxAwareDocument(text, get_language(language))
+        self.document = document
+        self.wrapped_document = WrappedDocument(document, tab_width=self.indent_width)
+        self.navigator = DocumentNavigator(self.wrapped_document)
+        self._highlight_query = query
+        self._build_highlight_map()
+        self.move_cursor((0, 0))
+        self._rewrap_and_refresh_virtual_size()
+
+    def _refresh_size(self) -> None:
+        """Only ask for a screen layout when the editor's height changes.
+
+        `virtual_size` is a layout reactive, so in Textual every keystroke that makes
+        a line longer re-arranges the whole screen. The editor is `height: auto` and
+        full width, so a wider line only needs a repaint of this widget.
+        """
+        if self.soft_wrap or not self.is_mounted:
+            super()._refresh_size()
+            return
+        width, height = self.document.get_size(self.indent_width)
+        size = Size(width + self.gutter_width + 1, height)
+        old = self.virtual_size
+        if size.height != old.height:
+            super()._refresh_size()
+        elif size != old:
+            self.set_reactive(TextArea.virtual_size, size)
+            self._scroll_update(size)
+            self.refresh()
 
     def _on_focus(self, event: events.Focus) -> None:
         super()._on_focus(event)
@@ -124,7 +193,9 @@ class VimTextArea(TextArea):
 
     def _apply_mode(self) -> None:
         mode = self.mode if self.enabled else "insert"
-        self.theme = "monokai" if mode == "insert" else "monokai-normal"
+        theme = self._theme_names[0] if mode == "insert" else self._theme_names[1]
+        if self.theme != theme:
+            self.theme = theme
         self.cursor_blink = mode == "insert"
 
     # ── keys ─────────────────────────────────────────────────────────────

@@ -19,7 +19,8 @@ Cell {
     padding-left: 1;
 }
 
-Cell:focus-within {
+/* A class, not :focus-within, so a focus change restyles two cells, not the tree. */
+Cell.-focused {
     border-left: thick $accent;
 }
 
@@ -92,6 +93,14 @@ Prompt {
     height: 3;
     padding: 1 0 0 0;
     background: transparent;
+}
+
+#mode {
+    dock: left;
+    width: auto;
+    height: 100%;
+    padding: 0 1;
+    content-align: center middle;
 }
 
 #status {
