@@ -554,7 +554,7 @@ class NotebookPane(Vertical):
         self.select(cell, "insert")
 
     async def delete_cell(self, count: int = 1) -> None:
-        """Delete `count` cells from the current one (dependents re-run); u in cell mode undoes."""
+        """Delete `count` cells from the current one; u in cell mode undoes."""
         cell = self.current_cell()
         if cell is None:
             return
@@ -563,7 +563,7 @@ class NotebookPane(Vertical):
         await self._remove_cells(cells[index : index + max(1, count)], self.app.ui_mode)
 
     async def _remove_cells(self, victims: list[Cell], mode: str, record: bool = True) -> None:
-        """Remove cells (their variables leave the kernel, dependents re-run); select the next one."""
+        """Remove cells; their variables leave the kernel and the cells that used them re-run or go stale; select the next one."""
         cells = self.cells()
         index = cells.index(victims[0])
         ids = [c.cid for c in victims]
