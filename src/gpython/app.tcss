@@ -116,7 +116,31 @@ Prompt {
     background: transparent;
 }
 
-#mode {
+ThemePicker {
+    background: transparent;
+}
+
+#theme-picker {
+    dock: bottom;
+    height: 16;
+    background: $surface;
+    border-top: solid $accent;
+}
+
+#theme-picker Input {
+    border: none;
+    height: 1;
+    padding: 0 1;
+    background: transparent;
+}
+
+#theme-picker OptionList {
+    border: none;
+    height: 1fr;
+    background: transparent;
+}
+
+#kernel {
     dock: left;
     width: auto;
     height: 100%;

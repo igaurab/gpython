@@ -23,6 +23,7 @@ from .graph import Graph, build
 from .help import HelpScreen
 from .kernel import Kernel
 from .outputs import OutputArea
+from .themepicker import ThemePicker
 from .themes import CUSTOM_APP_THEMES, DEFAULT_THEME, editor_themes, palette_for
 from .vim import VimTextArea, _is_escape
 
@@ -39,7 +40,7 @@ KEY_HINTS = "shift+enter run+next · ctrl+enter run · esc esc cell mode · / ju
 INITIAL_CELLS = 12  # cells composed before the first frame; the rest mount right after
 MOUNT_BATCH = 10
 MAX_UNDO = 50
-_MODE_STYLES = {"insert": "bold green", "normal": "bold yellow", "cell": "bold cyan"}
+_MODE_STYLES = {"insert": "bold black on green", "normal": "bold black on yellow", "cell": "bold black on cyan"}
 
 # Non-printable keys that cell mode handles; others (f-keys, ctrl+...) reach app bindings.
 _CELL_KEYS = {"escape", "enter", "up", "down", "shift+j", "shift+k", "shift+o", "question_mark"}
@@ -355,8 +356,9 @@ class GPython(App):
         Binding("f3", "toggle_lazy", "Lazy"),
         Binding("f4", "run_stale", "Run stale"),
         Binding("f5", "run_all", "Run all"),
-        Binding("ctrl+t", "change_theme", "Theme"),
+        Binding("ctrl+t", "pick_theme", "Theme"),
     ]
+    _previewing_theme = False  # True while ThemePicker previews: watch_theme does not persist
 
     def __init__(self, path: Path | None = None, vim: bool | None = None, theme: str | None = None) -> None:
         super().__init__()
@@ -391,7 +393,8 @@ class GPython(App):
         self._pending_sources: list[str] = []  # cells not mounted yet (progressive mount)
         self._cells_box: VerticalScroll | None = None
         self._status: Static | None = None
-        self._mode: Static | None = None
+        self._kernel_chip: Static | None = None
+        self.kernel_label = "Python …"  # filled in once the kernel reports its version
         self._status_key: tuple | None = None
         self._deleted: list[CellSnapshot] = []  # undo stack for cell deletion
         self._cell_clipboard: CellSnapshot | None = None
@@ -426,8 +429,8 @@ class GPython(App):
     async def on_mount(self) -> None:
         VimTextArea.mode = "normal"
         header = self.query_one(Header)
-        self._mode = Static(id="mode")
-        await header.mount(self._mode, after=header.query_one(HeaderIcon))
+        self._kernel_chip = Static(id="kernel")
+        await header.mount(self._kernel_chip, after=header.query_one(HeaderIcon))
         self.update_status()
         if self._theme_warning:
             self.notify(self._theme_warning, severity="warning")
@@ -450,7 +453,16 @@ class GPython(App):
 
     async def _start_kernel(self) -> None:
         await self.kernel.start()
+        self.kernel_label = await self._kernel_version()
         self.update_status("kernel ready")
+
+    async def _kernel_version(self) -> str:
+        """'Python 3.13.7' from the kernel itself (it may be a different interpreter than ours)."""
+        out: list[str] = []
+        code = "print(__import__('platform').python_version())"
+        await self.kernel._execute(code, lambda kind, c: out.append(c.get("text", "")) if kind == "stream" else None, store_history=False)
+        version = "".join(out).strip()
+        return f"Python {version}" if version else "Python"
 
     async def on_unmount(self) -> None:
         await self.kernel.shutdown()
@@ -480,32 +492,32 @@ class GPython(App):
                 cell._header_key = None
                 cell._render_header()
             self.update_status()
-        if name != self._loaded_theme:
+        if name != self._loaded_theme and not self._previewing_theme:
             config.save({"theme": name})
             self._loaded_theme = name
 
     def update_status(self, kernel_state: str | None = None) -> None:
-        """The mode chip in the header and the status line: mode, file, run mode, kernel."""
+        """Header: kernel chip + file subtitle. Status line: vim mode, run mode, kernel state, theme, hints."""
         if kernel_state is not None:
             self.kernel_state = kernel_state
         if self._status is None:  # not composed yet (the kernel boots during compose)
             return
         mode = self.ui_mode
         name = (str(self.path) if self.path else "untitled") + (" •" if self.dirty else "")
-        key = (mode, VimTextArea.enabled, name, self.lazy, self.kernel_state)
+        key = (mode, VimTextArea.enabled, name, self.lazy, self.kernel_state, self.theme, self.kernel_label)
         if key == self._status_key:
             return
         self._status_key = key
         show_mode = VimTextArea.enabled or mode == "cell"
         self.sub_title = name
-        if self._mode is not None:
-            self._mode.display = show_mode
-            self._mode.update(Text(mode.upper(), style=_MODE_STYLES[mode]))
-        # The vim mode lives in the header chip and the file name in the subtitle,
-        # so the bottom bar only carries run mode, kernel state and key hints.
+        if self._kernel_chip is not None:
+            self._kernel_chip.update(Text(self.kernel_label, style="dim"))
+        # The file name lives in the header subtitle; the bottom bar shows the vim mode
+        # chip, run mode, kernel state, theme and key hints.
         self._status.update(
             Text.assemble(
-                f" {'lazy' if self.lazy else 'reactive'}  ·  {self.kernel_state}",
+                (f" {mode.upper()} ", _MODE_STYLES[mode]) if show_mode else "",
+                f"  {'lazy' if self.lazy else 'reactive'}  ·  {self.kernel_state}  ·  {self.theme}",
                 (f"    {KEY_HINTS}", "dim"),
             )
         )
@@ -591,8 +603,15 @@ class GPython(App):
                 cell.end_run("ok" if ok and cell.source == source else "error" if not ok else "stale")
                 if not ok:
                     failed.add(cid)
+                self._keep_focus_visible(cell)
 
             await self.refresh_vars(graph)
+
+    def _keep_focus_visible(self, ran: Cell) -> None:
+        """New output above the focused cell pushes it down; keep the user's cell on screen."""
+        current = self.current_cell()
+        if current is not None and current is not ran:
+            self.call_after_refresh(current.scroll_visible, animate=False, immediate=True)
 
     async def refresh_vars(self, graph: Graph) -> None:
         names = set().union(*graph.defs.values()) if graph.defs else set()
@@ -1117,8 +1136,21 @@ class GPython(App):
                 return
         self.notify(f"Unknown command: {command}  (try :help)", severity="error")
 
+    def action_pick_theme(self) -> None:
+        """Theme picker with live preview; the config is written only on confirm."""
+        if not isinstance(self.screen, ThemePicker):
+            self.push_screen(ThemePicker(), self._theme_picked)
+
+    def _theme_picked(self, name: str | None) -> None:
+        if name:
+            config.save({"theme": name})
+            self._loaded_theme = name
+
     def get_system_commands(self, screen):
-        yield from super().get_system_commands(screen)
+        for command in super().get_system_commands(screen):
+            if command.title != "Theme":  # Textual's picker has no live preview; ours replaces it
+                yield command
+        yield SystemCommand("Change theme", "Pick a colorscheme with live preview", self.action_pick_theme)
         for names, desc, handler in self.ex_commands():
             if names[0] in ("q", "q!", "help", "set"):
                 continue

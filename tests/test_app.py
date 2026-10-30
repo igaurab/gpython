@@ -76,17 +76,18 @@ def test_reactive_run_edit_delete_save(tmp_path):
             assert cells[2].editor.mode == "insert" and cells[0].editor.mode == "insert"  # the mode is global
             await pilot.press("escape")
             assert cells[1].editor.mode == "normal"
-            assert "NORMAL" not in str(app.query_one("#status").render())
+            assert "NORMAL" in str(app.query_one("#status").render())
             assert "NORMAL" not in app.sub_title and app.sub_title.startswith(str(path))
             assert app.dirty and app.sub_title.endswith("•")  # a cell was added
 
-            # The mode chip in the top bar follows the global vim mode.
-            mode = app.query_one("#mode", Static)
-            assert "NORMAL" in str(mode.render())
+            # The status bar shows the global vim mode; the header chip shows the kernel.
+            status = app.query_one("#status", Static)
+            assert "NORMAL" in str(status.render())
             await pilot.press("i")
-            assert "INSERT" in str(mode.render())
+            assert "INSERT" in str(status.render())
             await pilot.press("escape")
-            assert "NORMAL" in str(mode.render())
+            assert "NORMAL" in str(status.render())
+            assert str(app.query_one("#kernel", Static).render()).startswith("Python 3")
 
     asyncio.run(main())
 

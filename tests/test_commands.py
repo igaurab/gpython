@@ -65,7 +65,7 @@ def test_escape_chain_and_cell_navigation(tmp_path):
         await pilot.press("escape")
         assert app.focused is first and app.ui_mode == "cell"
         assert selected(app) == [first]
-        assert "CELL" in str(app.query_one("#mode").render())
+        assert "CELL" in str(app.query_one("#status").render())
         await pilot.press("escape")  # stays in cell mode
         assert app.focused is first
 
