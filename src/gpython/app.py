@@ -41,6 +41,8 @@ _MODE_STYLES = {
     "normal": "bold black on yellow",
     "cell": "bold black on cyan",
     "files": "bold black on magenta",
+    "visual": "bold black on bright_magenta",
+    "v-line": "bold black on bright_magenta",
 }
 EXPLORER_WIDTH = 34
 
@@ -318,7 +320,7 @@ class GPython(App):
             return "files"
         if not VimTextArea.enabled or VimTextArea.mode == "insert":
             return "insert"
-        return "normal"
+        return getattr(focused, "visual_mode", "") or "normal"
 
     def watch_theme(self, name: str) -> None:
         """Point every editor and cell header at the new theme; remember the choice."""

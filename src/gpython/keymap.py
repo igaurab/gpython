@@ -5,7 +5,7 @@ test checks that every App binding in app.py is listed here.
 
 Modes: "any" works everywhere (App bindings), "cell" is Jupyter-style command
 mode (the cell itself is selected), "normal" is vim normal mode inside an editor,
-"files" is the file explorer sidebar.
+"visual" is vim visual mode (v, V) in an editor, "files" is the file explorer sidebar.
 """
 
 from __future__ import annotations
@@ -56,6 +56,25 @@ KEYMAP: list[tuple[str, str, str]] = [
     ("normal", ":", "Ex command (:help lists them)"),
     ("normal", "gt / gT / 2gt", "Next / previous / second tab"),
     ("normal", "space f f", "Find files: fuzzy search by name in a popup, enter opens in a tab (:find)"),
+    ("normal", "yy / Y / 3yy", "Copy (yank) lines; yw y$ yi( ... copy a motion or text object"),
+    ("normal", "p / P / 2p", "Put the copied text after / before the cursor"),
+    ("normal", "dw / d$ / di\" / dap", "Delete a motion or text object (c changes, y copies the same way)"),
+    ("normal", "f F t T ; ,", "Find a character on the line, repeat / reverse the last find"),
+    ("normal", "W B E / % / { }", "WORD motions / matching bracket / previous, next blank line"),
+    ("normal", ">> / <<", "Indent / dedent the line (3>> three lines)"),
+    ("normal", "v / V / gv", "Visual mode: charwise / linewise / select the last area again"),
+    ("visual", "motions", "Every normal motion extends the selection: h j k l w b e W B E 0 ^ $ gg G 5G f t ; , % { }"),
+    ("visual", "iw aw ip ap i\" a\" i( a( i[ a[ i{ a{", "Select a word, paragraph, quoted string or bracket block"),
+    ("visual", "o", "Jump to the other end of the selection"),
+    ("visual", "y / Y", "Copy the selection / its lines"),
+    ("visual", "d x / X D", "Delete the selection / its lines"),
+    ("visual", "c s / C S R", "Change the selection / its lines (insert mode)"),
+    ("visual", "p / P", "Replace the selection with the copied text (p keeps the replaced text)"),
+    ("visual", "> / <", "Indent / dedent the lines (3> three levels)"),
+    ("visual", "J / gJ", "Join the lines (gJ without spaces)"),
+    ("visual", "~ / u / U", "Swap case / lower case / upper case"),
+    ("visual", "r<char>", "Replace every selected character"),
+    ("visual", "v / V / escape", "Switch charwise / linewise, or leave visual mode"),
     ("cell", "j / k", "Select next / previous cell (counts: 3j)"),
     ("cell", "gg / G / 3G", "Select first / last / third cell"),
     ("cell", "enter", "Edit cell (vim normal mode; markdown: show the source)"),
@@ -95,6 +114,7 @@ KEYMAP: list[tuple[str, str, str]] = [
 MODE_TITLES = {
     "any": "Everywhere",
     "normal": "Vim normal mode (in the editor)",
+    "visual": "Vim visual mode (v, V)",
     "cell": "Cell mode (esc esc)",
     "files": "File explorer (ctrl+b)",
 }
