@@ -101,6 +101,7 @@ KEYMAP: list[tuple[str, str, str]] = [
     ("cell", "c", "Collapse / expand output"),
     ("cell", "C", "Clear output"),
     ("cell", "l", "Toggle line numbers"),
+    ("cell", "t", "Show / hide each cell's run time in its header (off by default; saved as timing in the config; :set time|notime)"),
     ("cell", "/", "Jump to cell by number, or select the next cell matching text (highlighted)"),
     ("cell", "n / N", "Select the next / previous cell matching the last search"),
     ("cell", ":", "Ex command"),

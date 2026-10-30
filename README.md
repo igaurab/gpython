@@ -116,6 +116,7 @@ selected as a cell), deleting, undoing, searching or switching tabs keeps it; `e
 | `h` | Hide / show the cell's code (marimo `hide_code`) |
 | `o` / `O` | Collapse output / clear output |
 | `l` | Toggle line numbers |
+| `t` | Show / hide each cell's run time in its header (off by default; `:set time`, `timing = true` in the config) |
 | `gt` / `gT` | Next / previous tab |
 | `/` | Jump to `/3`, or select the next cell matching `/text` |
 | `n` / `N` | Select the next / previous cell matching the last search |
@@ -125,12 +126,14 @@ selected as a cell), deleting, undoing, searching or switching tabs keeps it; `e
 Ex commands: `:w [file]`, `:wa`, `:q`, `:q!`, `:wq`, `:qa`, `:wqa`, `:e file`,
 `:sp [file]`, `:vs [file]`, `:only`, `:tabnew [file]`, `:tabclose`, `:tabn`,
 `:tabp`, `:ls`, `:noh`, `:Ex`, `:run`, `:runabove`, `:runbelow`, `:stale`, `:restart`,
-`:clear`, `:set vim|novim|lazy|nolazy|nu|nonu`, `:vars`, `:md`, `:code`,
+`:clear`, `:set vim|novim|lazy|nolazy|nu|nonu|time|notime`, `:vars`, `:md`, `:code`,
 `:theme [name]`, `:N` (go to cell N), `:help`. `:set novim`, line numbers, the
-run mode and the theme are remembered in `~/.config/gpython/config.toml`.
+run time display, the run mode and the theme are remembered in
+`~/.config/gpython/config.toml` (`vim`, `line_numbers`, `timing`, `run_mode`, `theme`).
 
-Cell headers read `✓ c3 [4] 0.42s  defines x · uses y`: display position,
-execution count (like Jupyter's `In [4]`) and run time.
+Cell headers read `✓ c3 [4] 1.25s  defines x · uses y`: display position,
+execution count (like Jupyter's `In [4]`) and, when `t` has turned it on, the run
+time (`12ms`, `420ms`, `1.25s`, `1m 05s`).
 
 Editing: Enter indents after `:` or an open bracket and dedents after
 `return`/`pass`/…; backspace in leading whitespace removes one indent level;

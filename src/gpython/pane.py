@@ -959,6 +959,8 @@ class NotebookPane(Vertical):
                 cell.clear_output()
             case "l":
                 app.set_line_numbers(not VimTextArea.line_numbers)
+            case "t":
+                app.set_timing(not Cell.show_timing)
             case "/":
                 app._open_search()
             case "n" | "N":

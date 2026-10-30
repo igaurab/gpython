@@ -7,6 +7,7 @@ from textual.widgets import DataTable, Input
 
 from gpython import config
 from gpython.app import GPython, Prompt
+from gpython.cell import Cell, format_duration
 from gpython.explorer import Explorer
 from gpython.help import HelpScreen
 from gpython.keymap import KEYMAP
@@ -465,3 +466,27 @@ def test_ctrl_h_and_l_move_between_explorer_and_notebook(tmp_path):
         await pilot.press("escape")
 
     ui(tmp_path, test)
+
+
+def test_cell_timing_toggles_and_persists(tmp_path):
+    async def test(app, pilot):
+        first = app.cells()[0]
+        first.duration = 1.25
+        first.refresh_header()
+        assert not Cell.show_timing and "1.25s" not in first.header_text
+        first.focus()
+        await pilot.press("t")
+        assert Cell.show_timing and "1.25s" in first.header_text
+        assert config.load()["timing"] is True
+        await pilot.press(":", *"set notime", "enter")
+        await pilot.pause()
+        assert "1.25s" not in first.header_text and config.load()["timing"] is False
+        await pilot.press(":", *"time", "enter")
+        await pilot.pause()
+        assert "1.25s" in first.header_text and config.load()["timing"] is True
+
+    ui(tmp_path, test)
+
+
+def test_format_duration():
+    assert [format_duration(s) for s in (0.0123, 0.42, 1.5, 65)] == ["12ms", "420ms", "1.50s", "1m 05s"]

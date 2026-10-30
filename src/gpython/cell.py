@@ -95,6 +95,16 @@ class CellSnapshot:
     spec: notebook.CellSpec | None = None
 
 
+def format_duration(seconds: float) -> str:
+    """A run time as people read it: 12ms, 0.42s, 1m 05s."""
+    if seconds < 1:
+        return f"{seconds * 1000:.0f}ms"
+    if seconds < 60:
+        return f"{seconds:.2f}s"
+    minutes, rest = divmod(seconds, 60)
+    return f"{int(minutes)}m {rest:02.0f}s"
+
+
 class Cell(Vertical):
     """One cell: a header line, an editor and an output area.
 
@@ -110,6 +120,7 @@ class Cell(Vertical):
     """
 
     can_focus = True
+    show_timing = False
 
     def watch_has_focus(self, has_focus: bool) -> None:
         """Textual re-applies the stylesheet to a widget and all its children whenever its focus
@@ -460,7 +471,7 @@ class Cell(Vertical):
 
     def _render_header(self) -> None:
         elapsed = int(time.perf_counter() - self._run_start) if self.status == "running" else 0
-        key = (self.kind, self.status, self.info, self.label, self.exec_count, self.duration, elapsed, self.selected, self.code_hidden, self.folded)
+        key = (self.kind, self.status, self.info, self.label, self.exec_count, self.duration, elapsed, self.selected, self.code_hidden, self.folded, self.show_timing)
         if key == self._header_key:
             return
         self._header_key = key
@@ -482,12 +493,15 @@ class Cell(Vertical):
         else:
             if self.exec_count:
                 parts.append((f" [{self.exec_count}]", "dim"))
-            if self.duration is not None and self.duration >= 0.1:
-                parts.append((f" {self.duration:.2f}s", "dim"))
+            if self.show_timing and self.duration is not None:
+                parts.append((f" {format_duration(self.duration)}", "dim"))
         parts.append(("  " + self.info, "dim"))
         if self.code_hidden:
             parts.append(("  · code hidden (h shows)", "dim italic"))
         self._set_header(self._selected_style(Text.assemble(*parts)))
+
+    def refresh_header(self) -> None:
+        self._render_header()
 
     @property
     def header_text(self) -> str:

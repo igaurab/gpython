@@ -187,6 +187,7 @@ class GPython(App):
             vim = settings.get("vim", True) is not False
         VimTextArea.enabled = vim
         VimTextArea.line_numbers = settings.get("line_numbers", True) is not False
+        Cell.show_timing = settings.get("timing") is True
         bigtext.enabled = settings.get("experimental.true_markdown") is True
         VimTextArea.search = None
 
@@ -843,6 +844,14 @@ class GPython(App):
                 cell.editor.show_line_numbers = on
         config.save({"line_numbers": on})
 
+    def set_timing(self, on: bool) -> None:
+        """t in cell mode, :set time|notime: show each cell's run time in its header; saved as `timing`."""
+        Cell.show_timing = on
+        for pane in self.workspace.buffers:
+            for cell in pane.cells():
+                cell.refresh_header()
+        config.save({"timing": on})
+
     def show_search(self, regex) -> None:
         """Paint the matches of `regex` in every editor (None: no highlight); repaints only on a change."""
         if regex == VimTextArea.search:
@@ -992,7 +1001,8 @@ class GPython(App):
             (("stale", "runstale"), "Run stale cells", lambda arg="": self.action_run_stale()),
             (("restart",), "Restart kernel", lambda arg="": self.action_restart_kernel()),
             (("clear",), "Clear all outputs", lambda arg="": self.pane.clear_outputs()),
-            (("set",), "Options: vim novim lazy nolazy nu nonu", self._ex_set),
+            (("set",), "Options: vim novim lazy nolazy nu nonu time notime", self._ex_set),
+            (("time", "timing"), "Show / hide each cell's run time in its header (t in cell mode; saved)", lambda arg="": self.set_timing(not Cell.show_timing)),
             (("variables", "vars"), "Toggle variables panel", lambda arg="": self.action_toggle_vars()),
             (("lazy",), "Toggle run mode: lazy (dependents only marked stale) / reactive (they re-run); saved (f3)", lambda arg="": self.action_toggle_lazy()),
             (("new",), "New cell below", lambda arg="": self.action_add_cell()),
@@ -1033,8 +1043,10 @@ class GPython(App):
             self.set_lazy(option == "lazy")
         elif option in ("nu", "number", "nonu", "nonumber"):
             self.set_line_numbers(not option.startswith("no"))
+        elif option in ("time", "timing", "notime", "notiming"):
+            self.set_timing(not option.startswith("no"))
         else:
-            self.notify(f"Unknown option: {option or '(none)'}  (vim novim lazy nolazy nu nonu)", severity="error")
+            self.notify(f"Unknown option: {option or '(none)'}  (vim novim lazy nolazy nu nonu time notime)", severity="error")
 
     async def _ex_write(self, arg: str = "") -> None:
         if arg:
