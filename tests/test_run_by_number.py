@@ -56,13 +56,13 @@ def test_r_number_runs_that_cell_and_keeps_the_selection(tmp_path):
         first, _, show, last = app.cells()
         last.focus()
         await pilot.press("r")
-        assert app._run_number is not None
+        assert app._number_sequence is not None
         await pilot.press("3")
         await settle(app, pilot)
         assert show.output_text == "3\n" and show.exec_count > 0
         assert first.status == "ok"
         assert app.focused is last and last.exec_count == 0
-        assert app._run_number is None and "CELL" in status(app)
+        assert app._number_sequence is None and "CELL" in status(app)
 
     ui(tmp_path, test, kernel=True)
 
@@ -96,10 +96,10 @@ def test_no_digit_times_out(tmp_path, monkeypatch):
         cell = app.cells()[0]
         cell.focus()
         await pilot.press("r")
-        assert app._run_number is not None
+        assert app._number_sequence is not None
         await asyncio.sleep(0.4)
         await pilot.pause()
-        assert app._run_number is None
+        assert app._number_sequence is None
         assert "run cell" not in status(app) and "CELL" in status(app)
         await pilot.press("j")
         assert app.focused is app.cells()[1]
@@ -112,9 +112,9 @@ def test_escape_and_other_keys_cancel(tmp_path):
         cells = app.cells()
         cells[0].focus()
         await pilot.press("r", "escape")
-        assert app._run_number is None and "run cell" not in status(app)
+        assert app._number_sequence is None and "run cell" not in status(app)
         await pilot.press("r", "x")
-        assert app._run_number is None and len(app.cells()) == len(cells)
+        assert app._number_sequence is None and len(app.cells()) == len(cells)
         assert all(c.exec_count == 0 for c in app.cells())
 
     ui(tmp_path, test)
@@ -128,10 +128,10 @@ def test_multi_digit_waits_until_unambiguous(tmp_path, monkeypatch):
         cells[0].focus()
         await pilot.press("r", "1")
         await pilot.pause()
-        assert app._run_number is not None
+        assert app._number_sequence is not None
         await pilot.press("2")
         await settle(app, pilot)
-        assert app._run_number is None
+        assert app._number_sequence is None
         assert cells[11].output_text == "cell 12\n"
         assert cells[0].exec_count == 0 and app.focused is cells[0]
 
@@ -146,7 +146,7 @@ def test_single_digit_runs_at_once_when_unambiguous(tmp_path, monkeypatch):
         cells[0].focus()
         await pilot.press("r", "2")
         await settle(app, pilot)
-        assert app._run_number is None and cells[1].output_text == "cell 2\n"
+        assert app._number_sequence is None and cells[1].output_text == "cell 2\n"
 
     ui(tmp_path, test, cells=many_cells(12), kernel=True)
 
@@ -174,7 +174,7 @@ def test_r_1_runs_after_a_pause(tmp_path, monkeypatch):
         await pilot.press("r", "1")
         await asyncio.sleep(0.4)
         await settle(app, pilot)
-        assert app._run_number is None and cells[0].output_text == "cell 1\n"
+        assert app._number_sequence is None and cells[0].output_text == "cell 1\n"
 
     ui(tmp_path, test, cells=many_cells(12), kernel=True)
 
@@ -184,7 +184,7 @@ def test_unknown_cell_number_warns_and_cancels(tmp_path):
         app.cells()[0].focus()
         await pilot.press("r", "9")
         await pilot.pause()
-        assert app._run_number is None
+        assert app._number_sequence is None
         assert any("No cell c9" in n.message for n in app._notifications)
         assert all(c.exec_count == 0 for c in app.cells())
 
@@ -229,13 +229,13 @@ def test_insert_mode_types_r_and_space(tmp_path):
         last.editor.move_cursor((0, 5))
         await pilot.press("space", "r", "3")
         await pilot.pause()
-        assert app._run_number is None
+        assert app._number_sequence is None
         assert last.source == "b = 4 r3"
 
     ui(tmp_path, test)
 
 
-def test_ex_run_number(tmp_path):
+def test_ex_number_sequence(tmp_path):
     async def test(app, pilot):
         cells = app.cells()
         cells[3].focus()
@@ -255,7 +255,7 @@ def test_r_a_runs_every_cell(tmp_path):
         cells[2].focus()
         await pilot.press("r", "a")
         await settle(app, pilot)
-        assert app._run_number is None
+        assert app._number_sequence is None
         assert [c.status for c in cells] == ["ok"] * 4
         assert cells[2].output_text == "1 2\n" and cells[3].exec_count == 4
         assert app.focused is cells[2]
@@ -269,7 +269,7 @@ def test_r_c_runs_down_to_the_current_cell_and_leaves_the_rest(tmp_path):
         second.focus()
         await pilot.press("r", "c")
         await settle(app, pilot)
-        assert app._run_number is None
+        assert app._number_sequence is None
         assert first.status == second.status == "ok" and second.output_text == "2\n"
         assert reader.status == "stale" and reader.exec_count == 0
         assert last.status == "idle" and last.exec_count == 0
@@ -302,10 +302,10 @@ def test_a_and_c_after_a_digit_cancel(tmp_path, monkeypatch):
         for key in ("a", "c"):
             await pilot.press("r", "1")
             await pilot.pause()
-            assert app._run_number is not None and "enter runs · esc cancels" in status(app)
+            assert app._number_sequence is not None and "enter runs · esc cancels" in status(app)
             await pilot.press(key)
             await settle(app, pilot)
-            assert app._run_number is None and "run cell" not in status(app)
+            assert app._number_sequence is None and "run cell" not in status(app)
         assert all(c.exec_count == 0 and c.status == "idle" for c in cells)
         assert app.focused is cells[0]
 

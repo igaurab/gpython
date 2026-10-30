@@ -799,8 +799,8 @@ class NotebookPane(Vertical):
     async def cell_command(self, cell: Cell, key: str) -> bool:
         """One key in cell mode (the cell itself has focus). Returns False if unknown."""
         app = self.app
-        if app._run_number is not None:
-            app._run_number.key(key)
+        if app._number_sequence is not None:
+            app._number_sequence.key(key)
             return True
         if key.isdigit() and (key != "0" or self._cmd_count):
             self._cmd_count += key
@@ -808,14 +808,6 @@ class NotebookPane(Vertical):
         had_count = bool(self._cmd_count)
         n = int(self._cmd_count or 1)
         pending, self._cmd_pending, self._cmd_count = self._cmd_pending, "", ""
-        if pending == "g":
-            if key == "g":
-                self.goto_cell(n, "cell")
-            elif key == "t":
-                app.tab_switch(n if had_count else None, 1)
-            elif key == "T":
-                app.tab_switch(None, -n)
-            return True
         if pending == "d":
             if key == "d":
                 await self.delete_cell(n)
@@ -838,7 +830,9 @@ class NotebookPane(Vertical):
                 self.copy_cell()
                 return True
         match key:
-            case "g" | "d" | "y" | " ":
+            case "g":
+                app.start_goto_by_number(self, n if had_count else None)
+            case "d" | "y" | " ":
                 if key == "y":
                     self._kind_before_y = cell.kind
                     await self.set_cell_kind(cell, "code")

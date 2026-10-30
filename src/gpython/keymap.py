@@ -79,6 +79,7 @@ KEYMAP: list[tuple[str, str, str]] = [
     ("visual", "v / V / escape", "Switch charwise / linewise, or leave visual mode"),
     ("cell", "j / k", "Select next / previous cell (counts: 3j)"),
     ("cell", "gg / G / 3G", "Select first / last / third cell"),
+    ("cell", "g 6", "Select cell c6 (any number: goes once unambiguous, on enter or after a pause; 3 s to start)"),
     ("cell", "enter", "Edit cell (vim normal mode; markdown: show the source)"),
     ("cell", "i", "Edit cell (insert mode)"),
     ("cell", "a / b", "Insert cell above / below"),

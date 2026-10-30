@@ -1,10 +1,11 @@
-"""Run a cell by its number: `r 6` in cell mode, `space r 6` in vim normal mode.
+"""Act on a cell by its number: `r 6` runs c6, `g 6` goes to c6 (cell mode), `space r 6` runs it from vim normal mode.
 
-While it waits, the app sends every key here (GPython.on_event) and the bottom bar
-shows what has been typed. The number runs as soon as no longer number can name a
+While a sequence waits, the app sends every key here (GPython.on_event) and the bottom bar
+shows what has been typed. The number is used as soon as no longer number can name a
 cell, on enter, or after a short pause; with no digit at all it gives up after
-TIMEOUT seconds, like a vim key sequence. Before any digit, `a` runs every cell
-and `c` runs the cells from the first one down to the current one.
+TIMEOUT seconds, like a vim key sequence. Before any digit, a sequence may also take
+letters: `r a` runs every cell, `r c` runs the cells from the first one down to the
+current one; `g g` goes to the first cell (or the counted one), `g t` / `g T` switch tabs.
 """
 
 from __future__ import annotations
@@ -15,25 +16,30 @@ TIMEOUT = 3.0
 PAUSE = 0.8
 
 
-class RunByNumber:
-    """One pending "run cell number …" sequence for `pane`."""
+class CellNumberSequence:
+    """One pending "<verb> cell number …" sequence for `pane`; subclasses say what the number does."""
 
-    def __init__(self, app, pane) -> None:
+    badge = ""
+    badge_style = ""
+    verb = ""
+    letters_hint = ""
+    finish_hint = "enter"
+
+    def __init__(self, app, pane, count: int | None = None) -> None:
         self.app = app
         self.pane = pane
+        self.count = count
         self.digits = ""
         self._timer = app.set_timer(TIMEOUT, self.cancel)
 
     def status(self) -> Text:
-        hint = "   number · a all · c up to here · enter runs · esc cancels" if not self.digits else "   enter runs · esc cancels"
-        return Text.assemble((" RUN ", "bold black on green"), f"  run cell: c{self.digits}_", (hint, "dim"))
+        hint = f"   number · {self.letters_hint} · {self.finish_hint} · esc cancels" if not self.digits else f"   {self.finish_hint} · esc cancels"
+        return Text.assemble((f" {self.badge} ", self.badge_style), f"  {self.verb} cell: c{self.digits}_", (hint, "dim"))
 
     def key(self, key: str) -> None:
-        if key in ("a", "c") and not self.digits:
-            self.cancel()
-            if self.pane.is_attached:
-                self.pane.run_all() if key == "a" else self.pane.run_relative(False, inclusive=True)
-        elif key.isdigit():
+        if not self.digits and self.letter(key):
+            return
+        if key.isdigit():
             self.digits += key
             number = int(self.digits)
             if number == 0 or number * 10 > self.pane.cell_count():
@@ -50,6 +56,10 @@ class RunByNumber:
         else:
             self.cancel()
 
+    def letter(self, key: str) -> bool:
+        """A letter typed before any digit; True if it ended the sequence with an action."""
+        return False
+
     def _restart_timer(self, delay: float, callback) -> None:
         self._timer.stop()
         self._timer = self.app.set_timer(delay, callback)
@@ -58,8 +68,55 @@ class RunByNumber:
         number = int(self.digits)
         self.cancel()
         if self.pane.is_attached:
-            self.app.run_worker(self.pane.run_number(number), group="run-number")
+            self.perform(number)
+
+    def perform(self, number: int) -> None:
+        raise NotImplementedError
 
     def cancel(self) -> None:
         self._timer.stop()
-        self.app.end_run_by_number(self)
+        self.app.end_number_sequence(self)
+
+
+class RunByNumber(CellNumberSequence):
+    badge = "RUN"
+    badge_style = "bold black on green"
+    verb = "run"
+    letters_hint = "a all · c up to here"
+    finish_hint = "enter runs"
+
+    def letter(self, key: str) -> bool:
+        if key not in ("a", "c"):
+            return False
+        self.cancel()
+        if self.pane.is_attached:
+            self.pane.run_all() if key == "a" else self.pane.run_relative(False, inclusive=True)
+        return True
+
+    def perform(self, number: int) -> None:
+        self.app.run_worker(self.pane.run_number(number), group="run-number")
+
+
+class GotoByNumber(CellNumberSequence):
+    badge = "GOTO"
+    badge_style = "bold black on cyan"
+    verb = "go to"
+    letters_hint = "g first · t / T next / previous tab"
+    finish_hint = "enter goes"
+
+    def letter(self, key: str) -> bool:
+        if key not in ("g", "t", "T"):
+            return False
+        self.cancel()
+        if not self.pane.is_attached:
+            return True
+        if key == "g":
+            self.pane.goto_cell(self.count or 1, "cell")
+        elif key == "t":
+            self.app.tab_switch(self.count, 1)
+        else:
+            self.app.tab_switch(None, -(self.count or 1))
+        return True
+
+    def perform(self, number: int) -> None:
+        self.pane.goto_cell(number, "cell", clamp=False)

@@ -215,7 +215,7 @@ class GPython(App):
         self._status_key: tuple | None = None
         self._cell_clipboard: CellSnapshot | None = None
         self._prompt_mode = "normal"
-        self._run_number = None
+        self._number_sequence = None
 
     def get_default_screen(self) -> Screen:
         return NotebookScreen(id="_default")
@@ -386,9 +386,9 @@ class GPython(App):
         if kernel_state is not None:
             pane.set_kernel_state(kernel_state)
             return
-        if self._run_number is not None:
+        if self._number_sequence is not None:
             self._status_key = None
-            self._status.update(self._run_number.status(), layout=False)
+            self._status.update(self._number_sequence.status(), layout=False)
             return
         mode = self.ui_mode
         name = pane.title
@@ -731,26 +731,35 @@ class GPython(App):
         """r (cell mode) / space r (vim normal mode): wait for a cell number, then run that cell."""
         from .runnumber import RunByNumber
 
-        if self._run_number is not None:
-            self._run_number.cancel()
-        self._run_number = RunByNumber(self, pane or self.pane)
+        self._start_number_sequence(RunByNumber(self, pane or self.pane))
+
+    def start_goto_by_number(self, pane: NotebookPane | None = None, count: int | None = None) -> None:
+        """g (cell mode): wait for a cell number and select that cell; g g, g t, g T still work."""
+        from .runnumber import GotoByNumber
+
+        self._start_number_sequence(GotoByNumber(self, pane or self.pane, count))
+
+    def _start_number_sequence(self, sequence) -> None:
+        if self._number_sequence is not None:
+            self._number_sequence.cancel()
+        self._number_sequence = sequence
         self.update_status()
 
-    def end_run_by_number(self, sequence) -> None:
-        if self._run_number is sequence:
-            self._run_number = None
+    def end_number_sequence(self, sequence) -> None:
+        if self._number_sequence is sequence:
+            self._number_sequence = None
             self.update_status()
 
     async def on_event(self, event: events.Event) -> None:
-        """While a run-by-number waits, its keys go to it instead of the focused widget."""
+        """While a cell-number sequence waits, its keys go to it instead of the focused widget."""
         if (
-            self._run_number is not None
+            self._number_sequence is not None
             and isinstance(event, events.Key)
             and not event.is_forwarded
             and isinstance(self.screen, NotebookScreen)
         ):
             key = "escape" if _is_escape(event) else event.character if event.is_printable and event.character else event.key
-            self._run_number.key(key)
+            self._number_sequence.key(key)
             return
         await super().on_event(event)
 
