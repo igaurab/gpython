@@ -1,7 +1,7 @@
 [project]
-name = "gpython"
+name = "gpynb"
 version = "0.1.0"
-description = "Add your description here"
+description = "A reactive Python notebook in the terminal, built on Textual"
 readme = "README.md"
 authors = [
     { name = "igaurab", email = "dev@igaurab.com" }
@@ -26,3 +26,6 @@ build-backend = "uv_build"
 dev = [
     "pytest>=9.2.0",
 ]
+
+[tool.uv.build-backend]
+module-name = "gpython"

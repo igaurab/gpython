@@ -18,6 +18,11 @@ since, or their inputs changed), then the cell. What happens to the cells
 
 
 ```sh
+uv tool install gpynb        # installs the `gpython` command globally
+uvx --from gpynb gpython     # or run it once without installing
+```
+
+```sh
 ./gpython                    # empty untitled notebook
 ./gpython script.py          # a plain script is split into cells automatically
 ./gpython a.py b.py          # several files: one tab each (gt / gT switch)
