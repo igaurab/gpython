@@ -109,7 +109,13 @@ Visuals:
    `VimTextArea.DeleteCell(editor, count)` for `dd` instead of deleting lines; the app routes it through
    `action_delete_cell` (undo snapshot, dependents re-run), a count deletes n cells from the current one.
    `cc`, `S`, `D`, `d$`, `dw`, `dj`/`dk` keep their text meaning; `0D` clears a line without removing the cell.
-6. **Markdown cells** – full implementation is plan 04; this plan only guarantees the hooks exist
+6. **No scroll jump / flicker on shift+enter (user bug).** Running must not move the viewport unless the
+   newly focused cell is not fully visible (then scroll minimally, `animate=False, immediate=True`); focus
+   editors with `focus(scroll_visible=False)`. Replace the eager `clear_output()` in `run_cells` with a deferred
+   clear (`add_output("clear_output", {"wait": True})`), and clear explicitly after execution if no output
+   arrived, so the output area does not collapse and re-expand. Test with 30 cells: `scroll_offset.y` of
+   `#cells` is unchanged after shift+enter on a cell whose successor is visible.
+7. **Markdown cells** – full implementation is plan 04; this plan only guarantees the hooks exist
    (`set_cell_kind` stub, `m`/`y`, `:md`/`:code` rows) so plan 04 is a drop-in.
 
 ## Dirty tracking and quitting
