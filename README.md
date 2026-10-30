@@ -21,13 +21,13 @@ Everywhere:
 
 | Key | Action |
 |---|---|
-| `shift+enter` | Run cell, then go to the cell below (a new cell only on the last one) |
-| `ctrl+enter` / `ctrl+shift+enter` / `ctrl+e` | Run cell, stay |
+| `shift+enter` | Run cell (markdown: render it), then go to the cell below (a new cell only on the last one) |
+| `ctrl+enter` / `ctrl+shift+enter` / `ctrl+e` | Run cell (markdown: render it), stay |
 | `alt+enter` | Run cell and insert a new cell below |
 | `f5` / `f4` | Run all / run stale cells |
 | `ctrl+k` | Interrupt running code |
 | `ctrl+n` / `ctrl+shift+n` | New cell below / above |
-| `ctrl+d` | Delete cell (dependents re-run; `z` in cell mode undoes) |
+| `ctrl+d` | Delete cell (dependents re-run; `u` in cell mode undoes) |
 | `alt+↑/↓`, `ctrl+↑/↓` | Previous / next cell |
 | `ctrl+home` / `ctrl+end` | First / last cell |
 | `alt+shift+↑/↓` | Move the cell up / down |
@@ -59,9 +59,10 @@ Cell mode:
 |---|---|
 | `j` / `k` (`3j`) | Select next / previous cell |
 | `gg` / `G` / `3G` | Select first / last / third cell |
-| `enter` / `i` | Edit the cell (normal / insert mode) |
+| `enter` / `i` | Edit the cell (normal / insert mode); on markdown, show its source |
 | `a` / `b` | Insert a cell above / below |
-| `dd` / `z` | Delete cell / undo the deletion |
+| `dd` | Delete cell |
+| `u` (or `z`) | Undo the last cell action: delete, move, insert, markdown/code switch |
 | `yy` / `x` / `p` / `P` | Copy / cut / paste below / paste above |
 | `J` / `K` | Move the cell down / up |
 | `m` / `y` | Markdown / code cell |
@@ -83,6 +84,25 @@ Tab inserts four spaces.
 
 `shift+enter` and `ctrl+enter` need a terminal that reports them (Ghostty,
 Kitty, WezTerm, iTerm2). In Terminal.app use `ctrl+e` and `ctrl+n`.
+
+## Markdown cells
+
+A markdown cell shows rendered text (headings, lists, code, links) instead of an
+editor, and it never runs.
+
+- Make one: `ctrl+n` for a new cell, then `escape escape` (cell mode; one `escape` with `--no-vim`) and `m`. Or type
+  `:md` in any cell. `y` or `:code` turns it back into code. Turning a code cell
+  into markdown removes its variables, so the cells that used them re-run (and fail).
+- Edit: select the cell and press `enter` (or `i`), or double-click it.
+- Render: `escape escape` (back to cell mode), `shift+enter` (render and go to
+  the next cell), `ctrl+enter` (render and stay), or just move to another cell.
+- Files: in `.py` notebooks a markdown cell is `# %% [markdown]` followed by
+  lines starting with `# ` (the Jupytext format). In plain scripts without
+  markers, a top-level `"""text"""` string is a markdown cell. `.ipynb`
+  markdown cells load and save as markdown cells.
+
+A code cell whose last line is a bare string (`"""note"""`) does not print
+that string as its result.
 
 ## Rules (same as marimo)
 

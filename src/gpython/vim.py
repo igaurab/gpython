@@ -245,11 +245,11 @@ class VimTextArea(TextArea):
                 event.stop()
                 event.prevent_default()
                 self.post_message(self.LeaveEditor(self))
-            elif event.key == "tab" and self._word_before_cursor():
+            elif event.key == "tab" and self.language == "python" and self._word_before_cursor():
                 event.stop()
                 event.prevent_default()
                 self.run_worker(self._complete(), exclusive=True, group="complete")
-            elif event.key == "enter":
+            elif event.key == "enter" and self.language == "python":  # markdown: a plain newline
                 event.stop()
                 event.prevent_default()
                 self._newline()
@@ -258,7 +258,7 @@ class VimTextArea(TextArea):
                 event.prevent_default()
             else:
                 await super()._on_key(event)
-                if event.is_printable:
+                if event.is_printable and self.language == "python":
                     self._schedule_autocomplete()
             return
         if _is_escape(event):

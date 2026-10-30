@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
+import dataclasses
 import itertools
 import time
 from dataclasses import dataclass
@@ -22,6 +24,7 @@ from . import config, notebook
 from .graph import Graph, build
 from .help import HelpScreen
 from .kernel import Kernel
+from .markdown import MarkdownView
 from .outputs import OutputArea
 from .themepicker import ThemePicker
 from .themes import CUSTOM_APP_THEMES, DEFAULT_THEME, editor_themes, palette_for
@@ -48,6 +51,19 @@ _CELL_KEYS = {"escape", "enter", "up", "down", "shift+j", "shift+k", "shift+o", 
 _ids = itertools.count(1)
 
 
+def ends_with_string(source: str) -> bool:
+    """True when the last top-level statement is a bare string (a docstring-like note).
+
+    IPython would echo such a string as the cell's result; gpython hides that echo.
+    """
+    try:
+        body = ast.parse(source).body
+    except (SyntaxError, ValueError):  # magics, null bytes: let the kernel decide
+        return False
+    last = body[-1] if body else None
+    return isinstance(last, ast.Expr) and isinstance(last.value, ast.Constant) and isinstance(last.value.value, str)
+
+
 @dataclass
 class CellSnapshot:
     """Everything needed to bring a deleted (or copied) cell back."""
@@ -57,6 +73,7 @@ class CellSnapshot:
     kind: str
     ran: bool
     outputs: list[tuple[str, object]]
+    spec: notebook.CellSpec | None = None  # the loaded spec (keeps file-format extras), if any
 
 
 class Prompt(ModalScreen[str | None]):
@@ -79,19 +96,27 @@ class Prompt(ModalScreen[str | None]):
 
 
 class Cell(Vertical):
-    """One code cell: a header line, an editor and an output area.
+    """One cell: a header line, an editor and an output area.
 
     The cell itself can take focus: that is "cell mode" (Jupyter's command mode),
     where keys act on whole cells (see keymap.py and GPython.cell_command).
+
+    `kind` is "code" or "markdown". A markdown cell never runs; it has two views:
+    rendered (a MarkdownView, the editor hidden) and editing (the editor shown).
     """
 
     can_focus = True
 
-    def __init__(self, source: str = "", kind: str = "code") -> None:
+    def __init__(self, source: str = "", kind: str = "code", spec: notebook.CellSpec | None = None) -> None:
         self.cid = f"c{next(_ids)}"  # internal, stable graph key
         super().__init__(id=self.cid)
         self.initial_source = source
         self.kind = kind
+        self.spec = spec  # the CellSpec this cell was loaded from: save keeps its extra fields
+        self.editing = kind == "code"  # markdown cells start rendered
+        self.echo_suppressed = False  # hide the execute_result of a cell ending in a bare string
+        if kind == "markdown":
+            self.add_class("-markdown")
         self.label = self.cid  # what the header shows: the display position, see set_label
         self.ran_source: str | None = None
         self.last_defs: set[str] = set()
@@ -106,15 +131,21 @@ class Cell(Vertical):
         self._header: Static | None = None
         self._editor: VimTextArea | None = None
         self._outputs: OutputArea | None = None
+        self._view: MarkdownView | None = None  # created for markdown cells only
         self._note: Static | None = None
         self._header_key: tuple | None = None
 
     def compose(self) -> ComposeResult:
         self._header = Static(classes="cell-header")
-        self._editor = VimTextArea(self.initial_source)
+        markdown = self.kind == "markdown"
+        self._editor = VimTextArea(self.initial_source, language="markdown" if markdown else "python")
         self._outputs = OutputArea()
         yield self._header
         yield self._editor
+        if markdown:
+            self._editor.display = False
+            self._view = MarkdownView(self.initial_source)
+            yield self._view
         yield self._outputs
 
     def on_mount(self) -> None:
@@ -153,6 +184,11 @@ class Cell(Vertical):
         self._render_header()
 
     def set_info(self, graph: Graph) -> None:
+        if self.kind == "markdown":
+            if self.info:
+                self.info = ""
+                self._render_header()
+            return
         parts = []
         if graph.defs.get(self.cid):
             parts.append("defines " + ", ".join(sorted(graph.defs[self.cid])))
@@ -162,6 +198,71 @@ class Cell(Vertical):
             parts.append("mutates " + ", ".join(sorted(graph.mutates[self.cid])))
         self.info = "  ·  ".join(parts)
         self._render_header()
+
+    # ── kind: code or markdown ───────────────────────────────────────────
+
+    @property
+    def rendered(self) -> bool:
+        """A markdown cell showing its rendered view (the editor is hidden)."""
+        return self.kind == "markdown" and not self.editing
+
+    async def set_kind(self, kind: str) -> None:
+        """Switch the widgets to `kind`. No kernel work: GPython.set_cell_kind does that."""
+        if kind == self.kind:
+            return
+        self.kind = kind
+        self.set_class(kind == "markdown", "-markdown")
+        self.ran_source = None
+        self.last_defs = set()
+        self.exec_count = 0
+        self.duration = None
+        self.info = ""
+        self.clear_output()
+        self.set_status("idle")
+        self._header_key = None
+        self._render_header()
+        if self._editor is None:
+            return
+        self._editor.language = "markdown" if kind == "markdown" else "python"
+        if kind == "code":
+            self.start_editing()
+        elif self.is_mounted and self.screen.focused is self._editor:
+            self.editing = True  # keep typing; it renders when the editor is left
+        else:
+            await self.show_rendered()
+
+    def start_editing(self) -> None:
+        """Show the editor (markdown: hide the rendered view). The caller focuses it."""
+        self.editing = True
+        if self._editor is not None:
+            self._editor.display = True
+        if self._view is not None:
+            self._view.display = False
+
+    async def show_rendered(self) -> None:
+        """Markdown cells: render the editor's text and show it instead of the editor."""
+        if self.kind != "markdown" or self._editor is None:
+            return
+        self.editing = False
+        if self._view is None:
+            self._view = MarkdownView(self.source)
+            self._view.display = False
+            await self.mount(self._view, after=self._editor)
+        elif self._view.text != self.source:
+            await self._view.update(self.source)
+        if not self.editing:  # not re-opened while rendering
+            self._editor.display = False
+            self._view.display = True
+
+    async def _render_if_left(self) -> None:
+        if self.kind == "markdown" and self.editing and self.is_mounted and self.screen.focused is not self._editor:
+            await self.show_rendered()
+
+    @on(MarkdownView.EditRequested)
+    def _edit_requested(self, event: MarkdownView.EditRequested) -> None:
+        event.stop()
+        self.start_editing()
+        self.app.select(self, "normal")
 
     # ── running ──────────────────────────────────────────────────────────
 
@@ -197,6 +298,8 @@ class Cell(Vertical):
         self._update_note()
 
     def add_output(self, kind: str, content: dict) -> None:
+        if kind == "execute_result" and self.echo_suppressed:
+            return
         log = self._log
         if kind == "clear_output" and content.get("wait"):
             self._log_clear_pending = True
@@ -260,10 +363,15 @@ class Cell(Vertical):
         if self._header is None:
             return
         elapsed = int(time.perf_counter() - self._run_start) if self.status == "running" else 0
-        key = (self.status, self.info, self.label, self.exec_count, self.duration, elapsed)
+        key = (self.kind, self.status, self.info, self.label, self.exec_count, self.duration, elapsed)
         if key == self._header_key:
             return
         self._header_key = key
+        if self.kind == "markdown":
+            palette = getattr(self.app, "palette", None)
+            dim = palette.comment if palette is not None else "dim"
+            self._header.update(Text.assemble(("¶ ", dim), (self.label, "bold"), ("  MARKDOWN", dim)))
+            return
         icon, style = STATUS_ICONS[self.status]
         palette = getattr(self.app, "palette", None)
         if palette is not None:  # colour the icon from the current theme
@@ -288,6 +396,10 @@ class Cell(Vertical):
 
     def _on_descendant_blur(self, event: events.DescendantBlur) -> None:
         self.remove_class("-focused")
+        if self.kind == "markdown" and self.editing and event.widget is self._editor:
+            # Focus left the markdown editor (escape, another cell): render. Checked after
+            # the refresh, as a ':' prompt or a popup takes focus only for a moment.
+            self.call_after_refresh(self._render_if_left)
 
     def on_focus(self) -> None:
         self.add_class("-selected")
@@ -317,8 +429,8 @@ class Cell(Vertical):
         self.focus(scroll_visible=False)
 
     def on_click(self, event) -> None:
-        """Clicking the header selects the cell (cell mode); anywhere else focuses its editor."""
-        if event.widget is self._header:
+        """Clicking the header (or rendered markdown) selects the cell; anywhere else focuses its editor."""
+        if event.widget is self._header or self.rendered:  # double click edits (EditRequested)
             self.focus(scroll_visible=False)
         elif not isinstance(event.widget, VimTextArea):
             self.editor.focus()
@@ -390,16 +502,19 @@ class GPython(App):
         self.kernel = Kernel(file=path)
         self._run_lock = asyncio.Lock()
         self.loaded = asyncio.Event()  # set once every cell of the file is mounted
-        self._pending_sources: list[str] = []  # cells not mounted yet (progressive mount)
+        self._pending_sources: list[notebook.CellSpec] = []  # cells not mounted yet (progressive mount)
         self._cells_box: VerticalScroll | None = None
         self._status: Static | None = None
         self._kernel_chip: Static | None = None
         self.kernel_label = "Python …"  # filled in once the kernel reports its version
         self._status_key: tuple | None = None
-        self._deleted: list[CellSnapshot] = []  # undo stack for cell deletion
+        # Cell-level undo (u / z in cell mode), newest last: ("delete", snapshot),
+        # ("move", cid, from_index, to_index), ("insert", cid), ("kind", cid, old_kind).
+        self._undo: list[tuple] = []
         self._cell_clipboard: CellSnapshot | None = None
         self._cmd_pending = ""  # cell mode: first key of gg / dd / yy
         self._cmd_count = ""
+        self._kind_before_y: str | None = None  # `y` makes a cell code at once; `yy` (copy) undoes that
         self._prompt_mode = "normal"  # ui mode when a ':' or '/' prompt was opened
 
     def on_load(self) -> None:
@@ -408,15 +523,15 @@ class GPython(App):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        sources = [""]
+        specs = [notebook.CellSpec("")]
         if self.path is not None:
             specs, self.markers = notebook.load_cells(self.path)
-            sources = [spec.source for spec in specs] or [""]
-        sources, self._pending_sources = sources[:INITIAL_CELLS], sources[INITIAL_CELLS:]
+            specs = specs or [notebook.CellSpec("")]
+        specs, self._pending_sources = specs[:INITIAL_CELLS], specs[INITIAL_CELLS:]
         with Horizontal():
             with VerticalScroll(id="cells") as self._cells_box:
-                for n, source in enumerate(sources, 1):
-                    cell = Cell(source)
+                for n, spec in enumerate(specs, 1):
+                    cell = Cell(spec.source, kind=spec.kind, spec=spec)
                     cell.set_label(n)
                     yield cell
             table = DataTable(id="vars", cursor_type="row", zebra_stripes=True)
@@ -434,13 +549,17 @@ class GPython(App):
         self.update_status()
         if self._theme_warning:
             self.notify(self._theme_warning, severity="warning")
-        self.cells()[0].editor.focus()
+        first = self.cells()[0]
+        if first.rendered:
+            first.focus()
+        else:
+            first.editor.focus()
         self.call_after_refresh(lambda: self.run_worker(self._mount_rest(), group="mount"))
 
     async def _mount_rest(self) -> None:
         """Mount the cells left out of compose(), a batch at a time, after the first frame."""
         while self._pending_sources:
-            batch = [Cell(source) for source in self._pending_sources[:MOUNT_BATCH]]
+            batch = [Cell(spec.source, kind=spec.kind, spec=spec) for spec in self._pending_sources[:MOUNT_BATCH]]
             del self._pending_sources[:MOUNT_BATCH]
             first = len(self._cells_box.children) + 1
             for n, cell in enumerate(batch, first):
@@ -546,7 +665,8 @@ class GPython(App):
             cell.set_label(n)
 
     def graph(self) -> Graph:
-        return build({c.cid: c.source for c in self.cells()})
+        """The dependency graph of the code cells (markdown cells never run)."""
+        return build({c.cid: c.source for c in self.cells() if c.kind == "code"})
 
     def refresh_info(self) -> Graph:
         graph = self.graph()
@@ -559,7 +679,7 @@ class GPython(App):
         await self.loaded.wait()  # the graph needs every cell
         async with self._run_lock:
             graph = self.refresh_info()
-            by_id = {c.cid: c for c in self.cells()}
+            by_id = {c.cid: c for c in self.cells() if c.kind == "code"}
             roots = graph.expand_roots([r for r in roots if r in by_id])
             if downstream is None:
                 downstream = not self.lazy
@@ -589,6 +709,7 @@ class GPython(App):
                     continue
 
                 source = cell.source
+                cell.echo_suppressed = ends_with_string(source)
                 await self.kernel.delete(cell.last_defs | graph.defs[cid])
                 # Deferred clear: the old output stays until the first new output arrives,
                 # so the cell does not collapse and grow again (the page would jump).
@@ -622,8 +743,11 @@ class GPython(App):
             table.add_row(*row)
 
     def write_file(self) -> None:
-        sources = [c.source for c in self.cells()] + self._pending_sources
-        notebook.save(self.path, sources, self.markers)
+        cells = [
+            dataclasses.replace(c.spec, source=c.source, kind=c.kind) if c.spec is not None else notebook.CellSpec(c.source, c.kind)
+            for c in self.cells()
+        ] + self._pending_sources
+        notebook.save(self.path, cells, self.markers)
         self._set_dirty(False)
         self.notify(f"Saved {self.path}")
 
@@ -645,7 +769,7 @@ class GPython(App):
         `mode` "normal"/"insert" also switches the vim mode; "keep" leaves it.
         `row` puts the cursor at the start of that line (-1 = last line).
         """
-        if mode == "cell":
+        if mode == "cell" or cell.rendered:  # rendered markdown: select it; enter edits
             cell.focus(scroll_visible=False)
         else:
             editor = cell.editor
@@ -670,11 +794,20 @@ class GPython(App):
         return True
 
     def _snapshot(self, cell: Cell, index: int) -> CellSnapshot:
-        return CellSnapshot(index, cell.source, cell.kind, cell.ran_source is not None, cell.outputs_snapshot())
+        return CellSnapshot(index, cell.source, cell.kind, cell.ran_source is not None, cell.outputs_snapshot(), cell.spec)
 
-    async def _insert(self, anchor: Cell | None, above: bool = False, snapshot: CellSnapshot | None = None) -> Cell:
-        """Mount a new (or restored) cell next to `anchor`; renumber; mark dirty."""
-        cell = Cell(snapshot.source, snapshot.kind) if snapshot else Cell()
+    def _push_undo(self, action: tuple) -> None:
+        self._undo.append(action)
+        del self._undo[:-MAX_UNDO]
+
+    async def _insert(
+        self, anchor: Cell | None, above: bool = False, snapshot: CellSnapshot | None = None, record: bool = True
+    ) -> Cell:
+        """Mount a new (or restored) cell next to `anchor`; renumber; mark dirty.
+
+        `record` puts an ("insert", cid) entry on the undo stack (undo removes the cell).
+        """
+        cell = Cell(snapshot.source, snapshot.kind, snapshot.spec) if snapshot else Cell()
         box = self._cells_box
         if anchor is None:
             await box.mount(cell)
@@ -686,6 +819,8 @@ class GPython(App):
             cell.replay(snapshot.outputs)
             if snapshot.ran:
                 cell.set_status("stale")
+        if record:
+            self._push_undo(("insert", cell.cid))
         self.relabel()
         self.refresh_info()
         self._set_dirty()
@@ -699,7 +834,12 @@ class GPython(App):
         if cell is None:
             return
         mode = self.ui_mode
-        self.run_worker(self.run_cells([cell.cid]), group="run")
+        if cell.kind == "markdown":  # "running" markdown renders it; the kernel is not involved
+            if self.focused is not cell:
+                cell.focus(scroll_visible=False)
+            await cell.show_rendered()
+        else:
+            self.run_worker(self.run_cells([cell.cid]), group="run")
         if advance == "next":
             cells = self.cells()
             if cells[-1] is cell and self._pending_sources:
@@ -722,7 +862,7 @@ class GPython(App):
         self.run_worker(self.run_cells([c.cid for c in self.cells()], downstream=True), group="run")
 
     def action_run_stale(self) -> None:
-        stale = [c.cid for c in self.cells() if c.status in ("stale", "idle") and c.source.strip()]
+        stale = [c.cid for c in self.cells() if c.kind == "code" and c.status in ("stale", "idle") and c.source.strip()]
         if stale:
             self.run_worker(self.run_cells(stale, downstream=True), group="run")
 
@@ -741,21 +881,25 @@ class GPython(App):
         self.select(cell, "insert")
 
     async def action_delete_cell(self, count: int = 1) -> None:
-        """Delete `count` cells from the current one (dependents re-run); z in cell mode undoes."""
+        """Delete `count` cells from the current one (dependents re-run); u in cell mode undoes."""
         cell = self.current_cell()
         if cell is None:
             return
-        mode = self.ui_mode
         cells = self.cells()
         index = cells.index(cell)
-        victims = cells[index : index + max(1, count)]
+        await self._remove_cells(cells[index : index + max(1, count)], self.ui_mode)
+
+    async def _remove_cells(self, victims: list[Cell], mode: str, record: bool = True) -> None:
+        """Remove cells (their variables leave the kernel, dependents re-run); select the next one."""
+        cells = self.cells()
+        index = cells.index(victims[0])
         ids = [c.cid for c in victims]
         graph = self.graph()
-        downstream = graph.descendants(ids) - set(ids)
+        downstream = graph.descendants([i for i in ids if i in graph.children]) - set(ids)
         defs = set().union(*(c.last_defs for c in victims))
-        for offset in range(len(victims) - 1, -1, -1):  # z restores the first one first
-            self._deleted.append(self._snapshot(victims[offset], index + offset))
-        del self._deleted[:-MAX_UNDO]
+        if record:
+            for offset in range(len(victims) - 1, -1, -1):  # undo restores the first one first
+                self._push_undo(("delete", self._snapshot(victims[offset], index + offset)))
         await self._cells_box.remove_children(victims)
         if not self.cells():
             await self._cells_box.mount(Cell())
@@ -772,18 +916,50 @@ class GPython(App):
             self.refresh_info()
             self.run_worker(self.refresh_vars(self.graph()), group="run")
 
-    async def action_undo_delete(self) -> None:
-        if not self._deleted:
-            self.notify("Nothing to undo")
-            return
+    async def action_undo(self) -> None:
+        """Undo the newest cell-level action: delete, move, insert or kind change."""
         mode = self.ui_mode
-        snapshot = self._deleted.pop()
-        cells = self.cells()
-        if snapshot.index < len(cells):
-            cell = await self._insert(cells[snapshot.index], above=True, snapshot=snapshot)
+        keep = "cell" if mode == "cell" else "keep"
+        while self._undo:
+            action = self._undo.pop()
+            if action[0] == "delete":
+                snapshot = action[1]
+                cells = self.cells()
+                if snapshot.index < len(cells):
+                    cell = await self._insert(cells[snapshot.index], above=True, snapshot=snapshot, record=False)
+                else:
+                    cell = await self._insert(cells[-1] if cells else None, snapshot=snapshot, record=False)
+                self.select(cell, keep)
+                return
+            cell = next((c for c in self.cells() if c.cid == action[1]), None)
+            if cell is None:  # the cell is gone (e.g. deleted later): skip this entry
+                continue
+            if action[0] == "move":
+                self._move_to(cell, action[2])
+                self.select(cell, keep)
+            elif action[0] == "insert":
+                await self._remove_cells([cell], mode, record=False)
+            elif action[0] == "kind":
+                await self.set_cell_kind(cell, action[2], record=False)
+                self.select(cell, keep)
+            return
+        self.notify("Nothing to undo")
+
+    action_undo_delete = action_undo  # old name
+
+    def _move_to(self, cell: Cell, index: int) -> None:
+        """Put `cell` at display position `index` (0-based); renumber; mark dirty."""
+        others = [c for c in self.cells() if c is not cell]
+        if not others:
+            return
+        if index < len(others):
+            self._cells_box.move_child(cell, before=others[index])
         else:
-            cell = await self._insert(cells[-1] if cells else None, snapshot=snapshot)
-        self.select(cell, "cell" if mode == "cell" else "keep")
+            self._cells_box.move_child(cell, after=others[-1])
+        self.relabel()
+        self.refresh_info()
+        self._set_dirty()
+        cell.scroll_visible(animate=False)
 
     def action_copy_cell(self) -> None:
         if cell := self.current_cell():
@@ -798,7 +974,9 @@ class GPython(App):
             self.notify("No cell copied (yy or x in cell mode)")
             return
         mode = self.ui_mode
-        cell = await self._insert(self.current_cell(), above, snapshot=self._cell_clipboard)
+        # A copy is a new cell: it does not inherit file-format extras (e.g. a marimo cell name).
+        clip = dataclasses.replace(self._cell_clipboard, spec=None)
+        cell = await self._insert(self.current_cell(), above, snapshot=clip)
         self.select(cell, "cell" if mode == "cell" else "keep")
 
     def action_move_cell(self, step: int) -> None:
@@ -806,17 +984,12 @@ class GPython(App):
         cells = self.cells()
         if cell is None or cell not in cells:
             return
-        target = cells.index(cell) + step
+        start = cells.index(cell)
+        target = start + step
         if not 0 <= target < len(cells):
             return
-        if step > 0:
-            self._cells_box.move_child(cell, after=cells[target])
-        else:
-            self._cells_box.move_child(cell, before=cells[target])
-        self.relabel()
-        self.refresh_info()
-        self._set_dirty()
-        cell.scroll_visible(animate=False)
+        self._move_to(cell, target)
+        self._push_undo(("move", cell.cid, start, target))
 
     def action_focus_cell(self, step: int) -> None:
         cells = self.cells()
@@ -825,7 +998,7 @@ class GPython(App):
         if abs(step) > 1:  # J/K with a count stop at the first/last cell
             index = max(0, min(len(cells) - 1, index))
         if 0 <= index < len(cells) and cells[index] is not current:
-            if isinstance(self.focused, Cell):
+            if isinstance(self.focused, Cell) or cells[index].rendered:
                 self.select(cells[index], "cell")
                 return
             editor = cells[index].editor
@@ -841,11 +1014,33 @@ class GPython(App):
         else:
             self.goto_cell(1, mode)
 
-    def set_cell_kind(self, cell: Cell, kind: str) -> None:
-        """Switch a cell between code and markdown (plan 04 implements markdown)."""
-        if kind == cell.kind:
+    async def set_cell_kind(self, cell: Cell, kind: str, record: bool = True) -> None:
+        """Switch a cell between code and markdown; selection stays on the cell.
+
+        code → markdown works like deleting the code: its variables leave the kernel
+        and the cells that used them re-run (and now fail, as in marimo).
+        """
+        if kind == cell.kind or kind not in ("code", "markdown"):
             return
-        self.notify("markdown cells arrive in plan 04")
+        if record:
+            self._push_undo(("kind", cell.cid, cell.kind))
+        self._set_dirty()
+        if kind == "code":
+            await cell.set_kind("code")
+            self.refresh_info()
+            return
+        graph = self.graph()
+        downstream = graph.descendants([cell.cid]) - {cell.cid}
+        defs = set(cell.last_defs)
+        await cell.set_kind("markdown")
+        self.refresh_info()
+        if not defs:  # never ran: nothing in the kernel came from it
+            return
+        await self.kernel.delete(defs)
+        if downstream:
+            self.run_worker(self.run_cells(sorted(downstream)), group="run")
+        else:
+            self.run_worker(self.refresh_vars(self.graph()), group="run")
 
     def set_line_numbers(self, on: bool) -> None:
         VimTextArea.line_numbers = on
@@ -918,7 +1113,10 @@ class GPython(App):
     def on_click(self, event) -> None:
         """Clicking the empty space below the last cell focuses the nearest cell."""
         if event.widget is self._cells_box and (cells := self.cells()):
-            cells[-1].editor.focus()
+            if cells[-1].rendered:
+                cells[-1].focus()
+            else:
+                cells[-1].editor.focus()
 
     # ── cell mode ────────────────────────────────────────────────────────
 
@@ -939,14 +1137,20 @@ class GPython(App):
                 await self.action_delete_cell(n)
             return True
         if pending == "y":
+            kind_before, self._kind_before_y = self._kind_before_y, None
             if key == "y":
+                if kind_before == "markdown" and cell.kind == "code":
+                    await cell.set_kind("markdown")  # yy copies; undo the `y` that made it code
+                    if self._undo and self._undo[-1] == ("kind", cell.cid, "markdown"):
+                        self._undo.pop()
                 self.action_copy_cell()
                 return True
             # `y` alone already made the cell code; this key is a new command.
         match key:
             case "g" | "d" | "y":
                 if key == "y":
-                    self.set_cell_kind(cell, "code")
+                    self._kind_before_y = cell.kind
+                    await self.set_cell_kind(cell, "code")
                 self._cmd_pending = key
                 self._cmd_count = str(n) if had_count else ""
             case "j" | "down":
@@ -958,15 +1162,14 @@ class GPython(App):
                     self.goto_cell(n, "cell")
                 else:
                     self._after_loaded(lambda: self.goto_cell(len(self.cells()), "cell"))
-            case "enter":
-                self.select(cell, "normal")
-            case "i":
-                self.select(cell, "insert")
+            case "enter" | "i":
+                cell.start_editing()  # markdown: show the editor instead of the rendered text
+                self.select(cell, "normal" if key == "enter" else "insert")
             case "a" | "b":
                 new = await self._insert(cell, above=key == "a")
                 self.select(new, "insert")
-            case "z":
-                await self.action_undo_delete()
+            case "u" | "z":
+                await self.action_undo()
             case "x":
                 await self.action_cut_cell()
             case "p" | "P":
@@ -976,7 +1179,7 @@ class GPython(App):
             case "K" | "shift+k":
                 self.action_move_cell(-1)
             case "m":
-                self.set_cell_kind(cell, "markdown")
+                await self.set_cell_kind(cell, "markdown")
             case "o":
                 cell.toggle_collapsed()
             case "O" | "shift+o":
@@ -1075,16 +1278,16 @@ class GPython(App):
             (("lazy",), "Toggle lazy mode", lambda arg="": self.action_toggle_lazy()),
             (("new",), "New cell below", lambda arg="": self.action_add_cell()),
             (("delete", "del"), "Delete current cell", lambda arg="": self.action_delete_cell()),
-            (("md", "markdown"), "Make the cell markdown", lambda arg="": self._ex_kind("markdown")),
-            (("code",), "Make the cell code", lambda arg="": self._ex_kind("code")),
+            (("md", "markdown"), "Cell → Markdown", lambda arg="": self._ex_kind("markdown")),
+            (("code",), "Cell → Code", lambda arg="": self._ex_kind("code")),
             (("interrupt",), "Interrupt running code", lambda arg="": self.kernel.interrupt()),
             (("theme",), "Set theme (:theme name) or show the current one", self._ex_theme),
             (("help", "h"), "Keys and commands", lambda arg="": self.action_help()),
         ]
 
-    def _ex_kind(self, kind: str) -> None:
+    async def _ex_kind(self, kind: str) -> None:
         if cell := self.current_cell():
-            self.set_cell_kind(cell, kind)
+            await self.set_cell_kind(cell, kind)
 
     def _ex_set(self, arg: str = "") -> None:
         option = arg.strip()

@@ -167,3 +167,8 @@ HelpScreen {
     background: $surface;
     padding: 0 1;
 }
+
+/* Markdown cells: rendered text instead of the editor (see Cell.show_rendered). */
+Cell.-markdown > MarkdownView {
+    padding: 0 1 0 0;
+}

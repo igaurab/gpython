@@ -11,8 +11,8 @@ from __future__ import annotations
 
 KEYMAP: list[tuple[str, str, str]] = [
     # ── run (any mode) ──
-    ("any", "shift+enter", "Run cell, then go to the cell below (a new cell only on the last one)"),
-    ("any", "ctrl+enter", "Run cell, stay"),
+    ("any", "shift+enter", "Run cell (markdown: render it), then go to the cell below (a new cell only on the last one)"),
+    ("any", "ctrl+enter", "Run cell (markdown: render it), stay"),
     ("any", "ctrl+shift+enter", "Run cell, stay"),
     ("any", "ctrl+e", "Run cell, stay (for terminals without ctrl+enter)"),
     ("any", "alt+enter", "Run cell and insert a new cell below"),
@@ -23,7 +23,7 @@ KEYMAP: list[tuple[str, str, str]] = [
     # ── edit / navigate (any mode) ──
     ("any", "ctrl+n", "New cell below"),
     ("any", "ctrl+shift+n", "New cell above"),
-    ("any", "ctrl+d", "Delete cell (z in cell mode undoes)"),
+    ("any", "ctrl+d", "Delete cell (u in cell mode undoes)"),
     ("any", "ctrl+s", "Save"),
     ("any", "alt+up", "Previous cell"),
     ("any", "ctrl+up", "Previous cell"),
@@ -50,11 +50,11 @@ KEYMAP: list[tuple[str, str, str]] = [
     # ── cell mode ──
     ("cell", "j / k", "Select next / previous cell (counts: 3j)"),
     ("cell", "gg / G / 3G", "Select first / last / third cell"),
-    ("cell", "enter", "Edit cell (vim normal mode)"),
+    ("cell", "enter", "Edit cell (vim normal mode; markdown: show the source)"),
     ("cell", "i", "Edit cell (insert mode)"),
     ("cell", "a / b", "Insert cell above / below"),
     ("cell", "dd", "Delete cell"),
-    ("cell", "z", "Undo cell deletion"),
+    ("cell", "u / z", "Undo the last cell action (delete, move, insert, markdown/code)"),
     ("cell", "yy / x", "Copy / cut cell"),
     ("cell", "p / P", "Paste cell below / above"),
     ("cell", "J / K", "Move cell down / up"),
