@@ -46,6 +46,21 @@ this block as markdown?" The answer after this plan: press `escape` to CELL mode
 - Rendering uses `await markdown_view.update(text)`; debounce not needed (only on leave).
 - Header for markdown cells: `¶ c3  MARKDOWN` chip instead of `[n]`; no `defines/uses` info.
 
+## Docstring cells must not echo their text (user ask, screenshot of a leetcode file)
+
+Running a cell that is just a `"""..."""` string printed the whole string's repr as an
+`execute_result`. Two layers fix this:
+
+1. `notebook.load_cells()` already returns module-level string statements of plain scripts as
+   `kind="markdown"`; once `Cell(spec.source, kind=spec.kind)` is honoured, such a cell is rendered as
+   markdown and never sent to the kernel. `split_script` keeps saving it back as a triple-quoted string.
+2. For **code** cells whose last top-level statement is a bare string constant (`ast.Expr(ast.Constant(str))`,
+   i.e. a docstring-like expression), suppress the `execute_result` message: compute
+   `Cell.echo_suppressed` from the AST right before running (in `run_cells`, `try: ast.parse(source)` and
+   ignore syntax errors) and have `Cell.add_output` drop `execute_result` while it is set. Streams,
+   display_data and errors still show. Test: a cell `"""doc"""` run as code shows no output; a cell
+   `x = 1\n"""note"""` shows nothing; a cell `"""doc"""\nx` still shows the value of `x`.
+
 ## Graph / execution integration
 
 - `GPython.graph()` builds only from **code** cells: `build({c.cid: c.source for c in self.cells() if c.kind == "code"})`.
