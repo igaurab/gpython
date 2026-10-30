@@ -797,8 +797,8 @@ class NotebookPane(Vertical):
             case "enter" | "i":
                 cell.start_editing()
                 self.select(cell, "normal" if key == "enter" else "insert")
-            case "a" | "b":
-                new = await self._insert(cell, above=key == "a")
+            case "a" | "b" | "o" | "O" | "shift+o":
+                new = await self._insert(cell, above=key in ("a", "O", "shift+o"))
                 self.select(new, "insert")
             case "u" | "z":
                 await self.undo()
@@ -815,9 +815,9 @@ class NotebookPane(Vertical):
             case "h":
                 cell.set_code_hidden(not cell.code_hidden)
                 self.mark_dirty()
-            case "o":
+            case "c":
                 cell.toggle_collapsed()
-            case "O" | "shift+o":
+            case "C" | "shift+c":
                 cell.clear_output()
             case "l":
                 app.set_line_numbers(not VimTextArea.line_numbers)

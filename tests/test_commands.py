@@ -119,6 +119,21 @@ def test_insert_above_below(tmp_path):
     ui(tmp_path, test)
 
 
+def test_vim_o_opens_cell_below_and_above(tmp_path):
+    async def test(app, pilot):
+        first, second, third = app.cells()
+        second.focus()
+        await pilot.press("o")
+        cells = app.cells()
+        assert len(cells) == 4 and app.focused is cells[2].editor and app.ui_mode == "insert"
+        await pilot.press("escape", "escape", "O")
+        cells = app.cells()
+        assert len(cells) == 5 and app.focused is cells[2].editor and app.ui_mode == "insert"
+        assert sources(app) == ["a = 1", "b = 2", "", "", "print('c')"]
+
+    ui(tmp_path, test)
+
+
 def test_delete_undo_copy_cut_paste(tmp_path):
     async def test(app, pilot):
         first, second, third = app.cells()
@@ -199,12 +214,12 @@ def test_output_collapse_and_clear(tmp_path):
         cell.add_output("stream", {"name": "stdout", "text": "".join(f"{i}\n" for i in range(10))})
         await pilot.pause()
         cell.focus()
-        await pilot.press("o")
+        await pilot.press("c")
         assert cell.has_class("-collapsed")
         assert "7 more lines" in str(cell.query_one(".collapsed-note").render())
-        await pilot.press("o")
+        await pilot.press("c")
         assert not cell.has_class("-collapsed") and not cell.query(".collapsed-note")
-        await pilot.press("O")
+        await pilot.press("C")
         assert cell.output_text == "" and not cell.output_box.has_output
 
     ui(tmp_path, test)

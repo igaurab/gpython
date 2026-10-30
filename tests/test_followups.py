@@ -57,7 +57,7 @@ def test_ipynb_outputs_show_on_load_and_survive_save(tmp_path):
         assert saved["cells"][0]["execution_count"] == 7
         assert saved["cells"][1]["source"] == ["b = 3"] and saved["cells"][1]["outputs"] == []
         first.focus()
-        await pilot.press("O", "escape", ":", *"w", "enter")
+        await pilot.press("C", "escape", ":", *"w", "enter")
         await pilot.pause()
         assert json.loads(path.read_text())["cells"][0]["outputs"] == []
 
