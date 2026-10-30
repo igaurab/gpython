@@ -51,7 +51,7 @@ def app_theme(name):
 
 def test_supported_set_and_default_present():
     assert set(SUPPORTED) <= set(PALETTES)
-    assert DEFAULT_THEME == "catppuccin-mocha" and DEFAULT_THEME in PALETTES
+    assert DEFAULT_THEME == "material-darker" and DEFAULT_THEME in PALETTES
 
 
 @pytest.mark.parametrize("name", sorted(PALETTES))

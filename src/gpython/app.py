@@ -29,7 +29,7 @@ from .pane import NotebookPane
 from . import envpicker
 from .envpicker import KernelChip
 from .themepicker import ThemePicker
-from .themes import CUSTOM_APP_THEMES, DEFAULT_THEME, editor_themes, palette_for
+from .themes import CUSTOM_APP_THEMES, DEFAULT_THEME, THEME_ALIASES, editor_themes, palette_for
 from .vim import VimTextArea, _is_escape
 from .windows import TabBar, Workspace
 
@@ -163,6 +163,7 @@ class GPython(App):
             self.register_theme(custom)
         self._loaded_theme = settings.get("theme")
         name = theme or self._loaded_theme or DEFAULT_THEME
+        name = THEME_ALIASES.get(name, name)
         if name not in self.available_themes:
             self._theme_warning = f"Unknown theme {name!r}; using {DEFAULT_THEME}"
             name = DEFAULT_THEME
@@ -910,7 +911,7 @@ class GPython(App):
     def _ex_theme(self, arg: str = "") -> None:
         if not arg:
             self.notify(f"Theme: {self.theme}")
-        elif arg in self.available_themes:
+        elif (arg := THEME_ALIASES.get(arg, arg)) in self.available_themes:
             self.theme = arg
         else:
             names = ", ".join(sorted(self.available_themes)[:6])

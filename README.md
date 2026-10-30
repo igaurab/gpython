@@ -180,8 +180,10 @@ unsaved), `:wqa` saves everything and quits.
 `ctrl+t` opens a theme picker with live preview: move through the list and
 the whole notebook (editor syntax colours included) changes as you go;
 `enter` keeps the theme and writes it to `~/.config/gpython/config.toml`,
-`escape` restores the one you had. `:theme name` and `--theme name` do the
-same without the picker; `:theme` alone shows the current one.
+`escape` restores the one you had. Every later session starts in the saved
+theme (the default is material-darker). `:theme name` does the same without
+the picker and is saved too; `--theme name` applies to that run only;
+`:theme` alone shows the current one.
 
 Themes: catppuccin (mocha, macchiato, frappe, latte), gruvbox (dark, light),
 material (oceanic, palenight, darker, lighter), nord, dracula, tokyo-night,

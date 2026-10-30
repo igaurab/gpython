@@ -125,3 +125,35 @@ def test_palette_change_theme_opens_picker(notebook_path):
             assert isinstance(app.screen, ThemePicker)
 
     asyncio.run(main())
+
+
+def test_picked_theme_is_the_theme_of_every_new_session(notebook_path):
+    """Pick with ctrl+t, quit, start again (twice): the choice sticks; :theme aliases work too."""
+
+    async def session(steps=None):
+        app = GPython(notebook_path)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            start = app.theme
+            if steps:
+                await steps(app, pilot)
+            return start, app.theme
+
+    async def pick_nord(app, pilot):
+        await open_picker(app, pilot)
+        await pilot.press(*"nord", "enter")
+        await pilot.pause()
+
+    async def alias(app, pilot):
+        await app._run_ex("theme material-dark")
+        await pilot.pause()
+
+    async def main():
+        assert await session(pick_nord) == (DEFAULT_THEME, "nord")
+        assert await session() == ("nord", "nord")
+        assert await session() == ("nord", "nord")
+        assert await session(alias) == ("nord", "material-darker")
+        assert config.load()["theme"] == "material-darker"
+        assert await session() == ("material-darker", "material-darker")
+
+    asyncio.run(main())

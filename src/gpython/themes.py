@@ -15,7 +15,8 @@ from textual.color import Color
 from textual.theme import Theme
 from textual.widgets.text_area import TextAreaTheme
 
-DEFAULT_THEME = "catppuccin-mocha"
+DEFAULT_THEME = "material-darker"
+THEME_ALIASES = {"material-dark": "material-darker", "material": "material-darker", "gruvbox-dark": "gruvbox", "catppuccin": "catppuccin-mocha"}
 
 
 @dataclass(frozen=True)
