@@ -101,13 +101,10 @@ Visuals:
    (`animate=False`). Lowercase `j`/`k` stay per-line and still hop at the edge. vim's join-lines moves
    from `J` to `gJ` (pending `g` + `J`). Update `tests/test_vim.py::test_join` to press `g`, `J`, add a test
    that `J`/`K` post `EdgeReached` with the right step, and update the README key table.
-4. **`gg` / `G` in vim NORMAL mode jump to the first / last cell (user ask).** `gg` → first cell, cursor
-   (0,0); `G` → last cell, cursor on its last line. With a count, `3G` and `3gg` focus cell 3 **by display
-   position** (same resolution as `/3`). Implement with a new message `VimTextArea.GoToCell(index: int | None,
-   last: bool)` posted from `_normal` (no in-cell movement any more); `GPython` handles it (focus the editor,
-   place the cursor, `scroll_visible(animate=False)`). In CELL mode the same keys select the cell.
-   Update `tests/test_vim.py::test_motions` (it currently expects `G`/`gg` to move within the cell) and
-   README.
+4. **`gg` / `G` stay cell-level (user revision).** In vim NORMAL mode `gg`, `G`, `3G`, `3gg` keep their
+   vim meaning inside the current cell's editor (first / last / N-th line). File-level navigation uses
+   `ctrl+home` (first cell) and `ctrl+end` (last cell) in every mode, and in CELL mode `gg` / `G` select the
+   first / last cell. `tests/test_vim.py::test_motions` stays unchanged.
 5. **Markdown cells** – full implementation is plan 04; this plan only guarantees the hooks exist
    (`set_cell_kind` stub, `m`/`y`, `:md`/`:code` rows) so plan 04 is a drop-in.
 
