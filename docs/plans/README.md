@@ -17,6 +17,8 @@ asking questions**. Read this file first, then the plan you were assigned.
 | 03 | `03-keybindings-ux.md` | Jupyter run keys, cell command mode, move/undo/collapse, status bar, help, dirty tracking | 01, 02 |
 | 04 | `04-markdown-cells.md` | Markdown cells, rich MIME outputs, cell kind toggling | 03, peer `CellSpec` |
 | 05 | `05-peer-file-formats.md` | **Owned by the peer session** (notebook/graph/kernel): CellSpec, `.ipynb`, `--theme` flag. Reference only. | – |
+| 06 | `06-marimo-format.md` | marimo notebooks: load/save round-trip, kernel shim | 05 |
+| 07 | `07-windows.md` | File explorer, splits, tabs; `NotebookPane` owns the kernel and cells | 04 |
 
 Plans run **sequentially** in the order above because they all edit `app.py`.
 

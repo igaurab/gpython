@@ -2,6 +2,81 @@ Screen {
     layers: base overlay;
 }
 
+#body {
+    height: 1fr;
+}
+
+/* Tabs (vim's tabline): shown only when there are two or more. */
+#tabbar {
+    display: none;
+    height: 1;
+    background: $panel;
+    padding: 0 1;
+}
+
+GPython.-tabs #tabbar {
+    display: block;
+}
+
+/* All notebook windows live here; windows.py places them. The background shows
+   through the one-column gap between side-by-side windows. */
+Workspace {
+    width: 1fr;
+    height: 1fr;
+    background: $panel;
+}
+
+NotebookPane {
+    background: $background;
+}
+
+.pane-body {
+    height: 1fr;
+}
+
+/* vim's per-window status line: only when a tab has several windows. */
+.pane-status {
+    display: none;
+    height: 1;
+    background: $panel;
+    color: $text-muted;
+}
+
+NotebookPane.-multi > .pane-status {
+    display: block;
+}
+
+NotebookPane.-active > .pane-status {
+    background: $primary 35%;
+    color: $text;
+}
+
+#explorer {
+    width: 34;
+    max-width: 50%;
+    height: 1fr;
+    background: $surface;
+    border-right: vkey $panel;
+    padding: 0 1;
+    scrollbar-size-vertical: 1;
+}
+
+#explorer:focus {
+    border-right: vkey $accent;
+}
+
+#keycapture {
+    dock: bottom;
+    height: 1;
+    width: auto;
+    background: $panel;
+}
+
+KeyCapture {
+    background: transparent;
+    align: left bottom;
+}
+
 #cells {
     width: 1fr;
     padding: 0 1;
@@ -9,6 +84,7 @@ Screen {
 
 #vars {
     width: 42;
+    max-width: 50%;
     border-left: vkey $panel;
 }
 

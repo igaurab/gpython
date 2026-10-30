@@ -134,6 +134,15 @@ class VimTextArea(TextArea):
             self.editor = editor
             self.count = count
 
+    class TabSwitch(Message):
+        """gt / gT: go to tab `tab` (1-based) when given, else `step` tabs forward."""
+
+        def __init__(self, editor: VimTextArea, tab: int | None, step: int) -> None:
+            super().__init__()
+            self.editor = editor
+            self.tab = tab
+            self.step = step
+
     def __init__(self, text: str = "", language: str | None = "python", **kwargs) -> None:
         # The language is set after construction so the document is only built once.
         super().__init__(
@@ -283,6 +292,7 @@ class VimTextArea(TextArea):
         if key.isdigit() and (key != "0" or self.count):
             self.count += key
             return True
+        had_count = bool(self.count)
         n = int(self.count or 1)
         pending, self.pending, self.count = self.pending, "", ""
 
@@ -297,6 +307,10 @@ class VimTextArea(TextArea):
                 self.move_cursor((0, 0) if n == 1 else (min(self.document.line_count - 1, n - 1), 0))
             elif key == "J":
                 self._join(n)
+            elif key == "t":  # gt: next tab, {n}gt: tab n
+                self.post_message(self.TabSwitch(self, n if had_count else None, 1))
+            elif key == "T":
+                self.post_message(self.TabSwitch(self, None, -n))
             return True
 
         row, col = self.cursor_location
@@ -600,7 +614,7 @@ class VimTextArea(TextArea):
         Tab (auto=False) fills in the common prefix and pops up the rest;
         as-you-type (auto=True) only shows the popup and never edits the text.
         """
-        kernel = getattr(self.app, "kernel", None)
+        kernel = self._kernel()
         if kernel is None or not kernel.ready.is_set():
             return
         code = self.text
@@ -624,6 +638,15 @@ class VimTextArea(TextArea):
             self.replace(prefix, start_loc, self._location(end), maintain_selection_offset=False)
         if len(matches) > 1:
             self._show_popup(matches, start_loc)
+
+    def _kernel(self):
+        """The kernel of the notebook window this editor belongs to."""
+        node = self.parent
+        while node is not None:
+            if (kernel := getattr(node, "kernel", None)) is not None and not callable(kernel):
+                return kernel
+            node = node.parent
+        return getattr(self.app, "kernel", None)
 
     def _show_popup(self, matches: list[str], start: Location) -> None:
         self._close_popup()

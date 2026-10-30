@@ -1,8 +1,7 @@
-# gpython – open items (handoff, 2026-10-29)
+# gpython – open items (updated 2026-10-30)
 
-State: main at 4074b97, 193 tests green (`uv run python3 -m pytest -q`, ~50 s), working tree clean.
-Read `docs/plans/README.md` first (conventions, file ownership with the peer session, verified facts).
-Everything in plans 01–06 is implemented and merged except the items below.
+State: plans 01–07 implemented (07 = file explorer, splits, tabs; see `docs/plans/07-windows.md`),
+200 tests green (`uv run python3 -m pytest -q`, ~100 s). Read `docs/plans/README.md` first.
 
 ## 1. Performance round 2 (plan 01, steps 4–5 were only partly done)
 
@@ -49,6 +48,9 @@ after `return`), the `--theme` / `--no-vim` flags, the key table (generated from
 
 - `tests/test_commands.py::test_shift_enter_keeps_the_viewport` was flaky; fixed by
   `GPython._keep_focus_visible` and passed 6/6 afterwards. Keep an eye on it.
-- `OutputArea.clear_pending` public property (app.py reads the private `_clear_pending`).
+- Window resizing (`ctrl+w + - < >`) changes weights by 10 % steps; no mouse drag of the
+  separator yet.
+- `:split` with no file opens an untitled notebook (vim shows the same buffer twice; we
+  cannot, one kernel per window).
 - `hide_code=True` marimo cells show their code; a collapsed-code mode could honour the flag.
 - `.ipynb` outputs are dropped on load; consider showing stored outputs read-only.

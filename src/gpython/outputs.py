@@ -142,6 +142,11 @@ class OutputArea(Vertical):
         return "".join(parts)
 
     @property
+    def clear_pending(self) -> bool:
+        """True after clear_output(wait=True) until the next output arrives."""
+        return self._clear_pending
+
+    @property
     def has_output(self) -> bool:
         return bool(self._blocks)
 

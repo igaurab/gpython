@@ -1,79 +1,60 @@
-"""The Textual front end: a column of cells plus a variables panel."""
+"""The Textual front end: notebook windows in tabs and splits, plus a file explorer.
+
+GPython (the App) owns what is global: the theme, the vim mode, the status bar, the
+prompts and the `:` commands. Each open notebook is a NotebookPane (pane.py) living in
+the Workspace (windows.py), which lays panes out in vim-style tabs and splits. Key
+bindings are forwarded to the active pane.
+"""
 
 from __future__ import annotations
 
-import ast
 import asyncio
-import dataclasses
-import itertools
-import time
-from dataclasses import dataclass
 from pathlib import Path
 
 from rich.text import Text
 from textual import events, on
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal
 from textual.screen import ModalScreen
-from textual.timer import Timer
-from textual.widgets import DataTable, Header, Input, Label, Static
+from textual.widgets import Header, Input, Label, Static
 from textual.widgets._header import HeaderIcon
 
-from . import config, notebook
-from .graph import Graph, build
+from . import config
+from .cell import Cell, CellSnapshot, ends_with_string  # noqa: F401  (re-exported for tests and scripts)
+from .explorer import Explorer
 from .help import HelpScreen
-from .kernel import Kernel
-from .markdown import MarkdownView
-from .outputs import OutputArea
+from .pane import NotebookPane
 from .themepicker import ThemePicker
 from .themes import CUSTOM_APP_THEMES, DEFAULT_THEME, editor_themes, palette_for
 from .vim import VimTextArea, _is_escape
+from .windows import TabBar, Workspace
 
-STATUS_ICONS = {
-    "idle": ("○", "dim"),
-    "stale": ("◌", "yellow"),
-    "queued": ("…", "cyan"),
-    "running": ("●", "cyan"),
-    "ok": ("✓", "green"),
-    "error": ("✗", "red"),
-    "skipped": ("⊘", "red"),
+KEY_HINTS = "shift+enter run+next · ctrl+enter run · esc esc cell mode · / jump · ctrl+b files · ctrl+w splits · f1 help"
+_MODE_STYLES = {
+    "insert": "bold black on green",
+    "normal": "bold black on yellow",
+    "cell": "bold black on cyan",
+    "files": "bold black on magenta",
 }
-KEY_HINTS = "shift+enter run+next · ctrl+enter run · esc esc cell mode · / jump · f1 help · ctrl+p palette"
-INITIAL_CELLS = 12  # cells composed before the first frame; the rest mount right after
-MOUNT_BATCH = 10
-MAX_UNDO = 50
-_MODE_STYLES = {"insert": "bold black on green", "normal": "bold black on yellow", "cell": "bold black on cyan"}
+EXPLORER_WIDTH = 34
 
-# Non-printable keys that cell mode handles; others (f-keys, ctrl+...) reach app bindings.
-_CELL_KEYS = {"escape", "enter", "up", "down", "shift+j", "shift+k", "shift+o", "question_mark"}
-
-_ids = itertools.count(1)
-
-
-def ends_with_string(source: str) -> bool:
-    """True when the last top-level statement is a bare string (a docstring-like note).
-
-    IPython would echo such a string as the cell's result; gpython hides that echo.
-    """
-    try:
-        body = ast.parse(source).body
-    except (SyntaxError, ValueError):  # magics, null bytes: let the kernel decide
-        return False
-    last = body[-1] if body else None
-    return isinstance(last, ast.Expr) and isinstance(last.value, ast.Constant) and isinstance(last.value.value, str)
-
-
-@dataclass
-class CellSnapshot:
-    """Everything needed to bring a deleted (or copied) cell back."""
-
-    index: int
-    source: str
-    kind: str
-    ran: bool
-    outputs: list[tuple[str, object]]
-    spec: notebook.CellSpec | None = None  # the loaded spec (keeps file-format extras), if any
+# ctrl+w <key>: vim's window commands.
+_WINDOW_KEYS = {
+    "s": "split", "S": "split", "ctrl+s": "split", "n": "split", "ctrl+n": "split",
+    "v": "vsplit", "ctrl+v": "vsplit",
+    "h": "left", "left": "left", "ctrl+h": "left",
+    "j": "down", "down": "down", "ctrl+j": "down",
+    "k": "up", "up": "up", "ctrl+k": "up",
+    "l": "right", "right": "right", "ctrl+l": "right",
+    "w": "next", "ctrl+w": "next", "W": "prev", "p": "prev", "ctrl+p": "prev",
+    "t": "first", "ctrl+t": "first", "b": "last", "ctrl+b": "last",
+    "q": "close", "ctrl+q": "close", "c": "close", "ctrl+c": "close",
+    "o": "only", "ctrl+o": "only",
+    "T": "totab",
+    "=": "equal",
+    "+": "taller", "-": "shorter", ">": "wider", "<": "narrower",
+}  # fmt: skip
 
 
 class Prompt(ModalScreen[str | None]):
@@ -95,353 +76,24 @@ class Prompt(ModalScreen[str | None]):
         self.dismiss(event.value.strip() or None)
 
 
-class Cell(Vertical):
-    """One cell: a header line, an editor and an output area.
+class KeyCapture(ModalScreen[str | None]):
+    """Waits for exactly one key (the second key of ctrl+w); shows the prefix like vim's showcmd."""
 
-    The cell itself can take focus: that is "cell mode" (Jupyter's command mode),
-    where keys act on whole cells (see keymap.py and GPython.cell_command).
-
-    `kind` is "code" or "markdown". A markdown cell never runs; it has two views:
-    rendered (a MarkdownView, the editor hidden) and editing (the editor shown).
-    """
-
-    can_focus = True
-
-    def __init__(self, source: str = "", kind: str = "code", spec: notebook.CellSpec | None = None) -> None:
-        self.cid = f"c{next(_ids)}"  # internal, stable graph key
-        super().__init__(id=self.cid)
-        self.initial_source = source
-        self.kind = kind
-        self.spec = spec  # the CellSpec this cell was loaded from: save keeps its extra fields
-        self.editing = kind == "code"  # markdown cells start rendered
-        self.echo_suppressed = False  # hide the execute_result of a cell ending in a bare string
-        if kind == "markdown":
-            self.add_class("-markdown")
-        self.label = self.cid  # what the header shows: the display position, see set_label
-        self.ran_source: str | None = None
-        self.last_defs: set[str] = set()
-        self.status = "idle"
-        self.info = ""
-        self.exec_count = 0
-        self.duration: float | None = None
-        self._run_start = 0.0
-        self._ticker: Timer | None = None
-        self._log: list[tuple] = []  # outputs received, for undo/paste replay
-        self._log_clear_pending = False  # clear_output(wait=True) seen, no output since
-        self._header: Static | None = None
-        self._editor: VimTextArea | None = None
-        self._outputs: OutputArea | None = None
-        self._view: MarkdownView | None = None  # created for markdown cells only
-        self._note: Static | None = None
-        self._header_key: tuple | None = None
+    def __init__(self, hint: str) -> None:
+        super().__init__()
+        self.hint = hint
 
     def compose(self) -> ComposeResult:
-        self._header = Static(classes="cell-header")
-        markdown = self.kind == "markdown"
-        self._editor = VimTextArea(self.initial_source, language="markdown" if markdown else "python")
-        self._outputs = OutputArea()
-        yield self._header
-        yield self._editor
-        if markdown:
-            self._editor.display = False
-            self._view = MarkdownView(self.initial_source)
-            yield self._view
-        yield self._outputs
-
-    def on_mount(self) -> None:
-        self._render_header()
-
-    @property
-    def editor(self) -> VimTextArea:
-        return self._editor or self.query_one(VimTextArea)
-
-    @property
-    def output_box(self) -> OutputArea:
-        return self._outputs or self.query_one(OutputArea)
-
-    @property
-    def source(self) -> str:
-        # The editor does not exist until the cell is composed.
-        return self._editor.text if self._editor is not None else self.initial_source
-
-    @property
-    def output_text(self) -> str:
-        return self.output_box.text
-
-    def set_label(self, n: int) -> None:
-        """Show the 1-based display position (c1, c2, ...) in the header."""
-        label = f"c{n}"
-        if label != self.label:
-            self.label = label
-            self._render_header()
-
-    def set_status(self, status: str) -> None:
-        if status == self.status:
-            return
-        self.remove_class(f"-{self.status}")
-        self.add_class(f"-{status}")
-        self.status = status
-        self._render_header()
-
-    def set_info(self, graph: Graph) -> None:
-        if self.kind == "markdown":
-            if self.info:
-                self.info = ""
-                self._render_header()
-            return
-        parts = []
-        if graph.defs.get(self.cid):
-            parts.append("defines " + ", ".join(sorted(graph.defs[self.cid])))
-        if graph.refs.get(self.cid):
-            parts.append("uses " + ", ".join(sorted(graph.refs[self.cid])))
-        if graph.mutates.get(self.cid):
-            parts.append("mutates " + ", ".join(sorted(graph.mutates[self.cid])))
-        self.info = "  ·  ".join(parts)
-        self._render_header()
-
-    # ── kind: code or markdown ───────────────────────────────────────────
-
-    @property
-    def rendered(self) -> bool:
-        """A markdown cell showing its rendered view (the editor is hidden)."""
-        return self.kind == "markdown" and not self.editing
-
-    async def set_kind(self, kind: str) -> None:
-        """Switch the widgets to `kind`. No kernel work: GPython.set_cell_kind does that."""
-        if kind == self.kind:
-            return
-        self.kind = kind
-        self.set_class(kind == "markdown", "-markdown")
-        self.ran_source = None
-        self.last_defs = set()
-        self.exec_count = 0
-        self.duration = None
-        self.info = ""
-        self.clear_output()
-        self.set_status("idle")
-        self._header_key = None
-        self._render_header()
-        if self._editor is None:
-            return
-        self._editor.language = "markdown" if kind == "markdown" else "python"
-        if kind == "code":
-            self.start_editing()
-        elif self.is_mounted and self.screen.focused is self._editor:
-            self.editing = True  # keep typing; it renders when the editor is left
-        else:
-            await self.show_rendered()
-
-    def start_editing(self) -> None:
-        """Show the editor (markdown: hide the rendered view). The caller focuses it."""
-        self.editing = True
-        if self._editor is not None:
-            self._editor.display = True
-        if self._view is not None:
-            self._view.display = False
-
-    async def show_rendered(self) -> None:
-        """Markdown cells: render the editor's text and show it instead of the editor."""
-        if self.kind != "markdown" or self._editor is None:
-            return
-        self.editing = False
-        if self._view is None:
-            self._view = MarkdownView(self.source)
-            self._view.display = False
-            await self.mount(self._view, after=self._editor)
-        elif self._view.text != self.source:
-            await self._view.update(self.source)
-        if not self.editing:  # not re-opened while rendering
-            self._editor.display = False
-            self._view.display = True
-
-    async def _render_if_left(self) -> None:
-        if self.kind == "markdown" and self.editing and self.is_mounted and self.screen.focused is not self._editor:
-            await self.show_rendered()
-
-    @on(MarkdownView.EditRequested)
-    def _edit_requested(self, event: MarkdownView.EditRequested) -> None:
-        event.stop()
-        self.start_editing()
-        self.app.select(self, "normal")
-
-    # ── running ──────────────────────────────────────────────────────────
-
-    def begin_run(self, count: int) -> None:
-        """Mark the cell running as In [count]; the header counts seconds while it runs."""
-        self.exec_count = count
-        self.duration = None
-        self._run_start = time.perf_counter()
-        self.set_status("running")
-        if self._ticker is None:
-            self._ticker = self.set_interval(1, self._render_header)
-
-    def end_run(self, status: str) -> None:
-        self.duration = time.perf_counter() - self._run_start
-        if self._ticker is not None:
-            self._ticker.stop()
-            self._ticker = None
-        self.set_status(status)
-        self._render_header()
-
-    # ── outputs ──────────────────────────────────────────────────────────
-
-    def clear_output(self) -> None:
-        self._log.clear()
-        self._log_clear_pending = False
-        self.output_box.clear()
-        self._update_note()
-
-    def show_error(self, message: str) -> None:
-        self._log[:] = [("_error", message, None)]
-        self._log_clear_pending = False
-        self.output_box.show_error(message)
-        self._update_note()
-
-    def add_output(self, kind: str, content: dict) -> None:
-        if kind == "execute_result" and self.echo_suppressed:
-            return
-        log = self._log
-        if kind == "clear_output" and content.get("wait"):
-            self._log_clear_pending = True
-            self.output_box.add(kind, content)
-            return
-        if self._log_clear_pending:
-            log.clear()
-            self._log_clear_pending = False
-        if kind == "stream":
-            if log and log[-1][0] == "stream" and log[-1][1] == content["name"]:
-                parts = log[-1][2]
-                parts.append(content["text"])
-                if len(parts) > 2000:  # bound memory for endless output
-                    parts[:] = ["".join(parts)[-200_000:]]
-            else:
-                log.append(("stream", content["name"], [content["text"]]))
-        elif kind == "clear_output":
-            log.clear()
-        else:
-            log.append((kind, content, None))
-        self.output_box.add(kind, content)
-        if self._note is not None:
-            self._update_note()
-
-    def outputs_snapshot(self) -> list[tuple[str, object]]:
-        out: list[tuple[str, object]] = []
-        for kind, content, parts in self._log:
-            if kind == "stream":
-                out.append(("stream", {"name": content, "text": "".join(parts)}))
-            else:
-                out.append((kind, content))
-        return out
-
-    def replay(self, outputs: list[tuple[str, object]]) -> None:
-        for kind, content in outputs:
-            if kind == "_error":
-                self.show_error(content)
-            else:
-                self.add_output(kind, content)
-
-    def toggle_collapsed(self) -> None:
-        self.set_class(not self.has_class("-collapsed"), "-collapsed")
-        self._update_note()
-
-    def _update_note(self) -> None:
-        """'… N more lines' under a collapsed output."""
-        text = self.output_text
-        hidden = (text.rstrip("\n").count("\n") + 1 - 3) if text else 0
-        if self.has_class("-collapsed") and hidden > 0:
-            if self._note is None:
-                self._note = Static(classes="collapsed-note")
-                self.mount(self._note, after=self.output_box)
-            self._note.update(f"… {hidden} more lines")
-        elif self._note is not None:
-            self._note.remove()
-            self._note = None
-
-    # ── header ───────────────────────────────────────────────────────────
-
-    def _render_header(self) -> None:
-        if self._header is None:
-            return
-        elapsed = int(time.perf_counter() - self._run_start) if self.status == "running" else 0
-        key = (self.kind, self.status, self.info, self.label, self.exec_count, self.duration, elapsed)
-        if key == self._header_key:
-            return
-        self._header_key = key
-        if self.kind == "markdown":
-            palette = getattr(self.app, "palette", None)
-            dim = palette.comment if palette is not None else "dim"
-            self._header.update(Text.assemble(("¶ ", dim), (self.label, "bold"), ("  MARKDOWN", dim)))
-            return
-        icon, style = STATUS_ICONS[self.status]
-        palette = getattr(self.app, "palette", None)
-        if palette is not None:  # colour the icon from the current theme
-            theme = self.app.current_theme
-            role = {"ok": "success", "stale": "warning", "error": "error", "skipped": "error"}.get(self.status, "primary")
-            style = palette.comment if self.status == "idle" else (getattr(theme, role, None) or style)
-        parts: list[tuple[str, str]] = [(f"{icon} ", style), (self.label, "bold")]
-        if self.status == "running":
-            parts.append((f"  running… {elapsed}s", "cyan"))
-        else:
-            if self.exec_count:
-                parts.append((f" [{self.exec_count}]", "dim"))
-            if self.duration is not None and self.duration >= 0.1:
-                parts.append((f" {self.duration:.2f}s", "dim"))
-        parts.append(("  " + self.info, "dim"))
-        self._header.update(Text.assemble(*parts))
-
-    # ── focus, keys, mouse ───────────────────────────────────────────────
-
-    def _on_descendant_focus(self, event: events.DescendantFocus) -> None:
-        self.add_class("-focused")
-
-    def _on_descendant_blur(self, event: events.DescendantBlur) -> None:
-        self.remove_class("-focused")
-        if self.kind == "markdown" and self.editing and event.widget is self._editor:
-            # Focus left the markdown editor (escape, another cell): render. Checked after
-            # the refresh, as a ':' prompt or a popup takes focus only for a moment.
-            self.call_after_refresh(self._render_if_left)
-
-    def on_focus(self) -> None:
-        self.add_class("-selected")
-        self.app.update_status()
-
-    def on_blur(self) -> None:
-        self.remove_class("-selected")
-        if not isinstance(self.app.focused, Cell):  # the next cell's on_focus updates it
-            self.app.update_status()
+        yield Static(Text(f" {self.hint} ", style="bold reverse"), id="keycapture")
 
     def on_key(self, event: events.Key) -> None:
-        if self.screen.focused is not self:  # a key bubbling up from the editor
+        event.stop()
+        event.prevent_default()
+        if _is_escape(event):
+            self.dismiss(None)
             return
         key = event.character if event.is_printable and event.character else event.key
-        if _is_escape(event):
-            key = "escape"
-        if event.is_printable or key in _CELL_KEYS:  # printable keys never leak anywhere
-            event.stop()
-            event.prevent_default()
-            # Run on the app's queue: a command may remove this cell, which would
-            # cancel a handler still running on the cell's own queue.
-            self.app.call_later(self.app.cell_command, self, key)
-
-    @on(VimTextArea.LeaveEditor)
-    def _leave_editor(self, event: VimTextArea.LeaveEditor) -> None:
-        event.stop()
-        self.focus(scroll_visible=False)
-
-    def on_click(self, event) -> None:
-        """Clicking the header (or rendered markdown) selects the cell; anywhere else focuses its editor."""
-        if event.widget is self._header or self.rendered:  # double click edits (EditRequested)
-            self.focus(scroll_visible=False)
-        elif not isinstance(event.widget, VimTextArea):
-            self.editor.focus()
-
-    @on(VimTextArea.Changed)
-    def _mark_stale(self) -> None:
-        if self.ran_source is None or self.status == "running":
-            return
-        document = self.editor.document
-        same = document.line_count == self.ran_source.count("\n") + 1 and document.text == self.ran_source
-        self.set_status("ok" if same else "stale")
+        self.dismiss(key)
 
 
 class GPython(App):
@@ -463,6 +115,8 @@ class GPython(App):
         Binding("alt+shift+down", "move_cell(1)", "Move cell down", show=False, priority=True),
         Binding("ctrl+s", "save", "Save", priority=True),
         Binding("ctrl+k", "interrupt", "Interrupt", priority=True),
+        Binding("ctrl+w", "window_prefix", "Window", show=False, priority=True),
+        Binding("ctrl+b", "toggle_explorer", "Files", priority=True),
         Binding("f1", "help", "Help"),
         Binding("f2", "toggle_vars", "Variables"),
         Binding("f3", "toggle_lazy", "Lazy"),
@@ -472,7 +126,13 @@ class GPython(App):
     ]
     _previewing_theme = False  # True while ThemePicker previews: watch_theme does not persist
 
-    def __init__(self, path: Path | None = None, vim: bool | None = None, theme: str | None = None) -> None:
+    def __init__(
+        self,
+        path: Path | None = None,
+        vim: bool | None = None,
+        theme: str | None = None,
+        paths: list[Path] | None = None,
+    ) -> None:
         super().__init__()
         settings = config.load()
         VimTextArea.mode = "normal"  # before compose, so every editor mounts in the same mode
@@ -493,51 +153,43 @@ class GPython(App):
             vim = settings.get("vim", True) is not False
         VimTextArea.enabled = vim
         VimTextArea.line_numbers = settings.get("line_numbers", True) is not False
-        self.path = path
-        self.markers = True
+
+        files = [p for p in ([path] if path is not None else []) + list(paths or [])]
+        self.explorer_root = Path.cwd()
+        self._explorer_open_at_start = False
+        notebooks: list[Path] = []
+        for file in files:
+            if file.is_dir():  # `gpython some/dir`: open the explorer there
+                self.explorer_root = file
+                self._explorer_open_at_start = True
+            else:
+                notebooks.append(file)
+        if notebooks and not any(f.is_dir() for f in files):
+            self.explorer_root = notebooks[0].resolve().parent
+        # Panes are built now so their kernels can boot while the widgets are composed.
+        self._initial_panes = [NotebookPane(p) for p in notebooks] or [NotebookPane(None)]
+
         self.lazy = False
-        self.dirty = False
-        self.exec_counter = 0  # Jupyter's In [n]
-        self.kernel_state = "starting kernel…"
-        self.kernel = Kernel(file=path)
-        self._run_lock = asyncio.Lock()
-        self.loaded = asyncio.Event()  # set once every cell of the file is mounted
-        self._pending_sources: list[notebook.CellSpec] = []  # cells not mounted yet (progressive mount)
-        self._cells_box: VerticalScroll | None = None
+        self.workspace = Workspace()
+        self.explorer: Explorer | None = None
+        self._tabbar = TabBar()
         self._status: Static | None = None
         self._kernel_chip: Static | None = None
-        self.kernel_label = "Python …"  # filled in once the kernel reports its version
         self._status_key: tuple | None = None
-        # Cell-level undo (u / z in cell mode), newest last: ("delete", snapshot),
-        # ("move", cid, from_index, to_index), ("insert", cid), ("kind", cid, old_kind).
-        self._undo: list[tuple] = []
         self._cell_clipboard: CellSnapshot | None = None
-        self._cmd_pending = ""  # cell mode: first key of gg / dd / yy
-        self._cmd_count = ""
-        self._kind_before_y: str | None = None  # `y` makes a cell code at once; `yy` (copy) undoes that
         self._prompt_mode = "normal"  # ui mode when a ':' or '/' prompt was opened
 
     def on_load(self) -> None:
-        # Boot the kernel while the widgets are being built.
-        self.run_worker(self._start_kernel(), group="kernel")
+        # Boot the kernels while the widgets are being built.
+        for pane in self._initial_panes:
+            if (boot := pane.start_kernel()) is not None:
+                self.run_worker(boot, group="kernel")
 
     def compose(self) -> ComposeResult:
         yield Header()
-        specs = [notebook.CellSpec("")]
-        if self.path is not None:
-            specs, self.markers = notebook.load_cells(self.path)
-            specs = specs or [notebook.CellSpec("")]
-        specs, self._pending_sources = specs[:INITIAL_CELLS], specs[INITIAL_CELLS:]
-        with Horizontal():
-            with VerticalScroll(id="cells") as self._cells_box:
-                for n, spec in enumerate(specs, 1):
-                    cell = Cell(spec.source, kind=spec.kind, spec=spec)
-                    cell.set_label(n)
-                    yield cell
-            table = DataTable(id="vars", cursor_type="row", zebra_stripes=True)
-            table.add_columns("name", "type", "value")
-            table.display = False  # f2 / :vars shows it
-            yield table
+        yield self._tabbar
+        with Horizontal(id="body"):
+            yield self.workspace  # the explorer is mounted before it on first use (ctrl+b)
         self._status = Static(id="status")
         yield self._status  # no Footer: it rebuilt itself on every focus change (half the cost of a cell move)
 
@@ -546,53 +198,83 @@ class GPython(App):
         header = self.query_one(Header)
         self._kernel_chip = Static(id="kernel")
         await header.mount(self._kernel_chip, after=header.query_one(HeaderIcon))
-        self.update_status()
+        for pane in self._initial_panes:
+            await self.workspace.add(pane, "tab")
+        self.workspace.switch(0)
         if self._theme_warning:
             self.notify(self._theme_warning, severity="warning")
-        first = self.cells()[0]
-        if first.rendered:
-            first.focus()
-        else:
-            first.editor.focus()
-        self.call_after_refresh(lambda: self.run_worker(self._mount_rest(), group="mount"))
-
-    async def _mount_rest(self) -> None:
-        """Mount the cells left out of compose(), a batch at a time, after the first frame."""
-        while self._pending_sources:
-            batch = [Cell(spec.source, kind=spec.kind, spec=spec) for spec in self._pending_sources[:MOUNT_BATCH]]
-            del self._pending_sources[:MOUNT_BATCH]
-            first = len(self._cells_box.children) + 1
-            for n, cell in enumerate(batch, first):
-                cell.set_label(n)
-            await self._cells_box.mount_all(batch)
-            await asyncio.sleep(0)  # let keys and repaints through between batches
-        self.relabel()
-        self.refresh_info()
-        self.loaded.set()
-
-    async def _start_kernel(self) -> None:
-        await self.kernel.start()
-        self.kernel_label = await self._kernel_version()
-        self.update_status("kernel ready")
-
-    async def _kernel_version(self) -> str:
-        """'Python 3.13.7' from the kernel itself (it may be a different interpreter than ours)."""
-        out: list[str] = []
-        code = "print(__import__('platform').python_version())"
-        await self.kernel._execute(code, lambda kind, c: out.append(c.get("text", "")) if kind == "stream" else None, store_history=False)
-        version = "".join(out).strip()
-        return f"Python {version}" if version else "Python"
+        self.pane.focus_pane()
+        if self._explorer_open_at_start:
+            await self.show_explorer()
+        self.update_status()
 
     async def on_unmount(self) -> None:
-        await self.kernel.shutdown()
+        await asyncio.gather(*(pane.kernel.shutdown() for pane in self.workspace.panes()), return_exceptions=True)
+
+    # ── the active notebook (tests and scripts use these) ────────────────
+
+    @property
+    def pane(self) -> NotebookPane:
+        """The active window's notebook."""
+        active = self.workspace.active
+        if active is None:
+            return self._initial_panes[0]
+        return active
+
+    @property
+    def kernel(self):
+        return self.pane.kernel
+
+    @property
+    def path(self) -> Path | None:
+        return self.pane.path
+
+    @property
+    def dirty(self) -> bool:
+        return self.pane.dirty
+
+    @property
+    def markers(self) -> bool:
+        return self.pane.markers
+
+    @property
+    def loaded(self) -> asyncio.Event:
+        return self.pane.loaded
+
+    def cells(self) -> list[Cell]:
+        return self.pane.cells()
+
+    def current_cell(self) -> Cell | None:
+        return self.pane.current_cell()
+
+    async def run_cells(self, roots: list[str], downstream: bool | None = None) -> None:
+        await self.pane.run_cells(roots, downstream)
+
+    def graph(self):
+        return self.pane.graph()
+
+    def refresh_info(self):
+        return self.pane.refresh_info()
+
+    async def set_cell_kind(self, cell: Cell, kind: str, record: bool = True) -> None:
+        await (cell.pane or self.pane).set_cell_kind(cell, kind, record)
+
+    def select(self, cell: Cell, mode: str, row: int | None = None) -> None:
+        (cell.pane or self.pane).select(cell, mode, row)
+
+    def goto_cell(self, n: int, mode: str, row: int = 0, clamp: bool = True) -> bool:
+        return self.pane.goto_cell(n, mode, row, clamp)
 
     # ── helpers ──────────────────────────────────────────────────────────
 
     @property
     def ui_mode(self) -> str:
-        """"cell" when a cell itself is selected, else the vim mode ("insert" without vim)."""
-        if isinstance(self.focused, Cell):
+        """"cell" when a cell itself is selected, "files" in the explorer, else the vim mode."""
+        focused = self.focused
+        if isinstance(focused, Cell):
             return "cell"
+        if isinstance(focused, Explorer):
+            return "files"
         if not VimTextArea.enabled or VimTextArea.mode == "insert":
             return "insert"
         return "normal"
@@ -615,467 +297,382 @@ class GPython(App):
             config.save({"theme": name})
             self._loaded_theme = name
 
+    def pane_focused(self, pane: NotebookPane) -> None:
+        """A widget inside `pane` took focus: it is the active window now."""
+        if self.workspace.active is not pane:
+            self.workspace.set_active(pane)
+
+    def workspace_changed(self) -> None:
+        """Tabs or windows changed: redraw the tab line and the header."""
+        tabs = self.workspace.tabs
+        self.set_class(len(tabs) > 1, "-tabs")
+        if tabs:
+            self._tabbar.show(tabs, self.workspace.index)
+        self._status_key = None
+        self.update_status()
+
     def update_status(self, kernel_state: str | None = None) -> None:
         """Header: kernel chip + file subtitle. Status line: vim mode, run mode, kernel state, theme, hints."""
+        if self._status is None or not self.workspace.tabs:  # not composed yet
+            return
+        pane = self.pane
         if kernel_state is not None:
-            self.kernel_state = kernel_state
-        if self._status is None:  # not composed yet (the kernel boots during compose)
+            pane.set_kernel_state(kernel_state)
             return
         mode = self.ui_mode
-        name = (str(self.path) if self.path else "untitled") + (" •" if self.dirty else "")
-        key = (mode, VimTextArea.enabled, name, self.lazy, self.kernel_state, self.theme, self.kernel_label)
+        name = pane.title
+        key = (mode, VimTextArea.enabled, name, self.lazy, pane.kernel_state, self.theme, pane.kernel_label)
         if key == self._status_key:
             return
         self._status_key = key
-        show_mode = VimTextArea.enabled or mode == "cell"
+        show_mode = VimTextArea.enabled or mode in ("cell", "files")
         self.sub_title = name
         if self._kernel_chip is not None:
-            self._kernel_chip.update(Text(self.kernel_label, style="dim"))
+            self._kernel_chip.update(Text(pane.kernel_label, style="dim"))
         # The file name lives in the header subtitle; the bottom bar shows the vim mode
         # chip, run mode, kernel state, theme and key hints.
         self._status.update(
             Text.assemble(
                 (f" {mode.upper()} ", _MODE_STYLES[mode]) if show_mode else "",
-                f"  {'lazy' if self.lazy else 'reactive'}  ·  {self.kernel_state}  ·  {self.theme}",
+                f"  {'lazy' if self.lazy else 'reactive'}  ·  {pane.kernel_state}  ·  {self.theme}",
                 (f"    {KEY_HINTS}", "dim"),
             )
         )
 
-    def _set_dirty(self, dirty: bool = True) -> None:
-        if dirty != self.dirty:
-            self.dirty = dirty
-            self.update_status()
+    # ── files, windows and tabs ──────────────────────────────────────────
 
-    def cells(self) -> list[Cell]:
-        """Cells in document order. They are the direct children of #cells, so no DOM search."""
-        box = self._cells_box
-        if box is None:
-            return list(self.query(Cell))
-        return [node for node in box.children if isinstance(node, Cell)]
+    def find_open(self, path: Path) -> NotebookPane | None:
+        target = path.resolve()
+        for pane in self.workspace.panes():
+            if pane.path is not None and pane.path.resolve() == target:
+                return pane
+        return None
 
-    def current_cell(self) -> Cell | None:
-        node = self.focused
-        while node is not None and not isinstance(node, Cell):
-            node = node.parent
-        return node
+    async def open_file(self, path: Path | str, how: str = "here", force: bool = False) -> NotebookPane | None:
+        """Open a notebook: in the current window ("here"), a "split", a "vsplit" or a "tab".
 
-    def relabel(self) -> None:
-        """Headers show display positions; renumber after any insert, delete or move."""
-        for n, cell in enumerate(self.cells(), 1):
-            cell.set_label(n)
+        A file that is already open is shown instead of being opened twice (it would need
+        a second kernel). "here" replaces the current notebook, like vim's :edit; it
+        refuses when that notebook has unsaved changes unless `force`.
+        """
+        path = Path(path).expanduser()
+        if path.is_dir():
+            await self.show_explorer(path)
+            return None
+        if (existing := self.find_open(path)) is not None:
+            self.workspace.set_active(existing)
+            existing.focus_pane()
+            if existing is not self.pane:
+                self.notify(f"{path.name} is already open")
+            return existing
+        if path.exists() and not path.is_file():
+            self.notify(f"Not a file: {path}", severity="error")
+            return None
+        if not path.exists() and path.suffix not in (".py", ".ipynb"):
+            self.notify(f"New notebooks need a .py or .ipynb name: {path}", severity="error")
+            return None
+        pane = NotebookPane(path)
+        current = self.workspace.active
+        if how == "here" and current is not None:
+            if current.dirty and not force:
+                self.notify(f"No write since last change for {current.name} (:e! {path} discards, or :w first)", severity="warning")
+                return None
+            await self.workspace.replace(current, pane)
+        elif how in ("split", "vsplit") and current is not None:
+            await self.workspace.add(pane, how, current)
+        else:
+            await self.workspace.add(pane, "tab")
+        pane.focus_pane()
+        return pane
 
-    def graph(self) -> Graph:
-        """The dependency graph of the code cells (markdown cells never run)."""
-        return build({c.cid: c.source for c in self.cells() if c.kind == "code"})
+    async def new_pane(self, how: str) -> NotebookPane:
+        """An untitled notebook in a split or tab."""
+        pane = NotebookPane(None)
+        await self.workspace.add(pane, how, self.workspace.active)
+        pane.focus_pane()
+        return pane
 
-    def refresh_info(self) -> Graph:
-        graph = self.graph()
-        for cell in self.cells():
-            cell.set_info(graph)
-        return graph
-
-    async def run_cells(self, roots: list[str], downstream: bool | None = None) -> None:
-        """Run roots (and, unless lazy, every cell downstream) in dependency order."""
-        await self.loaded.wait()  # the graph needs every cell
-        async with self._run_lock:
-            graph = self.refresh_info()
-            by_id = {c.cid: c for c in self.cells() if c.kind == "code"}
-            roots = graph.expand_roots([r for r in roots if r in by_id])
-            if downstream is None:
-                downstream = not self.lazy
-            if downstream:
-                order = graph.run_order(roots)
-            else:
-                order = graph.sort(set(roots))
-                for cid in graph.descendants(roots) - set(roots):
-                    by_id[cid].set_status("stale")
-            for cid in order:
-                by_id[cid].set_status("queued")
-
-            failed: set[str] = set()
-            for cid in order:
-                cell = by_id[cid]
-                if not cell.is_mounted:  # deleted while queued
-                    continue
-                if cid in graph.errors:
-                    cell.show_error(graph.errors[cid])
-                    cell.set_status("error")
-                    failed.add(cid)
-                    continue
-                if graph.parents[cid] & failed:
-                    cell.show_error("not run: an upstream cell failed")
-                    cell.set_status("skipped")
-                    failed.add(cid)
-                    continue
-
-                source = cell.source
-                cell.echo_suppressed = ends_with_string(source)
-                await self.kernel.delete(cell.last_defs | graph.defs[cid])
-                # Deferred clear: the old output stays until the first new output arrives,
-                # so the cell does not collapse and grow again (the page would jump).
-                cell.add_output("clear_output", {"wait": True})
-                self.exec_counter += 1
-                cell.begin_run(self.exec_counter)
-                ok = await self.kernel.execute(source, cell.add_output)
-                if cell.output_box._clear_pending:  # no output at all: clear the old one now
-                    cell.clear_output()
-                cell.ran_source = source
-                cell.last_defs = graph.defs[cid]
-                cell.end_run("ok" if ok and cell.source == source else "error" if not ok else "stale")
-                if not ok:
-                    failed.add(cid)
-                self._keep_focus_visible(cell)
-
-            await self.refresh_vars(graph)
-
-    def _keep_focus_visible(self, ran: Cell) -> None:
-        """New output above the focused cell pushes it down; keep the user's cell on screen."""
-        current = self.current_cell()
-        if current is not None and current is not ran:
-            self.call_after_refresh(current.scroll_visible, animate=False, immediate=True)
-
-    async def refresh_vars(self, graph: Graph) -> None:
-        names = set().union(*graph.defs.values()) if graph.defs else set()
-        rows = await self.kernel.variables(names)
-        table = self.query_one("#vars", DataTable)
-        table.clear()
-        for row in rows:
-            table.add_row(*row)
-
-    def write_file(self) -> None:
-        cells = [
-            dataclasses.replace(c.spec, source=c.source, kind=c.kind) if c.spec is not None else notebook.CellSpec(c.source, c.kind)
-            for c in self.cells()
-        ] + self._pending_sources
-        notebook.save(self.path, cells, self.markers)
-        self._set_dirty(False)
-        self.notify(f"Saved {self.path}")
-
-    def _after_loaded(self, callback) -> None:
-        """Call `callback` now if every cell is mounted, else once they are."""
-        if self.loaded.is_set():
-            callback()
+    async def close_window(self, force: bool = False, save: bool = False) -> None:
+        """vim's :q / :wq / :q!: close the current window; closing the last one quits."""
+        pane = self.pane
+        if save:
+            if pane.path is None:
+                self.notify("No file name. Use :wq name.py", severity="warning")
+                return
+            pane.write_file()
+        if pane.dirty and not force:
+            self.push_screen(
+                Prompt(f"Unsaved changes in {pane.name}. Close anyway? (y/n) "),
+                lambda answer: self._confirm(answer, lambda: self.close_window(force=True)),
+            )
             return
-
-        async def later() -> None:
-            await self.loaded.wait()
-            callback()
-
-        self.run_worker(later(), group="nav")
-
-    def select(self, cell: Cell, mode: str, row: int | None = None) -> None:
-        """Focus `cell` in `mode`: "cell" selects it, otherwise its editor gets focus.
-
-        `mode` "normal"/"insert" also switches the vim mode; "keep" leaves it.
-        `row` puts the cursor at the start of that line (-1 = last line).
-        """
-        if mode == "cell" or cell.rendered:  # rendered markdown: select it; enter edits
-            cell.focus(scroll_visible=False)
+        if len(self.workspace.panes()) == 1:
+            self.exit()
+            return
+        nxt = await self.workspace.close(pane)
+        if nxt is None:
+            self.exit()
         else:
-            editor = cell.editor
-            editor.focus(scroll_visible=False)  # Textual's own scroll is animated
-            if mode in ("normal", "insert") and VimTextArea.mode != mode:
-                editor.set_mode(mode)
-            if row is not None:
-                editor.move_cursor((editor.document.line_count - 1 if row < 0 else row, 0))
-        cell.scroll_visible(animate=False, immediate=True)
-        # A cell mounted in this same frame has no region yet: scroll again after layout.
-        self.call_after_refresh(cell.scroll_visible, animate=False, immediate=True)
+            nxt.focus_pane()
 
-    def goto_cell(self, n: int, mode: str, row: int = 0, clamp: bool = True) -> bool:
-        """Focus the n-th cell by display position (1-based), keeping `mode`."""
-        cells = self.cells()
-        if clamp:
-            n = max(1, min(len(cells), n))
-        if not 1 <= n <= len(cells):
-            self.notify(f"No cell {n} (there are {len(cells)})", severity="warning")
-            return False
-        self.select(cells[n - 1], mode if mode == "cell" else "keep", row)
-        return True
+    def _confirm(self, answer: str | None, then) -> None:
+        if answer and answer.lower().startswith("y"):
+            result = then()
+            if asyncio.iscoroutine(result):
+                self.run_worker(result)
 
-    def _snapshot(self, cell: Cell, index: int) -> CellSnapshot:
-        return CellSnapshot(index, cell.source, cell.kind, cell.ran_source is not None, cell.outputs_snapshot(), cell.spec)
-
-    def _push_undo(self, action: tuple) -> None:
-        self._undo.append(action)
-        del self._undo[:-MAX_UNDO]
-
-    async def _insert(
-        self, anchor: Cell | None, above: bool = False, snapshot: CellSnapshot | None = None, record: bool = True
-    ) -> Cell:
-        """Mount a new (or restored) cell next to `anchor`; renumber; mark dirty.
-
-        `record` puts an ("insert", cid) entry on the undo stack (undo removes the cell).
-        """
-        cell = Cell(snapshot.source, snapshot.kind, snapshot.spec) if snapshot else Cell()
-        box = self._cells_box
-        if anchor is None:
-            await box.mount(cell)
-        elif above:
-            await box.mount(cell, before=anchor)
+    def focus_window(self, where: str) -> None:
+        """h/j/k/l: the window in that direction; next/prev/first/last cycle through them."""
+        current = self.pane
+        explorer_open = self.explorer_visible
+        in_explorer = isinstance(self.focused, Explorer)
+        panes = self.workspace.tab_panes()
+        if where in ("left", "right", "up", "down"):
+            direction = {"left": "h", "right": "l", "up": "k", "down": "j"}[where]
+            if in_explorer:
+                if direction == "l" and panes:  # the window right of the explorer: the leftmost one
+                    rects = self.workspace.tab.rects
+                    leftmost = min(panes, key=lambda p: (rects[p].x, rects[p].y) if p in rects else (0, 0))
+                    self.workspace.set_active(leftmost)
+                    leftmost.focus_pane()
+                return
+            target = self.workspace.neighbour(current, direction)
+            if target is None and direction == "h" and explorer_open:
+                self.explorer.focus()
+                return
+        elif where in ("next", "prev"):
+            # The explorer counts as the first window of the tab, like NERDTree's.
+            ring: list = ([self.explorer] if explorer_open else []) + panes
+            at = ring.index(self.explorer) if in_explorer else (ring.index(current) if current in ring else 0)
+            target = ring[(at + (1 if where == "next" else -1)) % len(ring)]
+            if isinstance(target, Explorer):
+                target.focus()
+                return
+        elif where == "first":
+            panes = self.workspace.tab_panes()
+            target = panes[0] if panes else None
         else:
-            await box.mount(cell, after=anchor)
-        if snapshot:
-            cell.replay(snapshot.outputs)
-            if snapshot.ran:
-                cell.set_status("stale")
-        if record:
-            self._push_undo(("insert", cell.cid))
-        self.relabel()
-        self.refresh_info()
-        self._set_dirty()
-        return cell
+            panes = self.workspace.tab_panes()
+            target = panes[-1] if panes else None
+        if target is not None:
+            self.workspace.set_active(target)
+            target.focus_pane()
 
-    # ── actions ──────────────────────────────────────────────────────────
+    def tab_switch(self, n: int | None, step: int) -> None:
+        """gt / gT / :tabn: tab `n` (1-based) when given, else `step` tabs forward."""
+        tabs = self.workspace.tabs
+        if not tabs:
+            return
+        if n is not None:
+            index = max(0, min(len(tabs) - 1, n - 1))
+        else:
+            index = (self.workspace.index + step) % len(tabs)
+        if index != self.workspace.index:
+            self.workspace.switch(index)
+            self.pane.focus_pane()
+
+    async def tab_close(self, force: bool = False) -> None:
+        panes = self.workspace.tab_panes()
+        if len(self.workspace.tabs) == 1:
+            await self.action_quit() if not force else self.exit()
+            return
+        if any(p.dirty for p in panes) and not force:
+            self.push_screen(
+                Prompt("This tab has unsaved changes. Close it anyway? (y/n) "),
+                lambda answer: self._confirm(answer, lambda: self.tab_close(force=True)),
+            )
+            return
+        for pane in panes:
+            await self.workspace.close(pane)
+        self.pane.focus_pane()
+
+    async def tab_only(self) -> None:
+        keep = self.workspace.index
+        for i, tab in reversed(list(enumerate(self.workspace.tabs))):
+            if i == keep:
+                continue
+            for pane in list(self.workspace.panes()):
+                if self.workspace.tab_of(pane) == i:
+                    await self.workspace.close(pane)
+                    if self.workspace.tab_of(self.pane) is None:
+                        break
+        self.workspace.switch(self.workspace.tab_of(self.pane) or 0)
+
+    @property
+    def explorer_visible(self) -> bool:
+        return self.explorer is not None and self.explorer.display
+
+    async def show_explorer(self, root: Path | None = None) -> None:
+        """Show the file tree (mounted on first use: its directory loader is a long-lived worker) and focus it."""
+        explorer = self.explorer
+        if explorer is None:
+            explorer = self.explorer = Explorer(root or self.explorer_root)
+            await self.query_one("#body").mount(explorer, before=self.workspace)
+        elif root is not None and Path(root).resolve() != Path(explorer.path).resolve():
+            explorer.path = root
+        explorer.display = True
+        explorer.focus()
+        self.update_status()
+
+    def hide_explorer(self) -> None:
+        if self.explorer is not None:
+            self.explorer.display = False
+        self.pane.focus_pane()
+        self.update_status()
+
+    async def action_toggle_explorer(self) -> None:
+        """ctrl+b: show the file tree (rooted at the notebook's folder) and focus it; hide it when shown."""
+        if self.explorer_visible:
+            self.hide_explorer()
+        else:
+            root = None if self.explorer is not None else (self.pane.path.resolve().parent if self.pane.path else None)
+            await self.show_explorer(root)
+
+    @on(Explorer.Open)
+    async def _explorer_open(self, event: Explorer.Open) -> None:
+        event.stop()
+        await self.open_file(event.path, event.how)
+
+    @on(Explorer.Closed)
+    def _explorer_closed(self) -> None:
+        self.hide_explorer()
+
+    @on(Explorer.SearchRequested)
+    def _explorer_search(self) -> None:
+        self.push_screen(Prompt("/", placeholder="file name"), lambda text: text and self.explorer.search(text))
+
+    @on(Explorer.NewFile)
+    def _explorer_new_file(self, event: Explorer.NewFile) -> None:
+        directory = event.directory
+
+        async def create(name: str | None) -> None:
+            if not name:
+                return
+            path = Path(name).expanduser()
+            if not path.is_absolute():
+                path = directory / path
+            if path.suffix not in (".py", ".ipynb"):
+                path = path.with_suffix(".py")
+            if path.exists():
+                await self.open_file(path, "here")
+                return
+            pane = await self.open_file(path, "here")
+            if pane is not None:
+                pane.write_file()
+                self.explorer.reload()
+
+        self.push_screen(Prompt("New notebook: ", placeholder="name.py"), create)
+
+    def action_window_prefix(self) -> None:
+        """ctrl+w: wait for the window command (s v h j k l w q o T = ...)."""
+        focused = self.focused
+        if isinstance(focused, VimTextArea) and self.ui_mode == "insert":
+            focused.action_delete_word_left()  # vim: ctrl+w in insert mode deletes a word
+            return
+        if isinstance(focused, Input):
+            return
+        if not isinstance(self.screen, KeyCapture):
+            self.push_screen(KeyCapture("^W"), self._window_command)
+
+    async def _window_command(self, key: str | None) -> None:
+        if key is None:
+            return
+        command = _WINDOW_KEYS.get(key)
+        pane = self.pane
+        match command:
+            case "split" | "vsplit":
+                await self.new_pane(command)
+            case "left" | "right" | "up" | "down" | "next" | "prev" | "first" | "last":
+                self.focus_window(command)
+            case "close":
+                await self.close_window()
+            case "only":
+                await self.workspace.only(pane)
+                pane.focus_pane()
+            case "totab":
+                await self.workspace.to_new_tab(pane)
+                pane.focus_pane()
+            case "equal":
+                self.workspace.equalize()
+            case "taller" | "shorter":
+                self.workspace.resize(pane, False, 0.1 if command == "taller" else -0.1)
+            case "wider" | "narrower":
+                self.workspace.resize(pane, True, 0.1 if command == "wider" else -0.1)
+            case _:
+                self.notify(f"ctrl+w {key}: not a window command (s v h j k l w p q o T = + - < >)", severity="warning")
+
+    # ── actions: forwarded to the active pane ────────────────────────────
 
     async def action_run_cell(self, advance: str = "stay") -> None:
-        """Run the current cell. advance: "stay", "next" (Jupyter shift+enter) or "insert" (alt+enter)."""
-        cell = self.current_cell()
-        if cell is None:
-            return
-        mode = self.ui_mode
-        if cell.kind == "markdown":  # "running" markdown renders it; the kernel is not involved
-            if self.focused is not cell:
-                cell.focus(scroll_visible=False)
-            await cell.show_rendered()
-        else:
-            self.run_worker(self.run_cells([cell.cid]), group="run")
-        if advance == "next":
-            cells = self.cells()
-            if cells[-1] is cell and self._pending_sources:
-                await self.loaded.wait()
-                cells = self.cells()
-            index = cells.index(cell) if cell in cells else len(cells) - 1
-            if index + 1 < len(cells):
-                self.select(cells[index + 1], "cell" if mode == "cell" else "normal", row=0)
-                return
-            advance = "insert"  # last cell: open a fresh one
-        if advance == "insert":
-            new = await self._insert(cell)
-            self.select(new, "insert")
+        await self.pane.run_cell(advance)
 
     async def action_run_and_add(self) -> None:
         """Old name of shift+enter."""
-        await self.action_run_cell("next")
+        await self.pane.run_cell("next")
 
     def action_run_all(self) -> None:
-        self.run_worker(self.run_cells([c.cid for c in self.cells()], downstream=True), group="run")
+        self.pane.run_all()
 
     def action_run_stale(self) -> None:
-        stale = [c.cid for c in self.cells() if c.kind == "code" and c.status in ("stale", "idle") and c.source.strip()]
-        if stale:
-            self.run_worker(self.run_cells(stale, downstream=True), group="run")
-
-    def _run_relative(self, below: bool) -> None:
-        cell = self.current_cell()
-        cells = self.cells()
-        if cell is None or cell not in cells:
-            return
-        index = cells.index(cell)
-        subset = cells[index:] if below else cells[:index]
-        if subset:
-            self.run_worker(self.run_cells([c.cid for c in subset], downstream=False), group="run")
+        self.pane.run_stale()
 
     async def action_add_cell(self, above: bool = False) -> None:
-        cell = await self._insert(self.current_cell(), above)
-        self.select(cell, "insert")
+        await self.pane.add_cell(above)
 
     async def action_delete_cell(self, count: int = 1) -> None:
-        """Delete `count` cells from the current one (dependents re-run); u in cell mode undoes."""
-        cell = self.current_cell()
-        if cell is None:
-            return
-        cells = self.cells()
-        index = cells.index(cell)
-        await self._remove_cells(cells[index : index + max(1, count)], self.ui_mode)
-
-    async def _remove_cells(self, victims: list[Cell], mode: str, record: bool = True) -> None:
-        """Remove cells (their variables leave the kernel, dependents re-run); select the next one."""
-        cells = self.cells()
-        index = cells.index(victims[0])
-        ids = [c.cid for c in victims]
-        graph = self.graph()
-        downstream = graph.descendants([i for i in ids if i in graph.children]) - set(ids)
-        defs = set().union(*(c.last_defs for c in victims))
-        if record:
-            for offset in range(len(victims) - 1, -1, -1):  # undo restores the first one first
-                self._push_undo(("delete", self._snapshot(victims[offset], index + offset)))
-        await self._cells_box.remove_children(victims)
-        if not self.cells():
-            await self._cells_box.mount(Cell())
-        remaining = self.cells()
-        self.relabel()
-        self._set_dirty()
-        self.select(remaining[min(index, len(remaining) - 1)], "cell" if mode == "cell" else "keep")
-
-        # Reactivity: the deleted cells' variables vanish, so dependents re-run.
-        await self.kernel.delete(defs)
-        if downstream:
-            self.run_worker(self.run_cells(sorted(downstream)), group="run")
-        else:
-            self.refresh_info()
-            self.run_worker(self.refresh_vars(self.graph()), group="run")
+        await self.pane.delete_cell(count)
 
     async def action_undo(self) -> None:
-        """Undo the newest cell-level action: delete, move, insert or kind change."""
-        mode = self.ui_mode
-        keep = "cell" if mode == "cell" else "keep"
-        while self._undo:
-            action = self._undo.pop()
-            if action[0] == "delete":
-                snapshot = action[1]
-                cells = self.cells()
-                if snapshot.index < len(cells):
-                    cell = await self._insert(cells[snapshot.index], above=True, snapshot=snapshot, record=False)
-                else:
-                    cell = await self._insert(cells[-1] if cells else None, snapshot=snapshot, record=False)
-                self.select(cell, keep)
-                return
-            cell = next((c for c in self.cells() if c.cid == action[1]), None)
-            if cell is None:  # the cell is gone (e.g. deleted later): skip this entry
-                continue
-            if action[0] == "move":
-                self._move_to(cell, action[2])
-                self.select(cell, keep)
-            elif action[0] == "insert":
-                await self._remove_cells([cell], mode, record=False)
-            elif action[0] == "kind":
-                await self.set_cell_kind(cell, action[2], record=False)
-                self.select(cell, keep)
-            return
-        self.notify("Nothing to undo")
+        await self.pane.undo()
 
     action_undo_delete = action_undo  # old name
 
-    def _move_to(self, cell: Cell, index: int) -> None:
-        """Put `cell` at display position `index` (0-based); renumber; mark dirty."""
-        others = [c for c in self.cells() if c is not cell]
-        if not others:
-            return
-        if index < len(others):
-            self._cells_box.move_child(cell, before=others[index])
-        else:
-            self._cells_box.move_child(cell, after=others[-1])
-        self.relabel()
-        self.refresh_info()
-        self._set_dirty()
-        cell.scroll_visible(animate=False)
-
     def action_copy_cell(self) -> None:
-        if cell := self.current_cell():
-            self._cell_clipboard = self._snapshot(cell, self.cells().index(cell))
+        self.pane.copy_cell()
 
     async def action_cut_cell(self) -> None:
-        self.action_copy_cell()
-        await self.action_delete_cell()
+        await self.pane.cut_cell()
 
     async def action_paste_cell(self, above: bool = False) -> None:
-        if self._cell_clipboard is None:
-            self.notify("No cell copied (yy or x in cell mode)")
-            return
-        mode = self.ui_mode
-        # A copy is a new cell: it does not inherit file-format extras (e.g. a marimo cell name).
-        clip = dataclasses.replace(self._cell_clipboard, spec=None)
-        cell = await self._insert(self.current_cell(), above, snapshot=clip)
-        self.select(cell, "cell" if mode == "cell" else "keep")
+        await self.pane.paste_cell(above)
 
     def action_move_cell(self, step: int) -> None:
-        cell = self.current_cell()
-        cells = self.cells()
-        if cell is None or cell not in cells:
-            return
-        start = cells.index(cell)
-        target = start + step
-        if not 0 <= target < len(cells):
-            return
-        self._move_to(cell, target)
-        self._push_undo(("move", cell.cid, start, target))
+        self.pane.move_cell(step)
 
     def action_focus_cell(self, step: int) -> None:
-        cells = self.cells()
-        current = self.current_cell()
-        index = cells.index(current) + step if current in cells else 0
-        if abs(step) > 1:  # J/K with a count stop at the first/last cell
-            index = max(0, min(len(cells) - 1, index))
-        if 0 <= index < len(cells) and cells[index] is not current:
-            if isinstance(self.focused, Cell) or cells[index].rendered:
-                self.select(cells[index], "cell")
-                return
-            editor = cells[index].editor
-            editor.focus(scroll_visible=False)  # Textual's own scroll is animated
-            # Land on the nearest line, like moving through one long buffer.
-            editor.move_cursor((0, 0) if step > 0 else (editor.document.line_count - 1, 0))
-            cells[index].scroll_visible(animate=False, immediate=True)
+        self.pane.focus_cell(step)
 
     def action_focus_edge(self, last: bool) -> None:
-        mode = self.ui_mode
-        if last:
-            self._after_loaded(lambda: self.goto_cell(len(self.cells()), mode, row=-1))
-        else:
-            self.goto_cell(1, mode)
-
-    async def set_cell_kind(self, cell: Cell, kind: str, record: bool = True) -> None:
-        """Switch a cell between code and markdown; selection stays on the cell.
-
-        code → markdown works like deleting the code: its variables leave the kernel
-        and the cells that used them re-run (and now fail, as in marimo).
-        """
-        if kind == cell.kind or kind not in ("code", "markdown"):
-            return
-        if record:
-            self._push_undo(("kind", cell.cid, cell.kind))
-        self._set_dirty()
-        if kind == "code":
-            await cell.set_kind("code")
-            self.refresh_info()
-            return
-        graph = self.graph()
-        downstream = graph.descendants([cell.cid]) - {cell.cid}
-        defs = set(cell.last_defs)
-        await cell.set_kind("markdown")
-        self.refresh_info()
-        if not defs:  # never ran: nothing in the kernel came from it
-            return
-        await self.kernel.delete(defs)
-        if downstream:
-            self.run_worker(self.run_cells(sorted(downstream)), group="run")
-        else:
-            self.run_worker(self.refresh_vars(self.graph()), group="run")
+        self.pane.focus_edge(last)
 
     def set_line_numbers(self, on: bool) -> None:
         VimTextArea.line_numbers = on
-        for cell in self.cells():
-            cell.editor.show_line_numbers = on
+        for pane in self.workspace.panes():
+            for cell in pane.cells():
+                cell.editor.show_line_numbers = on
         config.save({"line_numbers": on})
 
     def set_vim(self, on: bool) -> None:
         VimTextArea.enabled = on
         VimTextArea.mode = "normal" if on else "insert"
-        for cell in self.cells():
-            cell.editor.pending = cell.editor.count = ""
-            cell.editor._apply_mode()
+        for pane in self.workspace.panes():
+            for cell in pane.cells():
+                cell.editor.pending = cell.editor.count = ""
+                cell.editor._apply_mode()
         config.save({"vim": on})
         self.update_status()
 
     def action_save(self) -> None:
-        if self.path is None:
-            self.push_screen(Prompt("Save as: ", placeholder="notebook.py"), self._saved_as)
-        else:
-            self.write_file()
+        self.pane.save()
 
-    async def _saved_as(self, name: str | None) -> None:
-        if not name:
-            return
-        self.path = Path(name)
-        self.write_file()
-        self.update_status()
-        if self.kernel.ready.is_set():
-            await self.kernel.set_file(self.path)
+    def write_file(self) -> None:
+        self.pane.write_file()
 
     async def action_quit(self) -> None:
-        """ctrl+q / :q: ask first when there are unsaved changes."""
-        if self.dirty:
-            self.push_screen(Prompt("Unsaved changes. Quit without saving? (y/n) "), self._confirm_quit)
+        """ctrl+q / :qa: quit the whole app; ask first when any notebook has unsaved changes."""
+        dirty = [p.name for p in self.workspace.panes() if p.dirty]
+        if dirty:
+            self.push_screen(Prompt(f"Unsaved changes in {', '.join(dirty)}. Quit without saving? (y/n) "), self._confirm_quit)
         else:
             self.exit()
 
@@ -1084,7 +681,7 @@ class GPython(App):
             self.exit()
 
     async def action_interrupt(self) -> None:
-        await self.kernel.interrupt()
+        await self.pane.interrupt()
 
     def action_help(self) -> None:
         if not isinstance(self.screen, HelpScreen):
@@ -1092,8 +689,7 @@ class GPython(App):
             self.push_screen(HelpScreen(commands))
 
     def action_toggle_vars(self) -> None:
-        table = self.query_one("#vars")
-        table.display = not table.display
+        self.pane.toggle_vars()
 
     def action_toggle_lazy(self) -> None:
         self.lazy = not self.lazy
@@ -1101,121 +697,13 @@ class GPython(App):
         self.notify("Lazy: dependents are marked stale, run them with f4" if self.lazy else "Reactive: dependents re-run automatically")
 
     async def action_restart_kernel(self) -> None:
-        self.update_status("restarting kernel…")
-        await self.kernel.restart()
-        for cell in self.cells():
-            cell.last_defs = set()
-            if cell.ran_source is not None:
-                cell.set_status("stale")
-        self.query_one("#vars", DataTable).clear()
-        self.update_status("kernel ready")
-
-    def on_click(self, event) -> None:
-        """Clicking the empty space below the last cell focuses the nearest cell."""
-        if event.widget is self._cells_box and (cells := self.cells()):
-            if cells[-1].rendered:
-                cells[-1].focus()
-            else:
-                cells[-1].editor.focus()
-
-    # ── cell mode ────────────────────────────────────────────────────────
-
-    async def cell_command(self, cell: Cell, key: str) -> bool:
-        """One key in cell mode (the cell itself has focus). Returns False if unknown."""
-        if key.isdigit() and (key != "0" or self._cmd_count):
-            self._cmd_count += key
-            return True
-        had_count = bool(self._cmd_count)
-        n = int(self._cmd_count or 1)
-        pending, self._cmd_pending, self._cmd_count = self._cmd_pending, "", ""
-        if pending == "g":
-            if key == "g":
-                self.goto_cell(n, "cell")
-            return True
-        if pending == "d":
-            if key == "d":
-                await self.action_delete_cell(n)
-            return True
-        if pending == "y":
-            kind_before, self._kind_before_y = self._kind_before_y, None
-            if key == "y":
-                if kind_before == "markdown" and cell.kind == "code":
-                    await cell.set_kind("markdown")  # yy copies; undo the `y` that made it code
-                    if self._undo and self._undo[-1] == ("kind", cell.cid, "markdown"):
-                        self._undo.pop()
-                self.action_copy_cell()
-                return True
-            # `y` alone already made the cell code; this key is a new command.
-        match key:
-            case "g" | "d" | "y":
-                if key == "y":
-                    self._kind_before_y = cell.kind
-                    await self.set_cell_kind(cell, "code")
-                self._cmd_pending = key
-                self._cmd_count = str(n) if had_count else ""
-            case "j" | "down":
-                self.action_focus_cell(n)
-            case "k" | "up":
-                self.action_focus_cell(-n)
-            case "G":
-                if had_count:
-                    self.goto_cell(n, "cell")
-                else:
-                    self._after_loaded(lambda: self.goto_cell(len(self.cells()), "cell"))
-            case "enter" | "i":
-                cell.start_editing()  # markdown: show the editor instead of the rendered text
-                self.select(cell, "normal" if key == "enter" else "insert")
-            case "a" | "b":
-                new = await self._insert(cell, above=key == "a")
-                self.select(new, "insert")
-            case "u" | "z":
-                await self.action_undo()
-            case "x":
-                await self.action_cut_cell()
-            case "p" | "P":
-                await self.action_paste_cell(above=key == "P")
-            case "J" | "shift+j":
-                self.action_move_cell(1)
-            case "K" | "shift+k":
-                self.action_move_cell(-1)
-            case "m":
-                await self.set_cell_kind(cell, "markdown")
-            case "o":
-                cell.toggle_collapsed()
-            case "O" | "shift+o":
-                cell.clear_output()
-            case "l":
-                self.set_line_numbers(not VimTextArea.line_numbers)
-            case "/":
-                self._open_search()
-            case ":":
-                self._open_ex()
-            case "?" | "question_mark":
-                self.action_help()
-            case "escape":
-                pass
-            case _:
-                return False
-        return True
+        await self.pane.restart_kernel()
 
     # ── vim glue ─────────────────────────────────────────────────────────
 
     @on(VimTextArea.ModeChanged)
     def _mode_changed(self) -> None:
         self.update_status()
-
-    @on(VimTextArea.Changed)
-    def _edited(self) -> None:
-        if not self.dirty:
-            self._set_dirty()
-
-    @on(VimTextArea.EdgeReached)
-    def _edge(self, event: VimTextArea.EdgeReached) -> None:
-        self.action_focus_cell(event.step)
-
-    @on(VimTextArea.DeleteCell)
-    async def _delete_cell(self, event: VimTextArea.DeleteCell) -> None:
-        await self.action_delete_cell(event.count)
 
     @on(VimTextArea.SearchRequested)
     def _search(self) -> None:
@@ -1224,6 +712,10 @@ class GPython(App):
     @on(VimTextArea.ExCommand)
     def _ex(self) -> None:
         self._open_ex()
+
+    @on(VimTextArea.TabSwitch)
+    def _tab_switch(self, event: VimTextArea.TabSwitch) -> None:
+        self.tab_switch(event.tab, event.step)
 
     def _open_ex(self) -> None:
         self._prompt_mode = self.ui_mode
@@ -1234,27 +726,8 @@ class GPython(App):
         self.push_screen(Prompt("/", placeholder="cell number or text"), self._jump)
 
     def _jump(self, target: str | None) -> None:
-        """'/3' focuses the third cell by display position; '/text' the next cell containing text."""
-        if not target:
-            return
-        mode = self._prompt_mode
-
-        def go() -> None:
-            if target.isdigit():
-                self.goto_cell(int(target), mode, clamp=False)
-                return
-            cells = self.cells()
-            current = self.current_cell()
-            start = cells.index(current) + 1 if current in cells else 0
-            needle = target.lower()
-            for i in range(len(cells)):
-                cell = cells[(start + i) % len(cells)]
-                if needle in cell.source.lower():
-                    self.select(cell, mode if mode == "cell" else "keep")
-                    return
-            self.notify(f"Not found: {target}", severity="warning")
-
-        self._after_loaded(go)
+        if target:
+            self.pane.jump(target, self._prompt_mode)
 
     def ex_commands(self) -> list[tuple[tuple[str, ...], str, object]]:
         """(names, description, handler). Shared by ':' commands, the palette and help.
@@ -1264,15 +737,33 @@ class GPython(App):
         """
         return [
             (("w", "write"), "Save notebook (:w name.py saves as)", self._ex_write),
-            (("wq", "x", "wqa", "wqall", "xa", "xall"), "Save and quit", self._ex_write_quit),
-            (("q", "qa", "qall", "quit"), "Quit (asks if unsaved)", lambda arg="": self.action_quit()),
-            (("q!", "qa!", "quit!"), "Quit without saving", lambda arg="": self.exit()),
+            (("wa", "wall"), "Save every open notebook", lambda arg="": self._save_all()),
+            (("wq", "x"), "Save and close this window", lambda arg="": self._ex_write_quit(arg)),
+            (("wqa", "wqall", "xa", "xall"), "Save every notebook and quit (:wqa name.py names an untitled one)", self._ex_write_quit_all),
+            (("q", "quit", "close", "clo"), "Close this window (quits when it is the last; asks if unsaved)", lambda arg="": self.close_window()),
+            (("q!", "quit!"), "Close this window without saving", lambda arg="": self.close_window(force=True)),
+            (("qa", "qall", "quitall"), "Quit (asks if anything is unsaved)", lambda arg="": self.action_quit()),
+            (("qa!", "qall!"), "Quit without saving", lambda arg="": self.exit()),
+            (("e", "edit", "open"), "Open a notebook here (:e file; :e dir or :e alone opens the explorer)", self._ex_edit),
+            (("e!", "edit!"), "Open a notebook here, discarding unsaved changes", lambda arg="": self._ex_edit(arg, force=True)),
+            (("sp", "split"), "Horizontal split (:sp file opens it there)", lambda arg="": self._ex_split("split", arg)),
+            (("vs", "vsp", "vsplit"), "Vertical split (:vs file opens it there)", lambda arg="": self._ex_split("vsplit", arg)),
+            (("on", "only"), "Close every other window in this tab", lambda arg="": self._ex_only()),
+            (("tabnew", "tabe", "tabedit"), "New tab (:tabnew file opens it there)", lambda arg="": self._ex_split("tab", arg)),
+            (("tabc", "tabclose"), "Close this tab", lambda arg="": self.tab_close(force=arg.strip() == "!")),
+            (("tabo", "tabonly"), "Close every other tab", lambda arg="": self.tab_only()),
+            (("tabn", "tabnext"), "Next tab (:tabn 3 goes to tab 3)", lambda arg="": self.tab_switch(int(arg) if arg.strip().isdigit() else None, 1)),
+            (("tabp", "tabprevious", "tabN", "tabNext"), "Previous tab", lambda arg="": self.tab_switch(None, -1)),
+            (("tabfirst", "tabr", "tabrewind"), "First tab", lambda arg="": self.tab_switch(1, 0)),
+            (("tablast",), "Last tab", lambda arg="": self.tab_switch(len(self.workspace.tabs), 0)),
+            (("tabs", "ls", "buffers", "files"), "List the open notebooks", lambda arg="": self._ex_list()),
+            (("Ex", "Explore", "explorer", "tree", "Lex", "Vex"), "Toggle the file explorer (ctrl+b)", lambda arg="": self._ex_explore(arg)),
             (("run", "runall"), "Run all cells", lambda arg="": self.action_run_all()),
-            (("runabove",), "Run the cells above the current one", lambda arg="": self._run_relative(False)),
-            (("runbelow",), "Run the current cell and the cells below", lambda arg="": self._run_relative(True)),
+            (("runabove",), "Run the cells above the current one", lambda arg="": self.pane.run_relative(False)),
+            (("runbelow",), "Run the current cell and the cells below", lambda arg="": self.pane.run_relative(True)),
             (("stale", "runstale"), "Run stale cells", lambda arg="": self.action_run_stale()),
             (("restart",), "Restart kernel", lambda arg="": self.action_restart_kernel()),
-            (("clear",), "Clear all outputs", lambda arg="": [c.clear_output() for c in self.cells()]),
+            (("clear",), "Clear all outputs", lambda arg="": self.pane.clear_outputs()),
             (("set",), "Options: vim novim lazy nolazy nu nonu", self._ex_set),
             (("variables", "vars"), "Toggle variables panel", lambda arg="": self.action_toggle_vars()),
             (("lazy",), "Toggle lazy mode", lambda arg="": self.action_toggle_lazy()),
@@ -1280,7 +771,7 @@ class GPython(App):
             (("delete", "del"), "Delete current cell", lambda arg="": self.action_delete_cell()),
             (("md", "markdown"), "Cell → Markdown", lambda arg="": self._ex_kind("markdown")),
             (("code",), "Cell → Code", lambda arg="": self._ex_kind("code")),
-            (("interrupt",), "Interrupt running code", lambda arg="": self.kernel.interrupt()),
+            (("interrupt",), "Interrupt running code", lambda arg="": self.pane.kernel.interrupt()),
             (("theme",), "Set theme (:theme name) or show the current one", self._ex_theme),
             (("help", "h"), "Keys and commands", lambda arg="": self.action_help()),
         ]
@@ -1303,16 +794,71 @@ class GPython(App):
 
     async def _ex_write(self, arg: str = "") -> None:
         if arg:
-            await self._saved_as(arg)
+            await self.pane.saved_as(arg)
         else:
-            self.action_save()
+            self.pane.save()
+
+    def _save_all(self, then=None) -> None:
+        for pane in self.workspace.panes():
+            if pane.path is None:
+                if pane.dirty:
+                    self.notify(f"An untitled notebook has no file name: use :w name.py in it", severity="warning")
+                    return
+                continue
+            if pane.dirty:
+                pane.write_file()
+        if then is not None:
+            then()
+
+    async def _ex_write_quit_all(self, arg: str = "") -> None:
+        if arg:
+            await self.pane.saved_as(arg)
+        self._save_all(then=self.exit)
 
     async def _ex_write_quit(self, arg: str = "") -> None:
-        if self.path is None and not arg:
-            self.notify("No file name. Use :wq name.py", severity="warning")
+        pane = self.pane
+        if arg:
+            await pane.saved_as(arg)
+            await self.close_window(force=True)
+        elif pane.path is None:
+            pane.save(then=lambda: self.run_worker(self.close_window(force=True)))
+        else:
+            await self.close_window(save=True)
+
+    async def _ex_edit(self, arg: str = "", force: bool = False) -> None:
+        arg = arg.strip()
+        if not arg:
+            await self.action_toggle_explorer()
             return
-        await self._saved_as(arg or str(self.path))
-        self.exit()
+        await self.open_file(arg, "here", force=force)
+
+    async def _ex_split(self, how: str, arg: str = "") -> None:
+        arg = arg.strip()
+        if arg:
+            await self.open_file(arg, how)
+        else:
+            await self.new_pane(how)
+
+    async def _ex_only(self) -> None:
+        pane = self.pane
+        await self.workspace.only(pane)
+        pane.focus_pane()
+
+    async def _ex_explore(self, arg: str = "") -> None:
+        arg = arg.strip()
+        if arg:
+            await self.show_explorer(Path(arg).expanduser())
+        else:
+            await self.action_toggle_explorer()
+
+    def _ex_list(self) -> None:
+        lines = []
+        for i, tab in enumerate(self.workspace.tabs, 1):
+            for pane in self.workspace.panes():
+                if self.workspace.tab_of(pane) == i - 1:
+                    mark = ">" if pane is self.pane else " "
+                    lines.append(f"{mark} tab {i}: {pane.title}")
+        self.notify("\n".join(lines), title="Open notebooks", timeout=8)
 
     def _ex_theme(self, arg: str = "") -> None:
         if not arg:
@@ -1329,7 +875,8 @@ class GPython(App):
         name, _, arg = command.strip().partition(" ")
         if name.isdigit():
             mode = self._prompt_mode
-            self._after_loaded(lambda: self.goto_cell(int(name), mode, clamp=False))
+            pane = self.pane
+            pane._after_loaded(lambda: pane.goto_cell(int(name), mode, clamp=False))
             return
         for names, _, handler in self.ex_commands():
             if name in names:
@@ -1355,7 +902,7 @@ class GPython(App):
                 yield command
         yield SystemCommand("Change theme", "Pick a colorscheme with live preview", self.action_pick_theme)
         for names, desc, handler in self.ex_commands():
-            if names[0] in ("q", "q!", "help", "set"):
+            if names[0] in ("q", "q!", "qa!", "help", "set", "e!", "tabn", "tabp", "wq"):
                 continue
             yield SystemCommand(f"{desc}  (:{names[0]})", f"Also available as :{names[0]}", self._palette(handler))
 
