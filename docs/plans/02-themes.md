@@ -206,3 +206,31 @@ cursor_normal #e6db74 (what `vim.py` uses today).
 
 Files changed, test summary line, bench table, and a request to the peer: add `--theme NAME` in
 `__init__.py` passing `theme=` to `GPython`, and document `~/.config/gpython/config.toml` in README.
+
+## Addendum (user ask 2026-10-29): live theme preview
+
+Textual 8.2.8's `ThemeProvider` applies a theme only when a palette entry is **selected**, so `ctrl+t`
+gives no live preview. Build our own `ThemePicker(ModalScreen[str | None])` in
+`src/gpython/themepicker.py`:
+
+- Layout: a bottom-docked panel (like `Prompt`) with an `Input` filter on top and an `OptionList` below
+  listing every theme in `app.available_themes`, our supported palettes first (dark group, then light
+  group, each sorted), then the other builtin Textual themes under a dim "other" separator. The current
+  theme is pre-highlighted. Each row shows the name and, right-aligned in dim, `light`/`dark`.
+- **Live preview:** on `OptionList.OptionHighlighted` set `app.theme = name` immediately (the app's
+  `watch_theme` restyles editors/headers), typing in the Input filters the list (fuzzy/substring,
+  case-insensitive) and keeps the first match highlighted → previewed. `up`/`down` move while the Input
+  keeps focus (forward those keys to the list).
+- `enter` → dismiss with the highlighted name (confirm); `escape` → restore the theme that was active
+  when the picker opened and dismiss with `None`.
+- Persistence happens **only on confirm**: `GPython.watch_theme` must not write the config while a
+  preview is in progress. Add `GPython._previewing_theme: bool` set by the picker on open/close; the
+  confirm handler calls `config.save({"theme": name})` once. The ex command `:theme name` keeps saving
+  directly.
+- Bind `ctrl+t` to `action_pick_theme` (replacing Textual's `change_theme`), keep the palette row
+  "Change theme" pointing at our picker too (override `get_system_commands` filtering or add our own
+  `SystemCommand`), and show the theme name in the status line (`update_status`).
+- Tests (`tests/test_themepicker.py`): opening the picker and pressing `down` changes `app.theme`
+  before any confirm; `escape` restores the original and writes no config; `enter` on a highlighted theme
+  keeps it and writes `theme = ...` to the config (XDG_CONFIG_HOME → tmp_path); typing `gruv` filters to
+  gruvbox themes and previews the first.
