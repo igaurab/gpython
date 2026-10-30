@@ -23,8 +23,9 @@ from textual.document._syntax_aware_document import SyntaxAwareDocument
 from textual.document._wrapped_document import WrappedDocument
 from textual.geometry import Size
 from textual.message import Message
+from textual.reactive import reactive
 from textual.widgets import OptionList, TextArea
-from textual.widgets.text_area import Location, TextAreaTheme
+from textual.widgets.text_area import Edit, EditResult, Location, Selection, TextAreaTheme
 
 _WORD = re.compile(r"\w+|[^\w\s]+")
 _ESCAPE_KEYS = {"escape", "ctrl+left_square_bracket", "ctrl+left_square_brace"}
@@ -87,6 +88,11 @@ class CompletionPopup(OptionList):
 
 
 class VimTextArea(TextArea):
+    # Textual repaints the whole editor whenever the cursor moves (the reactive has
+    # repaint=True). Here a cursor move or an edit repaints only the lines involved; see
+    # _watch_selection and edit. A multi-line change or a selection still repaints all.
+    selection: reactive[Selection] = reactive(Selection(), init=False, always_update=True, repaint=False)
+
     enabled = True  # set False for plain (insert-only) editing
     line_numbers = True  # gutter on new editors (the app toggles existing ones)
     mode = "normal"  # one mode for the whole app, like a single vim buffer
@@ -200,7 +206,8 @@ class VimTextArea(TextArea):
 
         `virtual_size` is a layout reactive, so in Textual every keystroke that makes
         a line longer re-arranges the whole screen. The editor is `height: auto` and
-        full width, so a wider line only needs a repaint of this widget.
+        full width, so a wider line needs no layout and no repaint of the other lines
+        (the edited line is repainted by `edit`).
         """
         if self.soft_wrap or not self.is_mounted:
             super()._refresh_size()
@@ -213,7 +220,47 @@ class VimTextArea(TextArea):
         elif size != old:
             self.set_reactive(TextArea.virtual_size, size)
             self._scroll_update(size)
+            self._refresh_scrollbars()
+
+    def _refresh_rows(self, first: int, last: int) -> None:
+        """Repaint document rows first..last (inclusive); rows are visual lines without soft wrap."""
+        if first > last:
+            first, last = last, first
+        self.refresh_lines(first, last - first + 1)
+
+    def edit(self, edit: Edit) -> EditResult:
+        rows_before = self.document.line_count
+        gutter_before = self.gutter_width
+        old_highlights = dict(self._highlights)  # rebuilt from scratch by the edit; the old lists stay intact
+        result = super().edit(edit)
+        if self.soft_wrap or self.document.line_count != rows_before or self.gutter_width != gutter_before:
             self.refresh()
+            return result
+        # The edited rows, plus every row whose syntax highlighting changed (an unclosed
+        # bracket or string recolours lines far away).
+        rows = set(range(edit.top[0], max(edit.bottom[0], result.end_location[0]) + 1))
+        new_highlights = self._highlights
+        for row in old_highlights.keys() | new_highlights.keys():
+            if (old_highlights.get(row) or None) != (new_highlights.get(row) or None):
+                rows.add(row)
+        if len(rows) > 24:
+            self.refresh()
+            return result
+        for row in sorted(rows):
+            self._refresh_rows(row, row)
+        return result
+
+    def _watch_selection(self, previous: Selection, selection: Selection) -> None:
+        bracket_before = self._matching_bracket_location
+        super()._watch_selection(previous, selection)
+        if self.soft_wrap or previous.start != previous.end or selection.start != selection.end:
+            self.refresh()  # a real selection (or one that just ended): repaint everything
+            return
+        self._refresh_rows(previous.end[0], previous.end[0])
+        if selection.end[0] != previous.end[0]:
+            self._refresh_rows(selection.end[0], selection.end[0])
+        if bracket_before is not None and bracket_before != self._matching_bracket_location:
+            self._refresh_rows(bracket_before[0], bracket_before[0])
 
     def _on_focus(self, event: events.Focus) -> None:
         super()._on_focus(event)

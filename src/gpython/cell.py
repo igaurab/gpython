@@ -20,6 +20,11 @@ from .markdown import MarkdownView
 from .outputs import OutputArea
 from .vim import VimTextArea, _is_escape
 
+# The coloured bar at the left of a cell. Painted inline (styles.outline_left) rather than
+# through CSS classes: a class change re-applies CSS to the whole cell subtree (~5 ms) and a
+# border change forces a full-screen layout; an outline colour change is a repaint only.
+BAR_ROLES = {"idle": "panel", "ok": "panel", "stale": "warning", "queued": "primary", "running": "primary", "error": "error", "skipped": "error"}
+
 STATUS_ICONS = {
     "idle": ("○", "dim"),
     "stale": ("◌", "yellow"),
@@ -101,6 +106,9 @@ class Cell(Vertical):
         self._note: Static | None = None
         self._header_key: tuple | None = None
         self._pane = None
+        self._bar_color: str | None = None
+        self.selected = False  # cell mode: the cell itself has focus
+        self.focused_within = False  # the cell or its editor has focus
 
     def compose(self) -> ComposeResult:
         self._header = Static(classes="cell-header")
@@ -117,6 +125,7 @@ class Cell(Vertical):
 
     def on_mount(self) -> None:
         self._render_header()
+        self.paint_bar()
 
     @property
     def pane(self):
@@ -157,10 +166,22 @@ class Cell(Vertical):
     def set_status(self, status: str) -> None:
         if status == self.status:
             return
-        self.remove_class(f"-{self.status}")
-        self.add_class(f"-{status}")
+        self.remove_class(f"-{self.status}", update=False)  # no CSS depends on these; tests read them
+        self.add_class(f"-{status}", update=False)
         self.status = status
         self._render_header()
+        self.paint_bar()
+
+    def paint_bar(self) -> None:
+        """Colour the left bar from the status and focus: selection beats status."""
+        colors = getattr(self.app, "bar_colors", None)
+        if colors is None:
+            return
+        role = "accent" if (self.selected or self.focused_within) else BAR_ROLES.get(self.status, "panel")
+        color = colors[role]
+        if color != self._bar_color:
+            self._bar_color = color
+            self.styles.outline_left = ("thick", color)
 
     def set_info(self, graph: Graph) -> None:
         if self.kind == "markdown":
@@ -342,14 +363,14 @@ class Cell(Vertical):
         if self._header is None:
             return
         elapsed = int(time.perf_counter() - self._run_start) if self.status == "running" else 0
-        key = (self.kind, self.status, self.info, self.label, self.exec_count, self.duration, elapsed)
+        key = (self.kind, self.status, self.info, self.label, self.exec_count, self.duration, elapsed, self.selected)
         if key == self._header_key:
             return
         self._header_key = key
         if self.kind == "markdown":
             palette = getattr(self.app, "palette", None)
             dim = palette.comment if palette is not None else "dim"
-            self._header.update(Text.assemble(("¶ ", dim), (self.label, "bold"), ("  MARKDOWN", dim)))
+            self._header.update(self._selected_style(Text.assemble(("¶ ", dim), (self.label, "bold"), ("  MARKDOWN", dim))), layout=False)
             return
         icon, style = STATUS_ICONS[self.status]
         palette = getattr(self.app, "palette", None)
@@ -366,26 +387,41 @@ class Cell(Vertical):
             if self.duration is not None and self.duration >= 0.1:
                 parts.append((f" {self.duration:.2f}s", "dim"))
         parts.append(("  " + self.info, "dim"))
-        self._header.update(Text.assemble(*parts))
+        self._header.update(self._selected_style(Text.assemble(*parts)), layout=False)
+
+    def _selected_style(self, text: Text) -> Text:
+        if self.selected:  # cell mode: the header reads as a selection bar
+            text.stylize("reverse")
+        return text
 
     # ── focus, keys, mouse ───────────────────────────────────────────────
 
     def _on_descendant_focus(self, event: events.DescendantFocus) -> None:
-        self.add_class("-focused")
+        self.focused_within = True
+        self.add_class("-focused", update=False)
+        self.paint_bar()
 
     def _on_descendant_blur(self, event: events.DescendantBlur) -> None:
-        self.remove_class("-focused")
+        self.focused_within = False
+        self.remove_class("-focused", update=False)
+        self.paint_bar()
         if self.kind == "markdown" and self.editing and event.widget is self._editor:
             # Focus left the markdown editor (escape, another cell): render. Checked after
             # the refresh, as a ':' prompt or a popup takes focus only for a moment.
             self.call_after_refresh(self._render_if_left)
 
     def on_focus(self) -> None:
-        self.add_class("-selected")
+        self.selected = True
+        self.add_class("-selected", update=False)
+        self._render_header()
+        self.paint_bar()
         self.app.update_status()
 
     def on_blur(self) -> None:
-        self.remove_class("-selected")
+        self.selected = False
+        self.remove_class("-selected", update=False)
+        self._render_header()
+        self.paint_bar()
         if not isinstance(self.app.focused, Cell):  # the next cell's on_focus updates it
             self.app.update_status()
 

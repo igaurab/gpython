@@ -185,7 +185,7 @@ class TabBar(Static):
             text.append(label, "bold reverse" if i == current else "dim")
             self._ranges.append((start, len(text)))
             text.append(" ")
-        self.update(text)
+        self.update(text, layout=False)
 
     def on_click(self, event: events.Click) -> None:
         for i, (start, end) in enumerate(self._ranges):

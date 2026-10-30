@@ -88,38 +88,13 @@ KeyCapture {
     border-left: vkey $panel;
 }
 
+/* The coloured bar at the left is an outline painted by Cell.paint_bar (status and
+   focus colours), so focus changes never touch the CSS engine or the layout. */
 Cell {
     height: auto;
     margin-bottom: 1;
-    border-left: thick $panel;
     padding-left: 1;
-}
-
-/* A class, not :focus-within, so a focus change restyles two cells, not the tree. */
-Cell.-focused {
-    border-left: thick $accent;
-}
-
-Cell.-error, Cell.-skipped {
-    border-left: thick $error;
-}
-
-Cell.-stale {
-    border-left: thick $warning;
-}
-
-Cell.-running, Cell.-queued {
-    border-left: thick $primary;
-}
-
-/* Cell mode: the cell itself is selected (keys act on cells). After the status
-   colours so the selection always shows. */
-Cell.-selected {
-    border-left: thick $accent;
-}
-
-Cell.-selected > .cell-header {
-    text-style: reverse;
+    outline-left: thick $panel;
 }
 
 Cell.-collapsed OutputArea {

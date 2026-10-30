@@ -16,7 +16,8 @@ from textual import events, on
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
 from textual.containers import Horizontal
-from textual.screen import ModalScreen
+from textual.reactive import Reactive
+from textual.screen import ModalScreen, Screen
 from textual.widgets import Header, Input, Label, Static
 from textual.widgets._header import HeaderIcon
 
@@ -55,6 +56,14 @@ _WINDOW_KEYS = {
     "=": "equal",
     "+": "taller", "-": "shorter", ">": "wider", "<": "narrower",
 }  # fmt: skip
+
+
+class NotebookScreen(Screen):
+    """The main screen. Textual's Screen repaints *everything* whenever the focus moves
+    (its `focused` reactive has repaint=True); the widgets that gain and lose focus already
+    repaint themselves, so here a focus change costs nothing extra (about 8 ms per cell move)."""
+
+    focused: Reactive = Reactive(None, repaint=False)
 
 
 class Prompt(ModalScreen[str | None]):
@@ -175,9 +184,13 @@ class GPython(App):
         self._tabbar = TabBar()
         self._status: Static | None = None
         self._kernel_chip: Static | None = None
+        self._chip_label: str | None = None
         self._status_key: tuple | None = None
         self._cell_clipboard: CellSnapshot | None = None
         self._prompt_mode = "normal"  # ui mode when a ':' or '/' prompt was opened
+
+    def get_default_screen(self) -> Screen:
+        return NotebookScreen(id="_default")
 
     def on_load(self) -> None:
         # Boot the kernels while the widgets are being built.
@@ -286,12 +299,15 @@ class GPython(App):
         if pair is None:
             pair = self._editor_theme_cache[self.palette.name] = editor_themes(self.palette)
         self.editor_theme_pair = pair
+        variables = self.get_css_variables()
+        self.bar_colors = {role: variables[role] for role in ("panel", "accent", "warning", "primary", "error")}
         if self.is_running:
             for editor in self.query(VimTextArea):
                 editor.set_editor_theme(*pair)
             for cell in self.query(Cell):
                 cell._header_key = None
                 cell._render_header()
+                cell.paint_bar()
             self.update_status()
         if name != self._loaded_theme and not self._previewing_theme:
             config.save({"theme": name})
@@ -327,8 +343,9 @@ class GPython(App):
         self._status_key = key
         show_mode = VimTextArea.enabled or mode in ("cell", "files")
         self.sub_title = name
-        if self._kernel_chip is not None:
-            self._kernel_chip.update(Text(pane.kernel_label, style="dim"))
+        if self._kernel_chip is not None and pane.kernel_label != self._chip_label:
+            self._chip_label = pane.kernel_label
+            self._kernel_chip.update(Text(pane.kernel_label, style="dim"))  # width: auto, so a layout
         # The file name lives in the header subtitle; the bottom bar shows the vim mode
         # chip, run mode, kernel state, theme and key hints.
         self._status.update(
@@ -336,7 +353,8 @@ class GPython(App):
                 (f" {mode.upper()} ", _MODE_STYLES[mode]) if show_mode else "",
                 f"  {'lazy' if self.lazy else 'reactive'}  ·  {pane.kernel_state}  ·  {self.theme}",
                 (f"    {KEY_HINTS}", "dim"),
-            )
+            ),
+            layout=False,  # one fixed line: no layout pass needed
         )
 
     # ── files, windows and tabs ──────────────────────────────────────────

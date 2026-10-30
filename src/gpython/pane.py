@@ -198,7 +198,8 @@ class NotebookPane(Vertical):
             Text.assemble(
                 (f" {self.title} ", "bold" if active else ""),
                 (f" {self.kernel_label} · {self.kernel_state}", "" if active else "dim"),
-            )
+            ),
+            layout=False,
         )
 
     def mark_dirty(self, dirty: bool = True) -> None:
@@ -352,9 +353,17 @@ class NotebookPane(Vertical):
                 editor.set_mode(mode)
             if row is not None:
                 editor.move_cursor((editor.document.line_count - 1 if row < 0 else row, 0))
-        cell.scroll_visible(animate=False, immediate=True)
+        self._scroll_to_cell(cell)
         # A cell mounted in this same frame has no region yet: scroll again after layout.
         self.call_after_refresh(cell.scroll_visible, animate=False, immediate=True)
+
+    def _scroll_to_cell(self, cell: Cell) -> None:
+        """Scroll `cell` into view now (Textual's own focus scroll is animated).
+
+        Measured and rejected: forcing a layout pass instead of a scroll (to avoid the
+        compositor rebuilding its full map afterwards) made moves ~20 % slower.
+        """
+        cell.scroll_visible(animate=False, immediate=True)
 
     def goto_cell(self, n: int, mode: str, row: int = 0, clamp: bool = True) -> bool:
         """Focus the n-th cell by display position (1-based), keeping `mode`."""
@@ -574,7 +583,7 @@ class NotebookPane(Vertical):
             editor.focus(scroll_visible=False)  # Textual's own scroll is animated
             # Land on the nearest line, like moving through one long buffer.
             editor.move_cursor((0, 0) if step > 0 else (editor.document.line_count - 1, 0))
-            cells[index].scroll_visible(animate=False, immediate=True)
+            self._scroll_to_cell(cells[index])
 
     def focus_edge(self, last: bool) -> None:
         mode = self.app.ui_mode
