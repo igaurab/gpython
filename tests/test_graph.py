@@ -74,3 +74,7 @@ def test_reader_above_mutator_is_not_reordered():
     g = build({"own": "xs = []", "read": "n = len(xs)", "mut": "xs.append(1)"})
     assert g.errors == {}
     assert "mut" not in g.parents["read"]
+
+
+def test_magics_are_ignored_for_analysis():
+    assert analyze("%matplotlib inline\n!ls\nx = 1\nx?") == ({"x"}, set())

@@ -46,8 +46,24 @@ def _module_stores(tree: ast.Module) -> tuple[set[str], set[str]]:
     return real, comp - real
 
 
+def strip_magics(source: str) -> str:
+    """Blank out IPython-only lines (%magic, !shell, name?) so they parse as Python.
+
+    The kernel still runs the original source; this is only for analysis.
+    """
+    out = []
+    for line in source.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith(("%", "!")) or (stripped.endswith("?") and " " not in stripped):
+            out.append("")
+        else:
+            out.append(line)
+    return "\n".join(out)
+
+
 def analyze(source: str) -> tuple[set[str], set[str]]:
     """Return (defs, refs) for one cell. Raises SyntaxError."""
+    source = strip_magics(source)
     table = symtable.symtable(source, "<cell>", "exec")
     _, comp_only = _module_stores(ast.parse(source))
     defs: set[str] = set()
@@ -184,7 +200,7 @@ def build(cells: dict[str, str]) -> Graph:
     for cid, source in cells.items():
         try:
             g.defs[cid], g.refs[cid] = analyze(source)
-            g.mutates[cid] = mutations(source) & g.refs[cid]
+            g.mutates[cid] = mutations(strip_magics(source)) & g.refs[cid]
         except SyntaxError as e:
             g.defs[cid], g.refs[cid], g.mutates[cid] = set(), set(), set()
             g.errors[cid] = f"SyntaxError: {e.msg} (line {e.lineno})"
