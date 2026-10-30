@@ -276,7 +276,7 @@ def test_tabs_from_cli_and_gt(tmp_path):
         await pilot.press("escape", "2", "g", "t")
         await pilot.pause()
         assert app.pane.name == "b.py"
-        assert isinstance(app.focused, VimTextArea)
+        assert app.ui_mode == "cell" and app.cell_mode
         await pilot.press("escape")
         await pilot.press("g", "g", "g", "t")
         await pilot.pause()
@@ -353,7 +353,7 @@ def test_buffers(tmp_path):
         await pilot.pause()
         assert app.pane is b and visible_names(app) == ["b.py"] and ws.hidden() == [a]
         assert [c.source for c in app.cells()] == ["b = 2", "print(b)"]
-        assert isinstance(app.focused, VimTextArea)
+        assert app.ui_mode == "cell" and app.cell_mode
         await pilot.press(":", *"bn", "enter")
         await pilot.pause()
         assert app.pane is a

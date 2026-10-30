@@ -535,6 +535,15 @@ class Cell(Vertical):
                 self.app.call_later(pane.cell_command, self, key)
 
     @on(VimTextArea.LeaveEditor)
+    def focus(self, scroll_visible: bool = True, *, keep_mode: bool = False):
+        """Selecting a cell puts the whole notebook in cell mode (`app.cell_mode`), the way
+        focusing an editor puts it in edit mode; `NotebookPane.select` passes `keep_mode`
+        when it only follows the mode the user is already in. Textual's own focus moves (a
+        removed cell, a hidden tab) go through `Screen.set_focus` and change nothing."""
+        if not keep_mode:
+            self.app.cell_mode = True
+        return super().focus(scroll_visible)
+
     def _leave_editor(self, event: VimTextArea.LeaveEditor) -> None:
         event.stop()
         self.focus(scroll_visible=False)
@@ -543,8 +552,10 @@ class Cell(Vertical):
         """Clicking the header (or rendered markdown) selects the cell; anywhere else focuses its editor."""
         if event.widget is self._header or self.editor_hidden:
             self.focus(scroll_visible=False)
-        elif not isinstance(event.widget, VimTextArea):
-            self.editor.focus()
+        else:
+            self.app.cell_mode = False
+            if not isinstance(event.widget, VimTextArea):
+                self.editor.focus()
 
     @on(VimTextArea.Changed)
     def _mark_stale(self) -> None:

@@ -361,6 +361,11 @@ class VimTextArea(TextArea):
         if bracket_before is not None and bracket_before != self._matching_bracket_location:
             self._refresh_rows(bracket_before[0], bracket_before[0])
 
+    def focus(self, scroll_visible: bool = True):
+        """Focusing an editor puts the notebook in edit mode; see `Cell.focus`."""
+        self.app.cell_mode = False
+        return super().focus(scroll_visible)
+
     def _on_focus(self, event: events.Focus) -> None:
         super()._on_focus(event)
         self._apply_mode()

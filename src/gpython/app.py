@@ -217,6 +217,7 @@ class GPython(App):
         self._cell_clipboard: CellSnapshot | None = None
         self._prompt_mode = "normal"
         self._number_sequence = None
+        self.cell_mode = False
 
     def get_default_screen(self) -> Screen:
         return NotebookScreen(id="_default")

@@ -223,14 +223,15 @@ class NotebookPane(Vertical):
             await self._shutdown_kernel()
 
     def focus_pane(self) -> None:
-        """Give focus back to the cell (or editor) that had it last."""
+        """Give focus back to the cell that had it last, in the global mode (cell or editor)."""
         target = self.last_focus
-        if target is None or not target.is_attached or not target.display:
+        cell = target if isinstance(target, Cell) else getattr(target, "parent", None)
+        if not isinstance(cell, Cell) or not cell.is_attached:
             cells = self.cells()
             if not cells:
                 return
-            target = cells[0] if cells[0].editor_hidden else cells[0].editor
-        target.focus(scroll_visible=False)
+            cell = cells[0]
+        self.select(cell, "auto")
 
     def _on_descendant_focus(self, event: events.DescendantFocus) -> None:
         widget = event.widget
@@ -420,11 +421,19 @@ class NotebookPane(Vertical):
     def select(self, cell: Cell, mode: str, row: int | None = None) -> None:
         """Focus `cell` in `mode`: "cell" selects it, otherwise its editor gets focus.
 
+        The choice between cell mode and the editor is global, `app.cell_mode` (see
+        `Cell.focus`); "auto" follows it, so navigation keeps the user's mode. A rendered
+        markdown or hidden-code cell is always selected as a cell, but passing through one
+        does not drop an editing user into cell mode.
         `mode` "normal"/"insert" also switches the vim mode; "keep" leaves it.
         `row` puts the cursor at the start of that line (-1 = last line).
         """
+        if mode == "auto":
+            mode = "cell" if self.app.cell_mode else "keep"
+        else:
+            self.app.cell_mode = mode == "cell"
         if mode == "cell" or cell.editor_hidden:
-            cell.focus(scroll_visible=False)
+            cell.focus(scroll_visible=False, keep_mode=True)
         else:
             editor = cell.editor
             editor.focus(scroll_visible=False)
@@ -451,7 +460,7 @@ class NotebookPane(Vertical):
         if not 1 <= n <= len(cells):
             self.notify(f"No cell {n} (there are {len(cells)})", severity="warning")
             return False
-        self.select(cells[n - 1], mode if mode == "cell" else "keep", row)
+        self.select(cells[n - 1], mode if mode in ("cell", "auto") else "keep", row)
         return True
 
     def _snapshot(self, cell: Cell, index: int) -> CellSnapshot:
@@ -493,9 +502,8 @@ class NotebookPane(Vertical):
         cell = self.current_cell()
         if cell is None:
             return
-        mode = self.app.ui_mode
         if cell.kind == "markdown" and self.app.focused is not cell:
-            cell.focus(scroll_visible=False)
+            cell.focus(scroll_visible=False, keep_mode=True)
         await self._run_one(cell)
         if advance == "next":
             cells = self.cells()
@@ -504,7 +512,7 @@ class NotebookPane(Vertical):
                 cells = self.cells()
             index = cells.index(cell) if cell in cells else len(cells) - 1
             if index + 1 < len(cells):
-                self.select(cells[index + 1], "cell" if mode == "cell" else "normal", row=0)
+                self.select(cells[index + 1], "cell" if self.app.cell_mode else "normal", row=0)
                 return
             advance = "insert"
         if advance == "insert":
@@ -531,7 +539,7 @@ class NotebookPane(Vertical):
         await self.loaded.wait()
         cell = self.cells()[n - 1]
         if cell.kind == "markdown" and self.app.focused is cell.editor:
-            cell.focus(scroll_visible=False)
+            cell.focus(scroll_visible=False, keep_mode=True)
         await self._run_one(cell)
         return True
 
@@ -565,9 +573,9 @@ class NotebookPane(Vertical):
             return
         cells = self.cells()
         index = cells.index(cell)
-        await self._remove_cells(cells[index : index + max(1, count)], self.app.ui_mode)
+        await self._remove_cells(cells[index : index + max(1, count)])
 
-    async def _remove_cells(self, victims: list[Cell], mode: str, record: bool = True) -> None:
+    async def _remove_cells(self, victims: list[Cell], record: bool = True) -> None:
         """Remove cells; their variables leave the kernel and the cells that used them re-run or go stale; select the next one."""
         cells = self.cells()
         index = cells.index(victims[0])
@@ -584,7 +592,7 @@ class NotebookPane(Vertical):
         remaining = self.cells()
         self.relabel()
         self.mark_dirty()
-        self.select(remaining[min(index, len(remaining) - 1)], "cell" if mode == "cell" else "keep")
+        self.select(remaining[min(index, len(remaining) - 1)], "auto")
 
         await self.kernel.delete(defs)
         self._rerun_or_mark_stale(downstream)
@@ -602,8 +610,6 @@ class NotebookPane(Vertical):
 
     async def undo(self) -> None:
         """Undo the newest cell-level action: delete, move, insert or kind change."""
-        mode = self.app.ui_mode
-        keep = "cell" if mode == "cell" else "keep"
         while self._undo:
             action = self._undo.pop()
             if action[0] == "delete":
@@ -613,19 +619,19 @@ class NotebookPane(Vertical):
                     cell = await self._insert(cells[snapshot.index], above=True, snapshot=snapshot, record=False)
                 else:
                     cell = await self._insert(cells[-1] if cells else None, snapshot=snapshot, record=False)
-                self.select(cell, keep)
+                self.select(cell, "auto")
                 return
             cell = next((c for c in self.cells() if c.cid == action[1]), None)
             if cell is None:
                 continue
             if action[0] == "move":
                 self._move_to(cell, action[2])
-                self.select(cell, keep)
+                self.select(cell, "auto")
             elif action[0] == "insert":
-                await self._remove_cells([cell], mode, record=False)
+                await self._remove_cells([cell], record=False)
             elif action[0] == "kind":
                 await self.set_cell_kind(cell, action[2], record=False)
-                self.select(cell, keep)
+                self.select(cell, "auto")
             return
         self.notify("Nothing to undo")
 
@@ -658,10 +664,9 @@ class NotebookPane(Vertical):
         if clip is None:
             self.notify("No cell copied (yy or x in cell mode)")
             return
-        mode = self.app.ui_mode
         clip = dataclasses.replace(clip, spec=None)
         cell = await self._insert(self.current_cell(), above, snapshot=clip)
-        self.select(cell, "cell" if mode == "cell" else "keep")
+        self.select(cell, "auto")
 
     def move_cell(self, step: int) -> None:
         cell = self.current_cell()
@@ -682,20 +687,13 @@ class NotebookPane(Vertical):
         if abs(step) > 1:
             index = max(0, min(len(cells) - 1, index))
         if 0 <= index < len(cells) and cells[index] is not current:
-            if isinstance(self.app.focused, Cell) or cells[index].editor_hidden:
-                self.select(cells[index], "cell")
-                return
-            editor = cells[index].editor
-            editor.focus(scroll_visible=False)
-            editor.move_cursor((0, 0) if step > 0 else (editor.document.line_count - 1, 0))
-            self._scroll_to_cell(cells[index])
+            self.select(cells[index], "auto", row=0 if step > 0 else -1)
 
     def focus_edge(self, last: bool) -> None:
-        mode = self.app.ui_mode
         if last:
-            self._after_loaded(lambda: self.goto_cell(len(self.cells()), mode, row=-1))
+            self._after_loaded(lambda: self.goto_cell(len(self.cells()), "auto", row=-1))
         else:
-            self.goto_cell(1, mode)
+            self.goto_cell(1, "auto")
 
     async def set_cell_kind(self, cell: Cell, kind: str, record: bool = True) -> None:
         """Switch a cell between code and markdown; selection stays on the cell.
@@ -802,10 +800,7 @@ class NotebookPane(Vertical):
     def on_click(self, event) -> None:
         """Clicking the empty space below the last cell focuses the nearest cell."""
         if event.widget is self._cells_box and (cells := self.cells()):
-            if cells[-1].editor_hidden:
-                cells[-1].focus()
-            else:
-                cells[-1].editor.focus()
+            self.select(cells[-1], "cell" if cells[-1].editor_hidden else "keep")
 
     def jump(self, target: str, mode: str) -> None:
         """'3' focuses the third cell by display position; 'text' searches forward for text."""
@@ -867,7 +862,7 @@ class NotebookPane(Vertical):
         index, start = position
         cell = cells[index]
         if start is None or cell.editor_hidden:
-            self.select(cell, "cell")
+            self.select(cell, "auto")
             return
         self.select(cell, "keep")
         row, column = _location_in(sources[index], start)
