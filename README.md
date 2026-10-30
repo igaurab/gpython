@@ -17,18 +17,30 @@ since, or their inputs changed), then the cell. What happens to the cells
 <img width="1372" height="1034" alt="image" src="https://github.com/user-attachments/assets/c93ed22f-cf15-4a26-9322-c62c940febf5" />
 
 
-```sh
-uv tool install gpynb        # installs the `gpython` command globally
-uvx --from gpynb gpython     # or run it once without installing
-```
+## Install
+
+The package on PyPI is called `gpynb`; the command it installs is `gpython`.
+Needs Python 3.13 or newer.
 
 ```sh
-./gpython                    # empty untitled notebook
-./gpython script.py          # a plain script is split into cells automatically
-./gpython a.py b.py          # several files: one tab each (gt / gT switch)
-./gpython notebooks/         # a directory: opens the file explorer there
-./gpython --no-vim nb.py     # plain editing, no modal keys
-./gpython --theme nord nb.py # colour theme for this run (ctrl+t picks one and remembers it)
+uv tool install gpynb        # installs the `gpython` command globally
+uv tool upgrade gpynb        # later, to update
+uvx --from gpynb gpython     # or run it once without installing anything
+pipx install gpynb           # if you use pipx instead of uv
+```
+
+From a checkout, `./gpython` runs the working copy (it creates the venv on
+first use); `uv run gpython` does the same.
+
+## Usage
+
+```sh
+gpython                    # empty untitled notebook
+gpython script.py          # a plain script is split into cells automatically
+gpython a.py b.py          # several files: one tab each (gt / gT switch)
+gpython notebooks/         # a directory: opens the file explorer there
+gpython --no-vim nb.py     # plain editing, no modal keys
+gpython --theme nord nb.py # colour theme for this run (ctrl+t picks one and remembers it)
 ```
 
 Files: `.py` notebooks (plain scripts, `# %%` cells, Jupytext markdown cells),
@@ -196,7 +208,7 @@ dirty mark and kernel state; the active window's line is highlighted.
 **Tabs**: `:tabnew [file]`, `gt` / `gT` / `2gt` (normal and cell mode),
 `:tabn`, `:tabp`, `:tabclose`, `:tabonly`. The tab line appears above the
 notebook once there are two tabs (or a hidden buffer, see below); click a tab
-to switch. `./gpython a.py b.py` opens one tab per file.
+to switch. `gpython a.py b.py` opens one tab per file.
 
 **Buffers** (as in vim): every opened notebook is a buffer with its own
 kernel, numbered in opening order. Closing a window (`:q`, `ctrl+w q`,
@@ -307,3 +319,6 @@ via jupyter_client · `notebook.py` file formats (`# %%`, scripts, marimo,
 ```sh
 uv run pytest -q
 ```
+
+Releases: bump `version` in `pyproject.toml`, commit, then push a `vX.Y.Z` tag;
+GitHub Actions builds and uploads to PyPI through trusted publishing.
