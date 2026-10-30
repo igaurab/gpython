@@ -17,6 +17,7 @@ KEYMAP: list[tuple[str, str, str]] = [
     ("any", "ctrl+e", "Run cell, stay (for terminals without ctrl+enter)"),
     ("any", "alt+enter", "Run cell and insert a new cell below"),
     ("any", "f5", "Run all cells"),
+    ("any", "ctrl+t", "Change colorscheme (live preview; :theme name also works)"),
     ("any", "f4", "Run stale cells"),
     ("any", "ctrl+k", "Interrupt running code"),
     # ── edit / navigate (any mode) ──

@@ -157,6 +157,9 @@ class VimTextArea(TextArea):
             VimTextArea.mode = "insert"
 
     def on_mount(self) -> None:
+        pair = getattr(self.app, "editor_theme_pair", None)
+        if pair is not None:  # editors mounted later follow the app's current theme
+            self.set_editor_theme(*pair)
         self._apply_mode()
 
     def set_editor_theme(self, insert: TextAreaTheme, normal: TextAreaTheme) -> None:

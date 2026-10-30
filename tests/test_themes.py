@@ -1,7 +1,12 @@
+import asyncio
+
 import pytest
 from textual.theme import BUILTIN_THEMES
 from textual.widgets.text_area import TextAreaTheme
 
+from gpython import config
+from gpython.app import GPython
+from gpython.vim import VimTextArea
 from gpython.themes import (
     CUSTOM_APP_THEMES,
     DEFAULT_THEME,
@@ -111,3 +116,89 @@ def test_generic_palette_follows_app_theme():
     assert palette.bg.lower() == theme.background.lower()
     assert palette.keyword.lower() == theme.primary.lower()
     assert not palette.dark
+
+
+# ── app-level wiring (no kernel needed) ──────────────────────────────────
+
+
+@pytest.fixture
+def notebook_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+    path = tmp_path / "nb.py"
+    path.write_text("# %%\nx = 1\n\n# %%\ny = x + 1\n")
+    return path
+
+
+def editor_names(app):
+    return {e.theme for e in app.query(VimTextArea)}
+
+
+def test_switch_theme_updates_every_editor(notebook_path):
+    async def main():
+        app = GPython(notebook_path)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            assert editor_names(app) == {f"{DEFAULT_THEME}-normal"}
+            app.theme = "gruvbox"
+            await pilot.pause()
+            assert editor_names(app) == {"gruvbox-normal"}
+            assert app.palette is PALETTES["gruvbox"]
+
+            await pilot.press("i")  # insert mode: switching keeps the insert naming
+            app.theme = "nord"
+            await pilot.pause()
+            assert editor_names(app) == {"nord"}
+
+            await pilot.press("escape", "ctrl+n")
+            await pilot.pause()
+            assert len(app.cells()) == 3
+            assert app.current_cell().editor.theme == "nord"  # new cells start in insert mode
+            await pilot.press("escape")
+            assert app.current_cell().editor.theme == "nord-normal"
+            assert config.load() == {"theme": "nord"}
+
+    asyncio.run(main())
+
+
+def test_theme_persists_and_ex_command(notebook_path):
+    async def main():
+        app = GPython(notebook_path)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            assert config.load() == {}  # the starting theme is not written
+            await app._run_ex("theme material-palenight")
+            await pilot.pause()
+            assert app.theme == "material-palenight"
+            await app._run_ex("theme no-such-theme")
+            assert app.theme == "material-palenight"
+        assert config.load()["theme"] == "material-palenight"
+
+        assert GPython(notebook_path).theme == "material-palenight"  # config is read back
+        assert GPython(notebook_path, theme="dracula").theme == "dracula"  # argument beats config
+
+    asyncio.run(main())
+
+
+def test_unknown_theme_falls_back_to_default(notebook_path):
+    async def main():
+        app = GPython(notebook_path, theme="does-not-exist")
+        assert app.theme == DEFAULT_THEME
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            assert any("does-not-exist" in n.message for n in app._notifications)
+            assert editor_names(app) == {f"{DEFAULT_THEME}-normal"}
+        assert config.load() == {}
+
+    asyncio.run(main())
+
+
+def test_light_theme_editor_background(notebook_path):
+    async def main():
+        app = GPython(notebook_path, theme="gruvbox-light")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            assert not app.current_theme.dark
+            bg = app.cells()[0].editor._theme.base_style.bgcolor.triplet.hex.lower()
+            assert bg == PALETTES["gruvbox-light"].bg.lower()
+
+    asyncio.run(main())

@@ -23,6 +23,7 @@ from .graph import Graph, build
 from .help import HelpScreen
 from .kernel import Kernel
 from .outputs import OutputArea
+from .themes import CUSTOM_APP_THEMES, DEFAULT_THEME, editor_themes, palette_for
 from .vim import VimTextArea, _is_escape
 
 STATUS_ICONS = {
@@ -264,6 +265,11 @@ class Cell(Vertical):
             return
         self._header_key = key
         icon, style = STATUS_ICONS[self.status]
+        palette = getattr(self.app, "palette", None)
+        if palette is not None:  # colour the icon from the current theme
+            theme = self.app.current_theme
+            role = {"ok": "success", "stale": "warning", "error": "error", "skipped": "error"}.get(self.status, "primary")
+            style = palette.comment if self.status == "idle" else (getattr(theme, role, None) or style)
         parts: list[tuple[str, str]] = [(f"{icon} ", style), (self.label, "bold")]
         if self.status == "running":
             parts.append((f"  running… {elapsed}s", "cyan"))
@@ -350,11 +356,26 @@ class GPython(App):
         Binding("f3", "toggle_lazy", "Lazy"),
         Binding("f4", "run_stale", "Run stale"),
         Binding("f5", "run_all", "Run all"),
+        Binding("ctrl+t", "change_theme", "Theme"),
     ]
 
-    def __init__(self, path: Path | None = None, vim: bool | None = None) -> None:
+    def __init__(self, path: Path | None = None, vim: bool | None = None, theme: str | None = None) -> None:
         super().__init__()
         settings = config.load()
+        VimTextArea.mode = "normal"  # before compose, so every editor mounts in the same mode
+        self._editor_theme_cache: dict[str, tuple] = {}
+        self._theme_warning: str | None = None
+        for custom in CUSTOM_APP_THEMES.values():
+            self.register_theme(custom)
+        self._loaded_theme = settings.get("theme")
+        name = theme or self._loaded_theme or DEFAULT_THEME
+        if name not in self.available_themes:
+            self._theme_warning = f"Unknown theme {name!r}; using {DEFAULT_THEME}"
+            name = DEFAULT_THEME
+        self._loaded_theme = name  # only persist choices that differ from what we started with
+        if self.theme == name:  # unchanged (e.g. "textual-dark"): Textual skips the watcher
+            self.watch_theme(name)
+        self.theme = name
         if vim is None:  # an explicit argument wins over the config file
             vim = settings.get("vim", True) is not False
         VimTextArea.enabled = vim
@@ -409,6 +430,8 @@ class GPython(App):
         self._mode = Static(id="mode")
         await header.mount(self._mode, after=header.query_one(HeaderIcon))
         self.update_status()
+        if self._theme_warning:
+            self.notify(self._theme_warning, severity="warning")
         self.cells()[0].editor.focus()
         self.call_after_refresh(lambda: self.run_worker(self._mount_rest(), group="mount"))
 
@@ -443,6 +466,24 @@ class GPython(App):
         if not VimTextArea.enabled or VimTextArea.mode == "insert":
             return "insert"
         return "normal"
+
+    def watch_theme(self, name: str) -> None:
+        """Point every editor and cell header at the new theme; remember the choice."""
+        self.palette = palette_for(self.current_theme)
+        pair = self._editor_theme_cache.get(self.palette.name)
+        if pair is None:
+            pair = self._editor_theme_cache[self.palette.name] = editor_themes(self.palette)
+        self.editor_theme_pair = pair
+        if self.is_running:
+            for editor in self.query(VimTextArea):
+                editor.set_editor_theme(*pair)
+            for cell in self.query(Cell):
+                cell._header_key = None
+                cell._render_header()
+            self.update_status()
+        if name != self._loaded_theme:
+            config.save({"theme": name})
+            self._loaded_theme = name
 
     def update_status(self, kernel_state: str | None = None) -> None:
         """The mode chip in the header and the status line: mode, file, run mode, kernel."""
@@ -595,6 +636,8 @@ class GPython(App):
             if row is not None:
                 editor.move_cursor((editor.document.line_count - 1 if row < 0 else row, 0))
         cell.scroll_visible(animate=False, immediate=True)
+        # A cell mounted in this same frame has no region yet: scroll again after layout.
+        self.call_after_refresh(cell.scroll_visible, animate=False, immediate=True)
 
     def goto_cell(self, n: int, mode: str, row: int = 0, clamp: bool = True) -> bool:
         """Focus the n-th cell by display position (1-based), keeping `mode`."""
@@ -1016,6 +1059,7 @@ class GPython(App):
             (("md", "markdown"), "Make the cell markdown", lambda arg="": self._ex_kind("markdown")),
             (("code",), "Make the cell code", lambda arg="": self._ex_kind("code")),
             (("interrupt",), "Interrupt running code", lambda arg="": self.kernel.interrupt()),
+            (("theme",), "Set theme (:theme name) or show the current one", self._ex_theme),
             (("help", "h"), "Keys and commands", lambda arg="": self.action_help()),
         ]
 
@@ -1047,6 +1091,15 @@ class GPython(App):
             return
         await self._saved_as(arg or str(self.path))
         self.exit()
+
+    def _ex_theme(self, arg: str = "") -> None:
+        if not arg:
+            self.notify(f"Theme: {self.theme}")
+        elif arg in self.available_themes:
+            self.theme = arg
+        else:
+            names = ", ".join(sorted(self.available_themes)[:6])
+            self.notify(f"Unknown theme {arg!r}. Try: {names}, …", severity="error")
 
     async def _run_ex(self, command: str | None) -> None:
         if not command:
