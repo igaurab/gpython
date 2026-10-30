@@ -4,8 +4,10 @@ While a sequence waits, the app sends every key here (GPython.on_event) and the 
 shows what has been typed. The number is used as soon as no longer number can name a
 cell, on enter, or after a short pause; with no digit at all it gives up after
 TIMEOUT seconds, like a vim key sequence. Before any digit, a sequence may also take
-letters: `r a` runs every cell, `r c` runs the cells from the first one down to the
-current one; `g g` goes to the first cell (or the counted one), `g t` / `g T` switch tabs.
+letters. After `r`: `r` or `c` runs the current cell, `C` the cells from the first one
+down to it, `a` the cells after it, `A` all of them, `s` the stale ones, `k` restarts the
+kernel, `R` restarts it and runs all, `i` interrupts; the focus never moves. After `g`:
+`g` goes to the first cell (or the counted one), `t` / `T` switch tabs.
 """
 
 from __future__ import annotations
@@ -82,19 +84,40 @@ class RunByNumber(CellNumberSequence):
     badge = "RUN"
     badge_style = "bold black on green"
     verb = "run"
-    letters_hint = "a all · c up to here"
+    letters_hint = "r/c this · C to here · a after · A all · s stale · k restart · R restart+all · i stop"
     finish_hint = "enter runs"
 
     def letter(self, key: str) -> bool:
-        if key not in ("a", "c"):
+        action = RUN_LETTERS.get(key)
+        if action is None:
             return False
         self.cancel()
         if self.pane.is_attached:
-            self.pane.run_all() if key == "a" else self.pane.run_relative(False, inclusive=True)
+            action(self.pane)
         return True
 
     def perform(self, number: int) -> None:
         self.app.run_worker(self.pane.run_number(number), group="run-number")
+
+
+def _in_worker(method_name: str, group: str = "run"):
+    def start(pane) -> None:
+        pane.run_worker(getattr(pane, method_name)(), group=group)
+
+    return start
+
+
+RUN_LETTERS = {
+    "r": _in_worker("run_cell"),
+    "c": _in_worker("run_cell"),
+    "C": lambda pane: pane.run_relative(False, inclusive=True),
+    "a": lambda pane: pane.run_relative(True),
+    "A": lambda pane: pane.run_all(),
+    "s": lambda pane: pane.run_stale(),
+    "k": _in_worker("restart_kernel", "kernel"),
+    "R": _in_worker("restart_and_run_all", "kernel"),
+    "i": _in_worker("interrupt", "kernel"),
+}
 
 
 class GotoByNumber(CellNumberSequence):

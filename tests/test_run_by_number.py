@@ -7,6 +7,7 @@ import pytest
 from gpython import notebook, runnumber
 from gpython.app import GPython
 from gpython.notebook import CellSpec
+from gpython.pane import needs_run
 from gpython.vim import VimTextArea
 
 CELLS = [CellSpec("a = 1"), CellSpec("## Notes", "markdown"), CellSpec("print(a + 2)"), CellSpec("b = 4")]
@@ -73,7 +74,7 @@ def test_status_bar_while_pending(tmp_path):
         await pilot.press("r")
         await pilot.pause()
         text = status(app)
-        assert "run cell: c_" in text and "number · a all · c up to here" in text
+        assert "run cell: c_" in text and "number · r/c this · C to here · a after · A all · s stale" in text
 
     ui(tmp_path, test, cells=many_cells(12))
 
@@ -249,11 +250,11 @@ def test_ex_number_sequence(tmp_path):
 CHAIN = [CellSpec("a = 1"), CellSpec("b = a + 1\nprint(b)"), CellSpec("print(a, b)"), CellSpec("c = 9")]
 
 
-def test_r_a_runs_every_cell(tmp_path):
+def test_r_A_runs_every_cell(tmp_path):
     async def test(app, pilot):
         cells = app.cells()
         cells[2].focus()
-        await pilot.press("r", "a")
+        await pilot.press("r", "A")
         await settle(app, pilot)
         assert app._number_sequence is None
         assert [c.status for c in cells] == ["ok"] * 4
@@ -263,11 +264,11 @@ def test_r_a_runs_every_cell(tmp_path):
     ui(tmp_path, test, cells=CHAIN, kernel=True)
 
 
-def test_r_c_runs_down_to_the_current_cell_and_leaves_the_rest(tmp_path):
+def test_r_C_runs_down_to_the_current_cell_and_leaves_the_rest(tmp_path):
     async def test(app, pilot):
         first, second, reader, last = app.cells()
         second.focus()
-        await pilot.press("r", "c")
+        await pilot.press("r", "C")
         await settle(app, pilot)
         assert app._number_sequence is None
         assert first.status == second.status == "ok" and second.output_text == "2\n"
@@ -278,12 +279,12 @@ def test_r_c_runs_down_to_the_current_cell_and_leaves_the_rest(tmp_path):
     ui(tmp_path, test, cells=CHAIN, kernel=True)
 
 
-def test_space_r_c_from_vim_normal_mode(tmp_path):
+def test_space_r_C_from_vim_normal_mode(tmp_path):
     async def test(app, pilot):
         first, second, reader, last = app.cells()
         app.select(second, "normal")
         await pilot.pause()
-        await pilot.press("space", "r", "c")
+        await pilot.press("space", "r", "C")
         await settle(app, pilot)
         assert first.status == second.status == "ok" and second.output_text == "2\n"
         assert reader.exec_count == 0 and last.exec_count == 0
@@ -310,3 +311,83 @@ def test_a_and_c_after_a_digit_cancel(tmp_path, monkeypatch):
         assert app.focused is cells[0]
 
     ui(tmp_path, test, cells=many_cells(12))
+
+
+def test_r_r_and_r_c_run_only_the_current_cell_and_stay(tmp_path):
+    async def test(app, pilot):
+        first, second, reader, last = app.cells()
+        for key in ("r", "c"):
+            last.focus()
+            await pilot.press("r", key)
+            await settle(app, pilot)
+            assert app._number_sequence is None and app.focused is last
+            assert last.status == "ok" and last.exec_count >= 1
+            assert first.exec_count == 0 and second.exec_count == 0 and reader.exec_count == 0
+        assert last.exec_count == 2
+
+    ui(tmp_path, test, cells=CHAIN, kernel=True)
+
+
+def test_r_a_runs_the_cells_after_the_current_one(tmp_path):
+    async def test(app, pilot):
+        first, second, reader, last = app.cells()
+        first.focus()
+        await pilot.press("r", "a")
+        await settle(app, pilot)
+        assert app._number_sequence is None and app.focused is first
+        assert first.status == "ok" and first.exec_count >= 1
+        assert second.output_text == "2\n" and reader.output_text == "1 2\n" and last.status == "ok"
+        before = {c: c.exec_count for c in (first, second, reader, last)}
+        reader.focus()
+        await pilot.press("r", "a")
+        await settle(app, pilot)
+        assert last.exec_count > before[last]
+        assert all(c.exec_count == before[c] for c in (first, second, reader))
+
+    ui(tmp_path, test, cells=CHAIN, kernel=True)
+
+
+def test_r_s_runs_the_stale_cells(tmp_path):
+    async def test(app, pilot):
+        first, second, reader, last = app.cells()
+        last.focus()
+        await pilot.press("r", "A")
+        await settle(app, pilot)
+        first.editor.load_text("a = 5")
+        await pilot.pause()
+        assert needs_run(first) and not needs_run(last)
+        last_count = last.exec_count
+        second.focus()
+        await pilot.press("r", "s")
+        await settle(app, pilot)
+        assert app.focused is second
+        assert not needs_run(first) and second.output_text == "6\n" and reader.output_text == "5 6\n"
+        assert last.exec_count == last_count
+
+    ui(tmp_path, test, cells=CHAIN, kernel=True)
+
+
+def test_r_k_R_i_reach_the_kernel(tmp_path, monkeypatch):
+    calls = []
+
+    async def test(app, pilot):
+        pane = app.pane
+
+        async def restart_kernel():
+            calls.append("restart")
+
+        async def interrupt():
+            calls.append("interrupt")
+
+        monkeypatch.setattr(pane, "restart_kernel", restart_kernel)
+        monkeypatch.setattr(pane, "interrupt", interrupt)
+        monkeypatch.setattr(pane, "run_all", lambda: calls.append("run_all"))
+        cells = app.cells()
+        cells[1].focus()
+        for key in ("k", "i", "R"):
+            await pilot.press("r", key)
+            await settle(app, pilot)
+            assert app._number_sequence is None and app.focused is cells[1]
+        assert calls == ["restart", "interrupt", "restart", "run_all"]
+
+    ui(tmp_path, test, cells=CHAIN)

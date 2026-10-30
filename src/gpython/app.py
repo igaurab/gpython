@@ -967,7 +967,7 @@ class GPython(App):
             (("noh", "nohlsearch"), "Stop highlighting search matches (n shows them again)", lambda arg="": self.pane.clear_search_highlight()),
             (("run", "runall"), "Run all cells; :run 6 runs cell c6 (stale cells it uses first)", self._ex_run),
             (("runabove",), "Run the cells above the current one", lambda arg="": self.pane.run_relative(False)),
-            (("runbelow",), "Run the current cell and the cells below", lambda arg="": self.pane.run_relative(True)),
+            (("runbelow",), "Run the current cell and the cells below", lambda arg="": self.pane.run_relative(True, inclusive=True)),
             (("stale", "runstale"), "Run stale cells", lambda arg="": self.action_run_stale()),
             (("restart",), "Restart kernel", lambda arg="": self.action_restart_kernel()),
             (("clear",), "Clear all outputs", lambda arg="": self.pane.clear_outputs()),

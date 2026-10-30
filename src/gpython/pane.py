@@ -542,13 +542,13 @@ class NotebookPane(Vertical):
             self.run_worker(self.run_cells(stale, downstream=True), group="run")
 
     def run_relative(self, below: bool, inclusive: bool = False) -> None:
-        """:runbelow / :runabove; `inclusive` (r c) counts the current cell in. The other cells are not run."""
+        """Run the cells below (r a, :runbelow) or above (r C, :runabove) the current one; `inclusive` counts it in."""
         cell = self.current_cell()
         cells = self.cells()
         if cell is None or cell not in cells:
             return
         index = cells.index(cell)
-        subset = cells[index:] if below else cells[: index + 1 if inclusive else index]
+        subset = cells[index if inclusive else index + 1 :] if below else cells[: index + 1 if inclusive else index]
         if subset:
             self.run_worker(self.run_cells([c.cid for c in subset], downstream=False), group="run")
 
@@ -756,6 +756,10 @@ class NotebookPane(Vertical):
         await self.kernel.restart()
         self._kernel_reset()
         self.set_kernel_state("kernel ready")
+
+    async def restart_and_run_all(self) -> None:
+        await self.restart_kernel()
+        self.run_all()
 
     def _kernel_reset(self) -> None:
         """A fresh kernel process: every cell that ran is stale, the variables panel is empty."""
