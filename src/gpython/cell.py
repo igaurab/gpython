@@ -20,9 +20,6 @@ from .markdown import MarkdownView
 from .outputs import OutputArea
 from .vim import VimTextArea, _is_escape
 
-# The coloured bar at the left of a cell. Painted inline (styles.outline_left) rather than
-# through CSS classes: a class change re-applies CSS to the whole cell subtree (~5 ms) and a
-# border change forces a full-screen layout; an outline colour change is a repaint only.
 BAR_ROLES = {"idle": "panel", "ok": "panel", "stale": "warning", "queued": "primary", "running": "primary", "error": "error", "skipped": "error"}
 
 STATUS_ICONS = {
@@ -35,7 +32,6 @@ STATUS_ICONS = {
     "skipped": ("⊘", "red"),
 }
 
-# Non-printable keys that cell mode handles; others (f-keys, ctrl+...) reach app bindings.
 _CELL_KEYS = {"escape", "enter", "up", "down", "shift+j", "shift+k", "shift+o", "question_mark"}
 
 _ids = itertools.count(1)
@@ -48,7 +44,7 @@ def ends_with_string(source: str) -> bool:
     """
     try:
         body = ast.parse(source).body
-    except (SyntaxError, ValueError):  # magics, null bytes: let the kernel decide
+    except (SyntaxError, ValueError):
         return False
     last = body[-1] if body else None
     return isinstance(last, ast.Expr) and isinstance(last.value, ast.Constant) and isinstance(last.value.value, str)
@@ -74,7 +70,7 @@ def outputs_to_ipynb(snapshot: list[tuple[str, object]], execution_count: int | 
     for kind, content in snapshot:
         if kind == "stream":
             outputs.append({"output_type": "stream", "name": content["name"], "text": content["text"]})
-        elif kind == "_error":  # a dependency-graph error: keep it readable in Jupyter
+        elif kind == "_error":
             outputs.append({"output_type": "stream", "name": "stderr", "text": str(content)})
         elif kind == "execute_result":
             outputs.append({"output_type": kind, "data": content.get("data", {}), "metadata": content.get("metadata", {}), "execution_count": execution_count})
@@ -94,7 +90,7 @@ class CellSnapshot:
     kind: str
     ran: bool
     outputs: list[tuple[str, object]]
-    spec: notebook.CellSpec | None = None  # the loaded spec (keeps file-format extras), if any
+    spec: notebook.CellSpec | None = None
 
 
 class Cell(Vertical):
@@ -110,17 +106,17 @@ class Cell(Vertical):
     can_focus = True
 
     def __init__(self, source: str = "", kind: str = "code", spec: notebook.CellSpec | None = None) -> None:
-        self.cid = f"c{next(_ids)}"  # internal, stable graph key
+        self.cid = f"c{next(_ids)}"
         super().__init__(id=self.cid)
         self.initial_source = source
         self.kind = kind
-        self.spec = spec  # the CellSpec this cell was loaded from: save keeps its extra fields
-        self.editing = kind == "code"  # markdown cells start rendered
-        self.code_hidden = bool(spec is not None and spec.hide_code and kind == "code")  # marimo hide_code
-        self.echo_suppressed = False  # hide the execute_result of a cell ending in a bare string
+        self.spec = spec
+        self.editing = kind == "code"
+        self.code_hidden = bool(spec is not None and spec.hide_code and kind == "code")
+        self.echo_suppressed = False
         if kind == "markdown":
             self.add_class("-markdown")
-        self.label = self.cid  # what the header shows: the display position, see set_label
+        self.label = self.cid
         self.ran_source: str | None = None
         self.last_defs: set[str] = set()
         self.status = "idle"
@@ -129,18 +125,18 @@ class Cell(Vertical):
         self.duration: float | None = None
         self._run_start = 0.0
         self._ticker: Timer | None = None
-        self._log: list[tuple] = []  # outputs received, for undo/paste replay
-        self._log_clear_pending = False  # clear_output(wait=True) seen, no output since
+        self._log: list[tuple] = []
+        self._log_clear_pending = False
         self._header: Static | None = None
         self._editor: VimTextArea | None = None
         self._outputs: OutputArea | None = None
-        self._view: MarkdownView | None = None  # created for markdown cells only
+        self._view: MarkdownView | None = None
         self._note: Static | None = None
         self._header_key: tuple | None = None
         self._pane = None
         self._bar_color: str | None = None
-        self.selected = False  # cell mode: the cell itself has focus
-        self.focused_within = False  # the cell or its editor has focus
+        self.selected = False
+        self.focused_within = False
 
     def compose(self) -> ComposeResult:
         self._header = Static(classes="cell-header")
@@ -159,7 +155,7 @@ class Cell(Vertical):
         if self.code_hidden and self._editor is not None:
             self._editor.display = False
         if self.spec is not None and self.spec.outputs and self.kind == "code":
-            self.replay(outputs_from_ipynb(self.spec.outputs))  # stored .ipynb outputs, read-only until run
+            self.replay(outputs_from_ipynb(self.spec.outputs))
             if self.spec.execution_count:
                 self.exec_count = self.spec.execution_count
         self._render_header()
@@ -169,7 +165,7 @@ class Cell(Vertical):
     def pane(self):
         """The NotebookPane (window) this cell belongs to."""
         if self._pane is None or not self._pane.is_attached:
-            from .pane import NotebookPane  # noqa: PLC0415  (pane imports cell)
+            from .pane import NotebookPane
 
             node = self.parent
             while node is not None and not isinstance(node, NotebookPane):
@@ -187,7 +183,6 @@ class Cell(Vertical):
 
     @property
     def source(self) -> str:
-        # The editor does not exist until the cell is composed.
         return self._editor.text if self._editor is not None else self.initial_source
 
     @property
@@ -204,7 +199,7 @@ class Cell(Vertical):
     def set_status(self, status: str) -> None:
         if status == self.status:
             return
-        self.remove_class(f"-{self.status}", update=False)  # no CSS depends on these; tests read them
+        self.remove_class(f"-{self.status}", update=False)
         self.add_class(f"-{status}", update=False)
         self.status = status
         self._render_header()
@@ -237,7 +232,6 @@ class Cell(Vertical):
         self.info = "  ·  ".join(parts)
         self._render_header()
 
-    # ── kind: code or markdown ───────────────────────────────────────────
 
     @property
     def rendered(self) -> bool:
@@ -280,7 +274,7 @@ class Cell(Vertical):
         if kind == "code":
             self.start_editing()
         elif self.is_mounted and self.screen.focused is self._editor:
-            self.editing = True  # keep typing; it renders when the editor is left
+            self.editing = True
         else:
             await self.show_rendered()
 
@@ -304,7 +298,7 @@ class Cell(Vertical):
             await self.mount(self._view, after=self._editor)
         elif self._view.text != self.source:
             await self._view.update(self.source)
-        if not self.editing:  # not re-opened while rendering
+        if not self.editing:
             self._editor.display = False
             self._view.display = True
 
@@ -318,7 +312,6 @@ class Cell(Vertical):
         self.start_editing()
         self.pane.select(self, "normal")
 
-    # ── running ──────────────────────────────────────────────────────────
 
     def begin_run(self, count: int) -> None:
         """Mark the cell running as In [count]; the header counts seconds while it runs."""
@@ -337,7 +330,6 @@ class Cell(Vertical):
         self.set_status(status)
         self._render_header()
 
-    # ── outputs ──────────────────────────────────────────────────────────
 
     def clear_output(self) -> None:
         self._log.clear()
@@ -366,7 +358,7 @@ class Cell(Vertical):
             if log and log[-1][0] == "stream" and log[-1][1] == content["name"]:
                 parts = log[-1][2]
                 parts.append(content["text"])
-                if len(parts) > 2000:  # bound memory for endless output
+                if len(parts) > 2000:
                     parts[:] = ["".join(parts)[-200_000:]]
             else:
                 log.append(("stream", content["name"], [content["text"]]))
@@ -411,7 +403,6 @@ class Cell(Vertical):
             self._note.remove()
             self._note = None
 
-    # ── header ───────────────────────────────────────────────────────────
 
     def _render_header(self) -> None:
         if self._header is None:
@@ -428,11 +419,11 @@ class Cell(Vertical):
             return
         icon, style = STATUS_ICONS[self.status]
         palette = getattr(self.app, "palette", None)
-        if palette is not None:  # colour the icon from the current theme
+        if palette is not None:
             theme = self.app.current_theme
             role = {"ok": "success", "stale": "warning", "error": "error", "skipped": "error"}.get(self.status, "primary")
             style = palette.comment if self.status == "idle" else (getattr(theme, role, None) or style)
-            style = style.removeprefix("ansi_")  # the terminal theme's "ansi_green" is rich's "green"
+            style = style.removeprefix("ansi_")
         parts: list[tuple[str, str]] = [(f"{icon} ", style), (self.label, "bold")]
         if self.status == "running":
             parts.append((f"  running… {elapsed}s", "cyan"))
@@ -447,11 +438,10 @@ class Cell(Vertical):
         self._header.update(self._selected_style(Text.assemble(*parts)), layout=False)
 
     def _selected_style(self, text: Text) -> Text:
-        if self.selected:  # cell mode: the header reads as a selection bar
+        if self.selected:
             text.stylize("reverse")
         return text
 
-    # ── focus, keys, mouse ───────────────────────────────────────────────
 
     def _on_descendant_focus(self, event: events.DescendantFocus) -> None:
         self.focused_within = True
@@ -463,8 +453,6 @@ class Cell(Vertical):
         self.remove_class("-focused", update=False)
         self.paint_bar()
         if self.kind == "markdown" and self.editing and event.widget is self._editor:
-            # Focus left the markdown editor (escape, another cell): render. Checked after
-            # the refresh, as a ':' prompt or a popup takes focus only for a moment.
             self.call_after_refresh(self._render_if_left)
 
     def on_focus(self) -> None:
@@ -479,20 +467,18 @@ class Cell(Vertical):
         self.remove_class("-selected", update=False)
         self._render_header()
         self.paint_bar()
-        if not isinstance(self.app.focused, Cell):  # the next cell's on_focus updates it
+        if not isinstance(self.app.focused, Cell):
             self.app.update_status()
 
     def on_key(self, event: events.Key) -> None:
-        if self.screen.focused is not self:  # a key bubbling up from the editor
+        if self.screen.focused is not self:
             return
         key = event.character if event.is_printable and event.character else event.key
         if _is_escape(event):
             key = "escape"
-        if event.is_printable or key in _CELL_KEYS:  # printable keys never leak anywhere
+        if event.is_printable or key in _CELL_KEYS:
             event.stop()
             event.prevent_default()
-            # Run on the app's queue: a command may remove this cell, which would
-            # cancel a handler still running on the cell's own queue.
             pane = self.pane
             if pane is not None:
                 self.app.call_later(pane.cell_command, self, key)
@@ -504,7 +490,7 @@ class Cell(Vertical):
 
     def on_click(self, event) -> None:
         """Clicking the header (or rendered markdown) selects the cell; anywhere else focuses its editor."""
-        if event.widget is self._header or self.editor_hidden:  # double click edits (EditRequested)
+        if event.widget is self._header or self.editor_hidden:
             self.focus(scroll_visible=False)
         elif not isinstance(event.widget, VimTextArea):
             self.editor.focus()

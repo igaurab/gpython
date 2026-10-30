@@ -22,7 +22,7 @@ LineCallback = Callable[[str], None]
 
 BIN = "Scripts" if os.name == "nt" else "bin"
 EXE = "python.exe" if os.name == "nt" else "python"
-VENV_NAMES = (".venv", "venv", "env", ".env")  # looked for next to the notebook and up to the project root
+VENV_NAMES = (".venv", "venv", "env", ".env")
 _VERSION = re.compile(r"(\d+\.\d+(?:\.\d+)?)")
 
 
@@ -36,9 +36,9 @@ class Env:
 
     python: Path
     name: str
-    kind: str  # "builtin" | "uv" | "venv" | "conda" | "uv-python" | "system" | "kernelspec"
+    kind: str
     version: str = ""
-    prefix: Path | None = None  # the env's root folder (None for a bare interpreter)
+    prefix: Path | None = None
 
     @property
     def is_venv(self) -> bool:
@@ -149,22 +149,18 @@ def discover(start: Path | None = None) -> list[Env]:
             seen.add(k)
             found.append(env)
 
-    # 1. Project envs: next to the notebook, then each folder up to the project root.
     for env in project_venvs(start):
         add(env)
-    add(builtin())  # before VIRTUAL_ENV: under `uv run` that is gpython's own venv
-    # 2. Whatever the shell had active.
+    add(builtin())
     for var in ("VIRTUAL_ENV", "CONDA_PREFIX"):
         if p := os.environ.get(var):
             add(venv_at(Path(p)))
-    # 3. Named env folders (virtualenvwrapper, pipenv, conda, pyenv-virtualenv).
     home = Path.home()
     homes = [os.environ.get("WORKON_HOME"), home / ".virtualenvs", home / ".venvs", home / ".local/share/virtualenvs"]
     homes += [home / d / "envs" for d in ("miniconda3", "anaconda3", "miniforge3", "mambaforge", ".conda")]
     for base in filter(None, homes):
         for child in sorted(_children(Path(base))):
             add(venv_at(child))
-    # 4. Bare interpreters: uv-managed ones, then python3.x on PATH.
     uv_dir = Path(os.environ.get("UV_PYTHON_INSTALL_DIR") or home / ".local/share/uv/python")
     for child in sorted(_children(uv_dir), reverse=True):
         python = child / BIN / "python3"
@@ -186,7 +182,7 @@ def _path_pythons() -> list[Env]:
     out = []
     for folder in os.environ.get("PATH", "").split(os.pathsep):
         if not folder or "/.venv/" in folder + "/" or (Path(folder).parent / "pyvenv.cfg").exists():
-            continue  # venv bin folders are found as venvs
+            continue
         try:
             names = sorted(n for n in os.listdir(folder) if re.fullmatch(r"python3(\.\d+)?", n))
         except OSError:
@@ -201,7 +197,7 @@ def _path_pythons() -> list[Env]:
 def from_python(python: Path, envs: list[Env] | None = None) -> Env:
     """The Env for an interpreter path (e.g. remembered in config, or typed by the user)."""
     python = Path(python).expanduser()
-    if python.is_dir():  # a venv folder
+    if python.is_dir():
         if env := venv_at(python):
             return env
         python = python / BIN / EXE
@@ -246,7 +242,6 @@ def kernel_env(env: Env) -> dict[str, str]:
     """Environment variables for a kernel running in `env`, so `!pip`, `uv` and subprocesses match it."""
     out = dict(os.environ)
     out.pop("PYTHONHOME", None)
-    # gpython's own venv must not leak into a kernel running somewhere else.
     if (own := os.environ.get("VIRTUAL_ENV")) and Path(own) != env.prefix:
         out.pop("VIRTUAL_ENV", None)
         out["PATH"] = os.pathsep.join(p for p in out.get("PATH", "").split(os.pathsep) if p != str(Path(own) / BIN))
@@ -256,9 +251,6 @@ def kernel_env(env: Env) -> dict[str, str]:
     if uv():
         out["GPYTHON_UV"] = uv()
     return out
-
-
-# ── running uv / pip ─────────────────────────────────────────────────────────
 
 
 async def run(argv: list[str], on_line: LineCallback | None = None, cwd: Path | None = None, env: dict | None = None) -> int:
@@ -273,7 +265,6 @@ async def run(argv: list[str], on_line: LineCallback | None = None, cwd: Path | 
             on_line(f"{argv[0]}: {e.strerror or e}")
         return 127
     assert proc.stdout is not None
-    # uv redraws progress lines with \r; treat those as line ends too.
     buf = b""
     while chunk := await proc.stdout.read(4096):
         buf += chunk

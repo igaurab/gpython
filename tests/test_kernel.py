@@ -38,7 +38,6 @@ def test_marimo_shim_renders_markdown():
             data = next(c["data"] for kd, c in outputs if kd == "execute_result")
             assert "# T" in data["text/markdown"] and "`y`" in data["text/markdown"]
 
-            # App decorators pass functions/classes through, run() does nothing, ui is a clear error.
             errors = []
             assert await k.execute(
                 "app = mo.App(width='medium')\n@app.cell(hide_code=True)\ndef f(): return 1\n"

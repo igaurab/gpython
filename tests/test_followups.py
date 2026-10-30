@@ -56,7 +56,6 @@ def test_ipynb_outputs_show_on_load_and_survive_save(tmp_path):
         assert outs[1]["output_type"] == "execute_result" and outs[1]["data"] == {"text/plain": "42"} and outs[1]["execution_count"] == 7
         assert saved["cells"][0]["execution_count"] == 7
         assert saved["cells"][1]["source"] == ["b = 3"] and saved["cells"][1]["outputs"] == []
-        # Clearing an output clears it in the file too.
         first.focus()
         await pilot.press("O", "escape", ":", *"w", "enter")
         await pilot.pause()
@@ -97,22 +96,20 @@ def test_marimo_hide_code_cells_start_collapsed_and_h_toggles(tmp_path):
         assert hidden.code_hidden and not hidden.editor.display
         assert "code hidden" in str(hidden.query_one(".cell-header").render())
         assert shown.editor.display
-        # The first cell has no editor on screen, so the app starts in cell mode on it.
         assert app.focused is hidden and app.ui_mode == "cell"
-        await pilot.press("h")  # show the code
+        await pilot.press("h")
         await pilot.pause()
         assert not hidden.code_hidden and hidden.editor.display and app.dirty
-        await pilot.press("enter")  # edit it
+        await pilot.press("enter")
         assert app.focused is hidden.editor
-        await pilot.press("escape", "escape", "h")  # back to cell mode, hide again
+        await pilot.press("escape", "escape", "h")
         await pilot.pause()
         assert hidden.code_hidden and not hidden.editor.display and app.focused is hidden
-        # j/k move over a hidden-code cell in cell mode; enter shows the code and edits.
         await pilot.press("j", "k")
         assert app.focused is hidden
         await pilot.press("enter")
         assert app.focused is hidden.editor and not hidden.code_hidden
-        await pilot.press("escape", "escape", "j", "h")  # hide the second cell's code
+        await pilot.press("escape", "escape", "j", "h")
         await pilot.pause()
         assert shown.code_hidden
         await pilot.press(":", *"w", "enter")

@@ -21,13 +21,13 @@ from textual.containers import Vertical
 from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import Static
-from textual_image.widget import Image  # must be imported before the app starts
+from textual_image.widget import Image
 
 from .markdown import MarkdownView
 
-MAX_STREAM_CHARS = 50_000  # characters of one stream block that are drawn
+MAX_STREAM_CHARS = 50_000
 FLUSH_INTERVAL = 1 / 30
-_KEEP_RAW = 4 * MAX_STREAM_CHARS  # raw stream text kept in memory before compacting
+_KEEP_RAW = 4 * MAX_STREAM_CHARS
 
 MIME_PRIORITY = (
     "image/png",
@@ -54,7 +54,7 @@ def collapse_carriage_returns(text: str) -> str:
     lines = text.split("\n")
     for i, line in enumerate(lines):
         if "\r" in line:
-            line = line.rstrip("\r")  # "\r\n" line endings and a trailing "\r" keep the line
+            line = line.rstrip("\r")
             lines[i] = line.rsplit("\r", 1)[-1]
     return "\n".join(lines)
 
@@ -94,7 +94,7 @@ def html_to_text(html: str) -> str:
     parser.close()
     lines = [" ".join(line.split()) for line in "".join(parser.parts).split("\n")]
     out: list[str] = []
-    for line in lines:  # drop blank runs
+    for line in lines:
         if line or (out and out[-1]):
             out.append(line)
     return "\n".join(out).strip()
@@ -124,12 +124,11 @@ class OutputArea(Vertical):
         self._blocks: list[Widget] = []
         self._stream_kind: str | None = None
         self._stream_parts: list[str] = []
-        self._stream_hidden = 0  # raw characters dropped from the open stream to bound memory
+        self._stream_hidden = 0
         self._stream_widget: Static | None = None
         self._flush_timer: Timer | None = None
-        self._clear_pending = False  # clear_output(wait=True): clear when the next output arrives
+        self._clear_pending = False
 
-    # ── public API ───────────────────────────────────────────────────────
 
     @property
     def text(self) -> str:
@@ -175,13 +174,12 @@ class OutputArea(Vertical):
         if kind == "stream":
             self._add_stream(content["name"], content["text"])
             return
-        self._close_stream()  # keep order: pending stream text is drawn before this block
+        self._close_stream()
         if kind in ("execute_result", "display_data"):
             self._add_data(content.get("data", {}))
         elif kind == "error":
             self._add_text("traceback", "\n".join(content["traceback"]))
 
-    # ── rich data ────────────────────────────────────────────────────────
 
     def _add_data(self, data: dict) -> None:
         mime = next((m for m in MIME_PRIORITY if m in data), None)
@@ -194,7 +192,7 @@ class OutputArea(Vertical):
         elif mime == "application/json":
             self._add_json(data[mime])
         elif mime == "text/html":
-            if "text/plain" in data:  # e.g. pandas DataFrames have a good plain repr
+            if "text/plain" in data:
                 self._add_text("result", _as_str(data["text/plain"]))
             else:
                 self._add_noted(html_to_text(_as_str(data[mime])), "[html rendered as text]")
@@ -209,7 +207,7 @@ class OutputArea(Vertical):
         self._mount_block(widget)
 
     def _add_json(self, payload) -> None:
-        if isinstance(payload, str):  # some kernels send JSON as a string
+        if isinstance(payload, str):
             try:
                 payload = json.loads(payload)
             except ValueError:
@@ -230,7 +228,6 @@ class OutputArea(Vertical):
         widget.gp_text = text
         self._mount_block(widget)
 
-    # ── blocks ───────────────────────────────────────────────────────────
 
     def _mount_block(self, widget: Widget) -> None:
         self.display = True
@@ -248,7 +245,6 @@ class OutputArea(Vertical):
 
         self._mount_block(Image(PILImage.open(io.BytesIO(base64.b64decode(b64)))))
 
-    # ── streams ──────────────────────────────────────────────────────────
 
     def _add_stream(self, name: str, text: str) -> None:
         if self._stream_kind != name:
@@ -284,7 +280,7 @@ class OutputArea(Vertical):
         if widget is None:
             return
         raw = "".join(self._stream_parts)
-        if len(raw) > _KEEP_RAW:  # bound memory for endless output
+        if len(raw) > _KEEP_RAW:
             raw, dropped = _tail(raw, _KEEP_RAW // 2)
             self._stream_hidden += dropped
         self._stream_parts = [raw]

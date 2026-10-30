@@ -48,7 +48,6 @@ class Explorer(DirectoryTree):
             super().__init__()
             self.directory = directory
 
-    # Plain text markers instead of emoji (which render as wide glyphs or boxes in many terminals).
     ICON_NODE = "▸ "
     ICON_NODE_EXPANDED = "▾ "
     ICON_FILE = "  "
@@ -57,7 +56,7 @@ class Explorer(DirectoryTree):
     def __init__(self, path: Path, **kwargs) -> None:
         super().__init__(path, id="explorer", **kwargs)
         self.guide_depth = 2
-        self.show_root = False  # the root path is shown in the header line above the tree
+        self.show_root = False
         self._pending = ""
         self._last_search = ""
 
@@ -84,7 +83,6 @@ class Explorer(DirectoryTree):
                     continue
             yield path
 
-    # ── helpers ──────────────────────────────────────────────────────────
 
     def _node_path(self, node: TreeNode | None) -> Path | None:
         return None if node is None or node.data is None else node.data.path
@@ -164,7 +162,6 @@ class Explorer(DirectoryTree):
             return Path(self.path)
         return path if path.is_dir() else path.parent
 
-    # ── keys ─────────────────────────────────────────────────────────────
 
     def on_key(self, event: events.Key) -> None:
         key = event.character if event.is_printable and event.character else event.key
@@ -199,7 +196,7 @@ class Explorer(DirectoryTree):
                 self._open("tab")
             case "e":
                 self._open("here")
-            case "s" | "i":  # i: NERDTree's horizontal split
+            case "s" | "i":
                 self._open("split")
             case "v":
                 self._open("vsplit")

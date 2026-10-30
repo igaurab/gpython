@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# Launch gpython. Usage: ./gpython [--no-vim] [notebook.py]
-# With no file, opens an empty untitled notebook.
 set -euo pipefail
 
-# Resolve symlinks so this works when linked into PATH (e.g. ~/.local/bin).
 here="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 
-# --project keeps your current directory, so relative notebook paths work.
+if [[ -x "$here/.venv/bin/gpython" ]]; then
+    exec "$here/.venv/bin/gpython" "$@"
+fi
 exec uv run --quiet --project "$here" gpython "$@"

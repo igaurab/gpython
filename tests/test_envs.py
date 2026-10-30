@@ -39,9 +39,6 @@ def fake_venv(folder: Path, uv: bool = True, version: str = "3.12.4", ipykernel:
     return python
 
 
-# ── discovery and defaults (filesystem only) ─────────────────────────────
-
-
 def test_venv_at_reads_kind_and_version(tmp_path):
     fake_venv(tmp_path / "a", uv=True, version="3.12.4")
     fake_venv(tmp_path / "b", uv=False, version="3.11.2", ipykernel=True)
@@ -62,7 +59,6 @@ def test_discover_puts_project_venvs_first_nearest_first(tmp_path):
     assert [e.prefix for e in found[:2]] == [sub / "venv", tmp_path / ".venv"]
     assert found[1].name == f"{tmp_path.name}/.venv"
     assert any(e.kind == "builtin" or e.prefix == Path(sys.prefix) for e in found)
-    # No duplicates.
     assert len({str(e.prefix or e.python) for e in found}) == len(found)
 
 
@@ -102,9 +98,6 @@ def test_run_streams_lines_and_exit_code():
     assert asyncio.run(envs.run(["/no/such/binary"])) == 127
 
 
-# ── real uv: create, install, run a kernel there, switch back ────────────
-
-
 @needs_uv
 def test_uv_env_kernel_switch_and_magics(tmp_path):
     async def main():
@@ -119,7 +112,6 @@ def test_uv_env_kernel_switch_and_magics(tmp_path):
             await k.switch(env)
             await k.execute("import sys; print(sys.prefix)", grab)
             assert Path("".join(out).strip()) == tmp_path / ".venv"
-            # %uv targets the kernel's own interpreter.
             out.clear()
             assert await k.execute("%uv pip list", grab)
             assert "ipykernel" in "".join(out)
@@ -187,9 +179,6 @@ def test_failed_switch_falls_back_to_the_old_kernel(tmp_path):
     asyncio.run(main())
 
 
-# ── UI ───────────────────────────────────────────────────────────────────
-
-
 def ui(tmp_path, test):
     path = tmp_path / "nb.py"
     path.write_text("# %%\na = 1\n")
@@ -219,7 +208,6 @@ def test_f6_picker_lists_actions_and_envs_then_switches(tmp_path, monkeypatch):
         switched.append(env)
 
     async def test(app, pilot):
-        # The project venv with ipykernel was picked at start; the header chip names it.
         assert app.pane.kernel.env.prefix == tmp_path / ".venv"
         chip = str(app.query_one("#kernel").render())
         assert chip.startswith("Python 3") and ".venv" in chip
@@ -232,7 +220,6 @@ def test_f6_picker_lists_actions_and_envs_then_switches(tmp_path, monkeypatch):
         ids = option_ids(screen)
         assert "act:new-venv" in ids and "act:install" in ids and "act:restart" in ids
         assert any(i and i.startswith("env:") for i in ids)
-        # Filter to the built-in interpreter and pick it.
         await pilot.press(*"built-in")
         await pilot.pause()
         await pilot.press("enter")

@@ -97,7 +97,7 @@ def test_ipynb_roundtrip(tmp_path):
 
     save(path, cells + [CellSpec("y = 2")])
     saved = json.loads(path.read_text())
-    assert saved["metadata"]["custom"] is True  # metadata preserved
+    assert saved["metadata"]["custom"] is True
     assert [c["cell_type"] for c in saved["cells"]] == ["markdown", "code", "code"]
     assert saved["cells"][1]["outputs"] == [{"output_type": "stream", "text": "x"}] and saved["cells"][1]["execution_count"] == 3
     assert saved["cells"][2]["outputs"] == [] and saved["cells"][2]["execution_count"] is None

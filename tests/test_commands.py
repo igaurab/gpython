@@ -66,7 +66,7 @@ def test_escape_chain_and_cell_navigation(tmp_path):
         assert app.focused is first and app.ui_mode == "cell"
         assert selected(app) == [first]
         assert "CELL" in str(app.query_one("#status").render())
-        await pilot.press("escape")  # stays in cell mode
+        await pilot.press("escape")
         assert app.focused is first
 
         await pilot.press("j")
@@ -81,7 +81,7 @@ def test_escape_chain_and_cell_navigation(tmp_path):
         assert app.focused is third
         await pilot.press("2", "G")
         assert app.focused is second
-        await pilot.press("q", "w")  # unknown keys do nothing and never reach the editor
+        await pilot.press("q", "w")
         assert sources(app) == SOURCES and app.focused is second
 
         await pilot.press("enter")
@@ -89,7 +89,6 @@ def test_escape_chain_and_cell_navigation(tmp_path):
         await pilot.press("escape", "i")
         assert app.focused is second.editor and app.ui_mode == "insert"
 
-        # ctrl+home / ctrl+end jump to the first / last cell in any mode.
         await pilot.press("ctrl+end")
         assert app.focused is third.editor
         await pilot.press("ctrl+home")
@@ -138,7 +137,7 @@ def test_delete_undo_copy_cut_paste(tmp_path):
         app.cells()[0].focus()
         await pilot.press("x")
         assert sources(app) == ["b = 2", "print('c')"]
-        await pilot.press("j", "p")  # paste below the last cell
+        await pilot.press("j", "p")
         assert sources(app) == ["b = 2", "print('c')", "a = 1"]
         await pilot.press("g", "g", "P")
         assert sources(app)[0] == "a = 1"
@@ -160,7 +159,6 @@ def test_vim_dd_deletes_a_line_cell_mode_dd_deletes_the_cell(tmp_path):
         assert chip().strip() == "EDIT"
         await pilot.press("u")
         assert second.editor.text == "b = 2\nb2 = 3"
-        # esc → cell mode: dd deletes the cell, u brings it back.
         await pilot.press("escape")
         await pilot.pause()
         assert chip().strip() == "CELL"
@@ -169,7 +167,6 @@ def test_vim_dd_deletes_a_line_cell_mode_dd_deletes_the_cell(tmp_path):
         assert sources(app) == ["a = 1", "print('c')"]
         await pilot.press("u")
         assert sources(app) == ["a = 1", "b = 2\nb2 = 3", "print('c')"]
-        # 2dd in cell mode deletes two cells.
         app.cells()[0].focus()
         await pilot.press("2", "d", "d")
         assert sources(app) == ["print('c')"]
@@ -222,7 +219,6 @@ def test_run_keys(tmp_path):
         assert first.status == "ok" and app.focused is first.editor
         assert first.exec_count == 1
 
-        # shift+enter with a cell below: run it and go there, no new cell.
         await pilot.press("shift+enter")
         await app.workers.wait_for_complete()
         assert len(app.cells()) == 3 and app.focused is second.editor
@@ -233,19 +229,16 @@ def test_run_keys(tmp_path):
         cells = app.cells()
         assert len(cells) == 4 and app.focused is cells[3].editor and app.ui_mode == "insert"
 
-        # alt+enter always inserts.
         cells[0].editor.focus()
         await pilot.press("alt+enter")
         await app.workers.wait_for_complete()
         cells = app.cells()
         assert len(cells) == 5 and app.focused is cells[1].editor and app.ui_mode == "insert"
 
-        # shift+enter in cell mode selects the next cell.
         await pilot.press("escape", "escape", "shift+enter")
         await app.workers.wait_for_complete()
         assert app.focused is cells[2]
 
-        # :runbelow runs only the current cell and those after it.
         for cell in app.cells():
             cell.clear_output()
         app.cells()[3].editor.text = "print('d')"
@@ -253,7 +246,7 @@ def test_run_keys(tmp_path):
         await pilot.press(":", *"runbelow", "enter")
         await app.workers.wait_for_complete()
         assert app.cells()[3].output_text == "d\n"
-        assert app.cells()[2].output_text == ""  # third: above, not run
+        assert app.cells()[2].output_text == ""
 
     ui(tmp_path, test, kernel=True)
 
@@ -293,14 +286,12 @@ def test_jumps_labels_and_vars_panel(tmp_path):
         await pilot.pause()
         assert app.focused is first.editor
 
-        # Labels are display positions; ctrl+n between 1 and 2 renumbers.
         await pilot.press("ctrl+n")
         assert labels(app) == ["c1", "c2", "c3", "c4"]
         assert app.cells()[1].label == "c2" and second.label == "c3"
-        await pilot.press("escape", "escape", "d", "d")  # insert → normal → cell mode
+        await pilot.press("escape", "escape", "d", "d")
         assert labels(app) == ["c1", "c2", "c3"]
 
-        # Delete the second cell: /2 now means the former third one.
         second.focus()
         await pilot.press("d", "d")
         assert third.label == "c2"
@@ -309,7 +300,6 @@ def test_jumps_labels_and_vars_panel(tmp_path):
         await pilot.pause()
         assert app.focused is third.editor
 
-        # Text search finds the next cell containing it; from cell mode it selects.
         first.focus()
         await pilot.press("/", *"print", "enter")
         await pilot.pause()
@@ -318,7 +308,6 @@ def test_jumps_labels_and_vars_panel(tmp_path):
         await pilot.pause()
         assert app.focused is third
 
-        # J / K in vim normal mode hop between cells.
         first.editor.focus()
         await pilot.press("J")
         assert app.focused is third.editor
@@ -368,13 +357,13 @@ def test_shift_enter_keeps_the_viewport(tmp_path):
     async def test(app, pilot):
         box = app.query_one("#cells")
         cells = app.cells()
-        box.scroll_to_widget(cells[14], animate=False, immediate=True, top=True)  # cell 15 at the top
+        box.scroll_to_widget(cells[14], animate=False, immediate=True, top=True)
         await pilot.pause()
         cells[14].editor.focus(scroll_visible=False)
         await pilot.pause()
         before = box.scroll_offset.y
         assert before > 0
-        assert cells[15].region.bottom <= box.region.bottom  # cell 16 already visible
+        assert cells[15].region.bottom <= box.region.bottom
 
         await pilot.press("shift+enter")
         await pilot.pause()
@@ -385,7 +374,6 @@ def test_shift_enter_keeps_the_viewport(tmp_path):
         assert box.scroll_offset.y == before
         assert cells[14].output_text == "14\n"
 
-        # Re-running keeps the old output until the new one arrives, then replaces it.
         cells[15].editor.focus(scroll_visible=False)
         cells[14].editor.text = "pass"
         cells[14].editor.focus(scroll_visible=False)
@@ -394,7 +382,6 @@ def test_shift_enter_keeps_the_viewport(tmp_path):
         await pilot.pause()
         assert cells[14].output_text == "" and not cells[14].output_box.has_output
 
-        # On the last cell shift+enter creates a cell, scrolled into view.
         cells[-1].editor.focus(scroll_visible=False)
         cells[-1].scroll_visible(animate=False, immediate=True)
         await pilot.pause()

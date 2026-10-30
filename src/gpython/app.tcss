@@ -6,7 +6,6 @@ Screen {
     height: 1fr;
 }
 
-/* Tabs (vim's tabline): shown only when there are two or more. */
 #tabbar {
     display: none;
     height: 1;
@@ -18,8 +17,6 @@ GPython.-tabs #tabbar {
     display: block;
 }
 
-/* All notebook windows live here; windows.py places them. The background shows
-   through the one-column gap between side-by-side windows. */
 Workspace {
     width: 1fr;
     height: 1fr;
@@ -34,7 +31,6 @@ NotebookPane {
     height: 1fr;
 }
 
-/* vim's per-window status line: only when a tab has several windows. */
 .pane-status {
     display: none;
     height: 1;
@@ -88,8 +84,6 @@ KeyCapture {
     border-left: vkey $panel;
 }
 
-/* The coloured bar at the left is an outline painted by Cell.paint_bar (status and
-   focus colours), so focus changes never touch the CSS engine or the layout. */
 Cell {
     height: auto;
     margin-bottom: 1;
@@ -149,7 +143,7 @@ Prompt {
 
 #prompt {
     dock: bottom;
-    height: 3;  /* a line, the text, a line: no blank rows */
+    height: 3;
     background: $surface;
     border-top: solid $accent;
     border-bottom: solid $accent;
@@ -265,7 +259,6 @@ HelpScreen {
     padding: 0 1;
 }
 
-/* Markdown cells: rendered text instead of the editor (see Cell.show_rendered). */
 Cell.-markdown > MarkdownView {
     padding: 0 1 0 0;
 }

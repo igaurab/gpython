@@ -23,7 +23,7 @@ from .graph import Graph, build
 from .kernel import Kernel
 from .vim import VimTextArea
 
-INITIAL_CELLS = 12  # cells composed before the first frame; the rest mount right after
+MIN_INITIAL_CELLS = 4
 MOUNT_BATCH = 10
 MAX_UNDO = 50
 
@@ -36,30 +36,28 @@ class NotebookPane(Vertical):
         self.path = path
         self.markers = True
         self.dirty = False
-        self.exec_counter = 0  # Jupyter's In [n]
+        self.exec_counter = 0
         self.kernel_state = "starting kernel…"
-        self.kernel_label = "Python …"  # filled in once the kernel reports its version
+        self.kernel_label = "Python …"
         remembered = config.load().get(f"env:{path.resolve()}") if path is not None else None
         env, self._env_hint = envs.default_for(path, remembered)
         self.kernel = Kernel(file=path, env=env)
         self._kernel_started = False
         self._shutting_down = False
-        self._booted = asyncio.Event()  # set when the kernel boot finished (well or badly)
+        self._booted = asyncio.Event()
         self._run_lock = asyncio.Lock()
-        self.loaded = asyncio.Event()  # set once every cell of the file is mounted
+        self.loaded = asyncio.Event()
         self._specs: list[notebook.CellSpec] = []
-        self._pending_sources: list[notebook.CellSpec] = []  # cells not mounted yet (progressive mount)
+        self._pending_sources: list[notebook.CellSpec] = []
         self._cells_box: VerticalScroll | None = None
         self._vars: DataTable | None = None
         self._status: Static | None = None
         self._status_key: tuple | None = None
-        self.last_focus = None  # the cell or editor that had focus when this pane was last active
-        # Cell-level undo (u / z in cell mode), newest last: ("delete", snapshot),
-        # ("move", cid, from_index, to_index), ("insert", cid), ("kind", cid, old_kind).
+        self.last_focus = None
         self._undo: list[tuple] = []
-        self._cmd_pending = ""  # cell mode: first key of gg / dd / yy
+        self._cmd_pending = ""
         self._cmd_count = ""
-        self._kind_before_y: str | None = None  # `y` makes a cell code at once; `yy` (copy) undoes that
+        self._kind_before_y: str | None = None
         self.load_error: str | None = None
         self._read_file()
 
@@ -68,7 +66,7 @@ class NotebookPane(Vertical):
         if self.path is not None and self.path.exists():
             try:
                 specs, self.markers = notebook.load_cells(self.path)
-            except Exception as error:  # a file that is not a notebook: show it as one cell
+            except Exception as error:
                 self.load_error = f"Could not parse {self.path}: {error}"
                 specs = [notebook.CellSpec(self.path.read_text(errors="replace"))]
             specs = specs or [notebook.CellSpec("")]
@@ -88,10 +86,24 @@ class NotebookPane(Vertical):
         cells = self.cells()
         return self.path is None and not self.dirty and len(cells) == 1 and not cells[0].source.strip()
 
-    # ── compose / mount ──────────────────────────────────────────────────
+
+    def _initial_count(self) -> int:
+        """How many cells to compose before the first frame: enough to fill the screen.
+
+        Every cell costs ~1 ms of CSS and layout before the first paint, so only the
+        ones that can be visible are composed now; the rest mount after the first frame.
+        """
+        height = self.app.size.height or 45
+        rows = 0
+        for n, spec in enumerate(self._specs, 1):
+            rows += spec.source.count("\n") + 3
+            if rows >= height and n >= MIN_INITIAL_CELLS:
+                return n
+        return len(self._specs)
 
     def compose(self) -> ComposeResult:
-        specs, self._pending_sources = self._specs[:INITIAL_CELLS], self._specs[INITIAL_CELLS:]
+        initial = self._initial_count()
+        specs, self._pending_sources = self._specs[:initial], self._specs[initial:]
         with Horizontal(classes="pane-body"):
             with VerticalScroll(id="cells") as self._cells_box:
                 for n, spec in enumerate(specs, 1):
@@ -100,20 +112,23 @@ class NotebookPane(Vertical):
                     yield cell
             self._vars = DataTable(id="vars", cursor_type="row", zebra_stripes=True)
             self._vars.add_columns("name", "type", "value")
-            self._vars.display = False  # f2 / :vars shows it
+            self._vars.display = False
             yield self._vars
         self._status = Static(classes="pane-status")
         yield self._status
 
     def on_mount(self) -> None:
-        if (boot := self.start_kernel()) is not None:
-            self.run_worker(boot, group="kernel")
         self.render_status()
         if self.load_error:
             self.notify(self.load_error, severity="warning")
         if self._env_hint is not None:
             self.notify(f"Found {self._env_hint.name} without ipykernel: f6 to run the kernel there (ipykernel is installed for you)", timeout=8)
-        self.call_after_refresh(lambda: self.run_worker(self._mount_rest(), group="mount"))
+        self.app.after_first_frame(self._after_first_frame)
+
+    def _after_first_frame(self) -> None:
+        self.run_worker(self._mount_rest(), group="mount")
+        if (boot := self.start_kernel()) is not None:
+            self.run_worker(boot, group="kernel")
 
     async def _mount_rest(self) -> None:
         """Mount the cells left out of compose(), a batch at a time, after the first frame."""
@@ -123,8 +138,9 @@ class NotebookPane(Vertical):
             first = len(self._cells_box.children) + 1
             for n, cell in enumerate(batch, first):
                 cell.set_label(n)
-            await self._cells_box.mount_all(batch)
-            await asyncio.sleep(0)  # let keys and repaints through between batches
+            with self.app.batch_update():
+                await self._cells_box.mount_all(batch)
+            await asyncio.sleep(0)
         self.relabel()
         self.refresh_info()
         self.loaded.set()
@@ -141,7 +157,7 @@ class NotebookPane(Vertical):
             await self.kernel.start()
             self.kernel_label = await self._kernel_version()
             self.set_kernel_state("kernel ready")
-        except Exception as error:  # never let a kernel problem take the UI down
+        except Exception as error:
             if not self._shutting_down and self.is_attached:
                 self.set_kernel_state("no kernel")
                 self.notify(f"Kernel could not start: {error}", severity="error", timeout=10)
@@ -155,7 +171,7 @@ class NotebookPane(Vertical):
             await self.kernel.switch(env)
         except Exception as error:
             self.notify(f"Could not start a kernel in {env.python}: {error}", severity="error", timeout=10)
-            if not self.kernel.ready.is_set():  # the fallback to the old env failed too
+            if not self.kernel.ready.is_set():
                 self.set_kernel_state("kernel failed to start (f6 picks another env)")
                 return
         else:
@@ -212,7 +228,6 @@ class NotebookPane(Vertical):
             self.last_focus = widget
         self.app.pane_focused(self)
 
-    # ── status line (vim: the per-window status line) ────────────────────
 
     def set_active(self, active: bool) -> None:
         self.set_class(active, "-active")
@@ -245,7 +260,6 @@ class NotebookPane(Vertical):
             self.render_status()
             self.app.update_status()
 
-    # ── cells ────────────────────────────────────────────────────────────
 
     def cells(self) -> list[Cell]:
         """Cells in document order. They are the direct children of #cells, so no DOM search."""
@@ -286,7 +300,7 @@ class NotebookPane(Vertical):
 
     async def run_cells(self, roots: list[str], downstream: bool | None = None) -> None:
         """Run roots (and, unless lazy, every cell downstream) in dependency order."""
-        await self.loaded.wait()  # the graph needs every cell
+        await self.loaded.wait()
         async with self._run_lock:
             graph = self.refresh_info()
             by_id = {c.cid: c for c in self.cells() if c.kind == "code"}
@@ -305,7 +319,7 @@ class NotebookPane(Vertical):
             failed: set[str] = set()
             for cid in order:
                 cell = by_id[cid]
-                if not cell.is_mounted:  # deleted while queued
+                if not cell.is_mounted:
                     continue
                 if cid in graph.errors:
                     cell.show_error(graph.errors[cid])
@@ -321,13 +335,11 @@ class NotebookPane(Vertical):
                 source = cell.source
                 cell.echo_suppressed = ends_with_string(source)
                 await self.kernel.delete(cell.last_defs | graph.defs[cid])
-                # Deferred clear: the old output stays until the first new output arrives,
-                # so the cell does not collapse and grow again (the page would jump).
                 cell.add_output("clear_output", {"wait": True})
                 self.exec_counter += 1
                 cell.begin_run(self.exec_counter)
                 ok = await self.kernel.execute(source, cell.add_output)
-                if cell.output_box.clear_pending:  # no output at all: clear the old one now
+                if cell.output_box.clear_pending:
                     cell.clear_output()
                 cell.ran_source = source
                 cell.last_defs = graph.defs[cid]
@@ -386,17 +398,16 @@ class NotebookPane(Vertical):
         `mode` "normal"/"insert" also switches the vim mode; "keep" leaves it.
         `row` puts the cursor at the start of that line (-1 = last line).
         """
-        if mode == "cell" or cell.editor_hidden:  # rendered markdown / hidden code: select it; enter edits
+        if mode == "cell" or cell.editor_hidden:
             cell.focus(scroll_visible=False)
         else:
             editor = cell.editor
-            editor.focus(scroll_visible=False)  # Textual's own scroll is animated
+            editor.focus(scroll_visible=False)
             if mode in ("normal", "insert") and VimTextArea.mode != mode:
                 editor.set_mode(mode)
             if row is not None:
                 editor.move_cursor((editor.document.line_count - 1 if row < 0 else row, 0))
         self._scroll_to_cell(cell)
-        # A cell mounted in this same frame has no region yet: scroll again after layout.
         self.call_after_refresh(cell.scroll_visible, animate=False, immediate=True)
 
     def _scroll_to_cell(self, cell: Cell) -> None:
@@ -451,7 +462,6 @@ class NotebookPane(Vertical):
         self.mark_dirty()
         return cell
 
-    # ── actions (the app's bindings call these on the active pane) ───────
 
     async def run_cell(self, advance: str = "stay") -> None:
         """Run the current cell. advance: "stay", "next" (Jupyter shift+enter) or "insert" (alt+enter)."""
@@ -459,7 +469,7 @@ class NotebookPane(Vertical):
         if cell is None:
             return
         mode = self.app.ui_mode
-        if cell.kind == "markdown":  # "running" markdown renders it; the kernel is not involved
+        if cell.kind == "markdown":
             if self.app.focused is not cell:
                 cell.focus(scroll_visible=False)
             await cell.show_rendered()
@@ -474,7 +484,7 @@ class NotebookPane(Vertical):
             if index + 1 < len(cells):
                 self.select(cells[index + 1], "cell" if mode == "cell" else "normal", row=0)
                 return
-            advance = "insert"  # last cell: open a fresh one
+            advance = "insert"
         if advance == "insert":
             new = await self._insert(cell)
             self.select(new, "insert")
@@ -519,7 +529,7 @@ class NotebookPane(Vertical):
         downstream = graph.descendants([i for i in ids if i in graph.children]) - set(ids)
         defs = set().union(*(c.last_defs for c in victims))
         if record:
-            for offset in range(len(victims) - 1, -1, -1):  # undo restores the first one first
+            for offset in range(len(victims) - 1, -1, -1):
                 self._push_undo(("delete", self._snapshot(victims[offset], index + offset)))
         await self._cells_box.remove_children(victims)
         if not self.cells():
@@ -529,7 +539,6 @@ class NotebookPane(Vertical):
         self.mark_dirty()
         self.select(remaining[min(index, len(remaining) - 1)], "cell" if mode == "cell" else "keep")
 
-        # Reactivity: the deleted cells' variables vanish, so dependents re-run.
         await self.kernel.delete(defs)
         if downstream:
             self.run_worker(self.run_cells(sorted(downstream)), group="run")
@@ -553,7 +562,7 @@ class NotebookPane(Vertical):
                 self.select(cell, keep)
                 return
             cell = next((c for c in self.cells() if c.cid == action[1]), None)
-            if cell is None:  # the cell is gone (e.g. deleted later): skip this entry
+            if cell is None:
                 continue
             if action[0] == "move":
                 self._move_to(cell, action[2])
@@ -594,7 +603,6 @@ class NotebookPane(Vertical):
             self.notify("No cell copied (yy or x in cell mode)")
             return
         mode = self.app.ui_mode
-        # A copy is a new cell: it does not inherit file-format extras (e.g. a marimo cell name).
         clip = dataclasses.replace(clip, spec=None)
         cell = await self._insert(self.current_cell(), above, snapshot=clip)
         self.select(cell, "cell" if mode == "cell" else "keep")
@@ -615,15 +623,14 @@ class NotebookPane(Vertical):
         cells = self.cells()
         current = self.current_cell()
         index = cells.index(current) + step if current in cells else 0
-        if abs(step) > 1:  # J/K with a count stop at the first/last cell
+        if abs(step) > 1:
             index = max(0, min(len(cells) - 1, index))
         if 0 <= index < len(cells) and cells[index] is not current:
             if isinstance(self.app.focused, Cell) or cells[index].editor_hidden:
                 self.select(cells[index], "cell")
                 return
             editor = cells[index].editor
-            editor.focus(scroll_visible=False)  # Textual's own scroll is animated
-            # Land on the nearest line, like moving through one long buffer.
+            editor.focus(scroll_visible=False)
             editor.move_cursor((0, 0) if step > 0 else (editor.document.line_count - 1, 0))
             self._scroll_to_cell(cells[index])
 
@@ -654,7 +661,7 @@ class NotebookPane(Vertical):
         defs = set(cell.last_defs)
         await cell.set_kind("markdown")
         self.refresh_info()
-        if not defs:  # never ran: nothing in the kernel came from it
+        if not defs:
             return
         await self.kernel.delete(defs)
         if downstream:
@@ -665,7 +672,7 @@ class NotebookPane(Vertical):
     def save(self, then=None) -> None:
         """Save; ask for a name when untitled. `then` runs after a successful save."""
         if self.path is None:
-            from .app import Prompt  # noqa: PLC0415
+            from .app import Prompt
 
             self.app.push_screen(Prompt("Save as: ", placeholder="notebook.py"), lambda name: self.saved_as(name, then))
         else:
@@ -740,7 +747,6 @@ class NotebookPane(Vertical):
 
         self._after_loaded(go)
 
-    # ── cell mode ────────────────────────────────────────────────────────
 
     async def cell_command(self, cell: Cell, key: str) -> bool:
         """One key in cell mode (the cell itself has focus). Returns False if unknown."""
@@ -767,12 +773,11 @@ class NotebookPane(Vertical):
             kind_before, self._kind_before_y = self._kind_before_y, None
             if key == "y":
                 if kind_before == "markdown" and cell.kind == "code":
-                    await cell.set_kind("markdown")  # yy copies; undo the `y` that made it code
+                    await cell.set_kind("markdown")
                     if self._undo and self._undo[-1] == ("kind", cell.cid, "markdown"):
                         self._undo.pop()
                 self.copy_cell()
                 return True
-            # `y` alone already made the cell code; this key is a new command.
         match key:
             case "g" | "d" | "y":
                 if key == "y":
@@ -790,7 +795,7 @@ class NotebookPane(Vertical):
                 else:
                     self._after_loaded(lambda: self.goto_cell(len(self.cells()), "cell"))
             case "enter" | "i":
-                cell.start_editing()  # markdown: show the editor instead of the rendered text
+                cell.start_editing()
                 self.select(cell, "normal" if key == "enter" else "insert")
             case "a" | "b":
                 new = await self._insert(cell, above=key == "a")
@@ -828,7 +833,6 @@ class NotebookPane(Vertical):
                 return False
         return True
 
-    # ── vim glue (messages from the editors in this pane) ────────────────
 
     @on(VimTextArea.Changed)
     def _edited(self) -> None:

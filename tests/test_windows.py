@@ -58,9 +58,6 @@ def visible_names(app):
     return [p.name for p in app.workspace.tab_panes()]
 
 
-# ── the split tree ───────────────────────────────────────────────────────
-
-
 class FakePane:
     def __init__(self, name):
         self.name = name
@@ -72,30 +69,27 @@ class FakePane:
 def test_split_tree_arranges_and_removes():
     a, b, c = FakePane("a"), FakePane("b"), FakePane("c")
     root = Leaf(a)
-    root = split_leaf(root, a, b, row=True, after=True)  # a | b
+    root = split_leaf(root, a, b, row=True, after=True)
     assert isinstance(root, Branch) and root.row and [l.pane for l in root.children] == [a, b]
-    root = split_leaf(root, b, c, row=False, after=True)  # a | (b / c)
+    root = split_leaf(root, b, c, row=False, after=True)
     rects = {}
     arrange(root, Region(0, 0, 101, 40), rects)
     assert rects[a] == Region(0, 0, 50, 40)
     assert rects[b].x == 51 and rects[b].width == 50 and rects[b].height == 20
     assert rects[c].y == 20 and rects[c].height == 20
-    root = remove_leaf(root, b)  # a | c
+    root = remove_leaf(root, b)
     assert isinstance(root, Branch) and [l.pane for l in root.children] == [a, c]
     root = remove_leaf(root, a)
     assert isinstance(root, Leaf) and root.pane is c
     assert remove_leaf(root, c) is None
 
 
-# ── explorer ─────────────────────────────────────────────────────────────
-
-
 def test_explorer_toggles_and_opens_files(tmp_path, monkeypatch):
     root = project(tmp_path)
-    monkeypatch.chdir(root)  # an untitled notebook: the explorer opens at the working directory
+    monkeypatch.chdir(root)
 
     async def test(app, pilot):
-        assert app.explorer is None  # mounted on first use
+        assert app.explorer is None
         await pilot.press("ctrl+b")
         await pilot.pause()
         explorer = app.explorer
@@ -103,58 +97,52 @@ def test_explorer_toggles_and_opens_files(tmp_path, monkeypatch):
         assert app.ui_mode == "files"
         await loaded(explorer)
         shown = [n.data.path.name for n in explorer.root.children]
-        assert shown == ["sub", "a.py", "b.py"]  # folders first; .txt and dotfiles hidden
+        assert shown == ["sub", "a.py", "b.py"]
 
-        # j/k move, enter on a file opens it: the blank untitled window is reused.
-        await pilot.press("j", "j")  # a.py (sub is first)
+        await pilot.press("j", "j")
         assert explorer.cursor_node.data.path.name == "a.py"
         await pilot.press("enter")
         await pilot.pause()
         assert names(app) == ["a.py"] and len(app.workspace.tabs) == 1
         assert app.path == root / "a.py" and app.cells()[0].source == "a = 1"
-        assert isinstance(app.focused, VimTextArea)  # focus moved into the notebook
-        assert explorer.display  # the explorer stays open
-        assert [p.name for p in app.workspace.buffers] == ["a.py"]  # the blank one was dropped
+        assert isinstance(app.focused, VimTextArea)
+        assert explorer.display
+        assert [p.name for p in app.workspace.buffers] == ["a.py"]
 
-        # ctrl+b from the notebook hides it; ctrl+b again shows and focuses it.
         await pilot.press("ctrl+b")
         assert not explorer.display and isinstance(app.focused, VimTextArea)
         await pilot.press("ctrl+b")
         assert explorer.display and app.focused is explorer
 
-        # v opens in a vertical split, t in a new tab.
-        await pilot.press("j")  # b.py
+        await pilot.press("j")
         assert explorer.cursor_node.data.path.name == "b.py"
         await pilot.press("v")
         await pilot.pause()
         assert visible_names(app) == ["a.py", "b.py"] and app.pane.name == "b.py"
         ra, rb = (app.workspace.tab.rects[p] for p in app.workspace.tab_panes())
-        assert ra.x < rb.x and ra.y == rb.y  # side by side
+        assert ra.x < rb.x and ra.y == rb.y
         assert isinstance(app.focused, VimTextArea) and app.focused.text == "b = 2"
-        # ctrl+w w cycles explorer → windows → explorer; ctrl+w h from the leftmost window too.
         await pilot.press("ctrl+w", "w")
         assert app.focused is explorer
         await pilot.press("ctrl+w", "l")
         assert app.pane.name == "a.py" and isinstance(app.focused, VimTextArea)
         await pilot.press("ctrl+w", "h")
         assert app.focused is explorer
-        await pilot.press("g", "g", "l")  # expand sub
+        await pilot.press("g", "g", "l")
         await loaded(explorer)
         await pilot.pause(0.2)
-        await pilot.press("j", "enter")  # c.py: enter opens a file in its own tab
+        await pilot.press("j", "enter")
         await pilot.pause()
         assert len(app.workspace.tabs) == 2 and visible_names(app) == ["c.py"]
         assert app.has_class("-tabs")
 
-        # Opening a file that is already open just goes there.
         await pilot.press("ctrl+w", "p")
         assert app.focused is explorer
-        await pilot.press("g", "g", "j", "j", "enter")  # a.py again (sub is expanded: sub, c.py, a.py)
+        await pilot.press("g", "g", "j", "j", "enter")
         await pilot.pause()
         assert len(app.workspace.panes()) == 3 and app.pane.name == "a.py" and app.workspace.index == 0
         assert len(app.workspace.tabs) == 2
 
-        # q hides the explorer.
         await pilot.press("ctrl+w", "p", "q")
         assert not explorer.display and isinstance(app.focused, VimTextArea)
 
@@ -169,11 +157,10 @@ def test_explorer_from_cli_directory_and_hidden_toggle(tmp_path):
         assert explorer is not None and explorer.display and app.focused is explorer
         assert str(explorer.path) == str(root)
         await loaded(explorer)
-        await pilot.press(".")  # show hidden and non-notebook files
+        await pilot.press(".")
         await pilot.pause(0.3)
         shown = [n.data.path.name for n in explorer.root.children]
         assert ".hidden.py" in shown and "notes.txt" in shown
-        # '-' goes up, 'C' makes the folder under the cursor the root.
         await pilot.press("-")
         await pilot.pause(0.3)
         assert str(explorer.path) == str(root.parent)
@@ -200,7 +187,6 @@ def test_explorer_new_file_and_click(tmp_path):
         await pilot.pause(0.3)
         assert (root / "fresh.py").exists()
         assert app.pane.name == "fresh.py" and app.pane.path == root / "fresh.py"
-        # Click a file in the tree (the explorer stayed open).
         await loaded(explorer)
         await pilot.pause(0.2)
         line = next(i for i, l in enumerate(explorer._tree_lines) if l.path[-1].data.path.name == "b.py")
@@ -211,15 +197,12 @@ def test_explorer_new_file_and_click(tmp_path):
     ui(test, root / "a.py")
 
 
-# ── windows and tabs ─────────────────────────────────────────────────────
-
-
 def test_ctrl_w_splits_moves_and_closes(tmp_path):
     root = project(tmp_path)
 
     async def test(app, pilot):
         first = app.pane
-        await pilot.press("escape")  # normal mode: ctrl+w is the window prefix
+        await pilot.press("escape")
         await pilot.press("ctrl+w")
         assert isinstance(app.screen, KeyCapture)
         await pilot.press("v")
@@ -231,7 +214,7 @@ def test_ctrl_w_splits_moves_and_closes(tmp_path):
         assert len(visible_names(app)) == 3
         third = app.pane
         rects = app.workspace.tab.rects
-        assert rects[second].y < rects[third].y and rects[second].x == rects[third].x  # stacked under second
+        assert rects[second].y < rects[third].y and rects[second].x == rects[third].x
         assert rects[first].x < rects[second].x
 
         await pilot.press("ctrl+w", "k")
@@ -247,12 +230,9 @@ def test_ctrl_w_splits_moves_and_closes(tmp_path):
         await pilot.press("ctrl+w", "p")
         assert app.pane is third
 
-        # The per-window status lines show only with several windows.
         assert all(p.has_class("-multi") for p in app.workspace.tab_panes())
         assert third.has_class("-active") and not first.has_class("-active")
 
-        # Typing in a window marks only that notebook dirty. :q closes the window; the
-        # notebook stays as a hidden buffer (vim's 'hidden'), so nothing is lost.
         await pilot.press("i", "x", "escape")
         assert third.dirty and not first.dirty
         await pilot.press(":", *"q", "enter")
@@ -260,10 +240,9 @@ def test_ctrl_w_splits_moves_and_closes(tmp_path):
         assert len(visible_names(app)) == 2 and app.pane is second
         assert third.is_attached and not third.display and third in app.workspace.hidden() and third.dirty
         assert any(line.startswith("  3  h+") for line in app.buffer_lines())
-        # :bd on the dirty hidden buffer asks; y deletes it for good.
         await pilot.press(":", *"bd 3", "enter")
         await pilot.pause()
-        assert third.is_attached  # a prompt is waiting
+        assert third.is_attached
         await pilot.press("y", "enter")
         await pilot.pause()
         assert not third.is_attached and third not in app.workspace.buffers
@@ -272,7 +251,6 @@ def test_ctrl_w_splits_moves_and_closes(tmp_path):
         await pilot.pause()
         assert visible_names(app) == [second.name] and not any(p.has_class("-multi") for p in app.workspace.tab_panes())
 
-        # Insert mode: ctrl+w deletes a word, as in vim.
         await pilot.press("i", *"hello world", "ctrl+w")
         assert app.cells()[0].source == "hello "
 
@@ -284,23 +262,23 @@ def test_tabs_from_cli_and_gt(tmp_path):
 
     async def test(app, pilot):
         assert names(app) == ["a.py", "b.py"] and len(app.workspace.tabs) == 2
-        assert visible_names(app) == ["a.py"]  # the first file is the current tab, like vim -p
+        assert visible_names(app) == ["a.py"]
         assert app.has_class("-tabs")
         bar = str(app.query_one("#tabbar").render())
         assert "1: a.py" in bar and "2: b.py" in bar
         assert isinstance(app.focused, VimTextArea) and app.ui_mode == "normal"
-        await pilot.press("g", "t")  # normal mode gt
+        await pilot.press("g", "t")
         await pilot.pause()
         assert app.pane.name == "b.py" and isinstance(app.focused, VimTextArea)
         await pilot.press("g", "T")
         await pilot.pause()
         assert app.pane.name == "a.py"
-        await pilot.press("escape", "2", "g", "t")  # cell mode: 2gt
+        await pilot.press("escape", "2", "g", "t")
         await pilot.pause()
         assert app.pane.name == "b.py"
-        assert isinstance(app.focused, VimTextArea)  # each window remembers what had focus in it
+        assert isinstance(app.focused, VimTextArea)
         await pilot.press("escape")
-        await pilot.press("g", "g", "g", "t")  # wraps around to tab 1
+        await pilot.press("g", "g", "g", "t")
         await pilot.pause()
         assert app.pane.name == "a.py"
         await pilot.press(":", *"tabnew", "enter")
@@ -312,7 +290,6 @@ def test_tabs_from_cli_and_gt(tmp_path):
         await pilot.press(":", *"tabn 2", "enter")
         await pilot.pause()
         assert app.pane.name == "b.py"
-        # Each notebook has its own kernel and its own cells.
         assert app.workspace.panes()[0].kernel is not app.workspace.panes()[1].kernel
         assert [c.source for c in app.cells()] == ["b = 2", "print(b)"]
 
@@ -325,14 +302,14 @@ def test_edit_split_and_quit_commands(tmp_path):
     async def test(app, pilot):
         await pilot.press("escape", ":", *f"e {root / 'b.py'}", "enter")
         await pilot.pause()
-        assert names(app) == ["b.py"]  # the blank untitled window was replaced
+        assert names(app) == ["b.py"]
         await pilot.press("i", "z", "escape", ":", *f"e {root / 'a.py'}", "enter")
         await pilot.pause()
-        assert names(app) == ["b.py"]  # refused: unsaved changes
+        assert names(app) == ["b.py"]
         await pilot.press(":", *f"e! {root / 'a.py'}", "enter")
         await pilot.pause()
         assert names(app) == ["a.py"]
-        assert [p.name for p in app.workspace.buffers] == ["b.py", "a.py"]  # b.py is a hidden buffer now
+        assert [p.name for p in app.workspace.buffers] == ["b.py", "a.py"]
         assert [p.name for p in app.workspace.hidden()] == ["b.py"] and app.has_class("-tabs")
         await pilot.press(":", *f"sp {root / 'b.py'}", "enter")
         await pilot.pause()
@@ -344,7 +321,7 @@ def test_edit_split_and_quit_commands(tmp_path):
         await pilot.press(":", *"only", "enter")
         await pilot.pause()
         assert visible_names(app) == ["b.py"] and [p.name for p in app.workspace.hidden()] == ["a.py"]
-        await pilot.press(":", *"q", "enter")  # last window: quits (b.py is unsaved: asks)
+        await pilot.press(":", *"q", "enter")
         await pilot.pause()
         assert app.return_code is None
         await pilot.press("y", "enter")
@@ -361,7 +338,6 @@ def test_buffers(tmp_path):
         ws = app.workspace
         a, b = ws.buffers
         assert names(app) == ["a.py", "b.py"] and ws.number(b) == 2
-        # :q hides a window's notebook instead of closing it; it stays a buffer.
         await pilot.press("escape", ":", *"tabn 2", "enter")
         await pilot.pause()
         assert app.pane is b
@@ -373,13 +349,11 @@ def test_buffers(tmp_path):
         assert "hidden:" in bar and "2 b.py" in bar
         lines = app.buffer_lines()
         assert lines[0].startswith("  1 %a") and lines[1].startswith("  2  h") and "hidden" in lines[1]
-        # :b 2 shows it in the current window; a.py becomes hidden.
         await pilot.press(":", *"b 2", "enter")
         await pilot.pause()
         assert app.pane is b and visible_names(app) == ["b.py"] and ws.hidden() == [a]
         assert [c.source for c in app.cells()] == ["b = 2", "print(b)"]
         assert isinstance(app.focused, VimTextArea)
-        # :bn / :bp cycle, :b name matches by name.
         await pilot.press(":", *"bn", "enter")
         await pilot.pause()
         assert app.pane is a
@@ -389,7 +363,6 @@ def test_buffers(tmp_path):
         await pilot.press(":", *"b a.py", "enter")
         await pilot.pause()
         assert app.pane is a
-        # Opening a hidden buffer's file again brings it back (in a new tab), no second kernel.
         await pilot.press("ctrl+b")
         await loaded(app.explorer)
         await pilot.press("/", *"b.py", "enter")
@@ -397,21 +370,19 @@ def test_buffers(tmp_path):
         await pilot.press("enter")
         await pilot.pause()
         assert app.pane is b and len(ws.tabs) == 2 and ws.buffers == [a, b] and ws.hidden() == []
-        # :bd deletes a buffer (its window closes); the last buffer deleted leaves an untitled one.
         kernel_b = b.kernel
         await pilot.press(":", *"bd", "enter")
         await pilot.pause()
         assert not b.is_attached and ws.buffers == [a] and len(ws.tabs) == 1 and app.pane is a
         await pilot.pause(0.5)
-        assert app.workers  # the shutdown runs in the background
+        assert app.workers
         await pilot.press(":", *"bd 1", "enter")
         await pilot.pause()
         assert not a.is_attached and len(ws.buffers) == 1 and ws.buffers[0].path is None
-        assert app.return_code is None  # still running, with a fresh untitled notebook
-        # A dirty buffer asks before :bd; :bd! does not.
+        assert app.return_code is None
         await pilot.press("i", "x", "escape", ":", *"bd", "enter")
         await pilot.pause()
-        assert ws.buffers and ws.buffers[0].dirty  # the prompt is up, nothing deleted
+        assert ws.buffers and ws.buffers[0].dirty
         await pilot.press("n", "enter")
         await pilot.pause()
         untitled = ws.buffers[0]

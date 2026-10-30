@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 
 t0 = time.perf_counter()
-import gpython.app as gapp  # noqa: E402
+import gpython.app as gapp
 
 IMPORT_APP = time.perf_counter() - t0
 
@@ -63,6 +63,15 @@ async def bench(n: int, profile_what: str | None) -> dict[str, float]:
     start = time.perf_counter()
     app = gapp.GPython(path)
     kernel_ready_at: list[float] = []
+    first_paint: list[float] = []
+    real_display = app._display
+
+    def display(screen, renderable):
+        if renderable is not None and not app._batch_count and not first_paint:
+            first_paint.append(time.perf_counter() - start)
+        return real_display(screen, renderable)
+
+    app._display = display
 
     async def watch_kernel() -> None:
         await app.kernel.ready.wait()
@@ -74,6 +83,7 @@ async def bench(n: int, profile_what: str | None) -> dict[str, float]:
         mount_prof.enable()
     async with app.run_test(size=(140, 45)) as pilot:
         results[f"mount_{n}"] = time.perf_counter() - start
+        results["first_paint"] = first_paint[0] if first_paint else -1.0
         t = time.perf_counter()
         await pilot.pause()
         results["first_pause"] = time.perf_counter() - t
@@ -88,7 +98,6 @@ async def bench(n: int, profile_what: str | None) -> dict[str, float]:
         cells = app.cells()
         assert len(cells) == n, (len(cells), n)
 
-        # keystrokes
         cells[0].editor.focus()
         await pilot.pause()
         await pilot.press("i")
@@ -102,15 +111,12 @@ async def bench(n: int, profile_what: str | None) -> dict[str, float]:
         results["keys_30_wall"] = time.perf_counter() - t
         results["keys_30_cpu"] = cpu_seconds(prof)
         profiles["keys"] = prof
-        # Same again without the profiler: process CPU time (all threads), less distorted.
         t = time.process_time()
         await pilot.press(*letters)
         results["keys_30_proc"] = time.process_time() - t
         await pilot.press("escape")
         await pilot.pause()
 
-        # Harness floor: the same 30 presses of a key nobody handles. pilot.press itself
-        # walks every widget and waits for idle, so this is subtracted for keys_30_net.
         prof = cProfile.Profile()
         prof.enable()
         await pilot.press(*["f12"] * 30)
@@ -122,7 +128,6 @@ async def bench(n: int, profile_what: str | None) -> dict[str, float]:
             await pilot.pause()
         results["pause_30_floor"] = time.perf_counter() - t
 
-        # cell moves (timed without the profiler, which inflates CPU and so pilot's idle wait)
         t, cpu = time.perf_counter(), time.process_time()
         for _ in range(30):
             app.action_focus_cell(1)
@@ -138,7 +143,6 @@ async def bench(n: int, profile_what: str | None) -> dict[str, float]:
             prof.disable()
             profiles["moves"] = prof
 
-        # stream batching
         cell = cells[2]
         prof = cProfile.Profile() if profile_what == "stream" else None
         t = time.perf_counter()

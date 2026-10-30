@@ -12,7 +12,6 @@ def test_analyze_imports_functions_classes():
 
 
 def test_analyze_scopes():
-    # Comprehension variables and function params are local, not uses.
     defs, refs = analyze("ys = [i * scale for i in data]\ndef g(n):\n    t = n\n    return t + offset")
     assert defs == {"ys", "g"}
     assert refs == {"scale", "data", "offset"}
@@ -63,9 +62,7 @@ def test_mutation_orders_readers_and_reruns_owner():
     g = build({"own": "xs = []", "mut": "xs.append(1)", "read": "n = len(xs)", "other": "z = 1"})
     assert g.errors == {}
     assert g.mutates["mut"] == {"xs"}
-    # Reader runs after the mutator, so it sees the appended item.
     assert g.run_order(["own"]) == ["own", "mut", "read"]
-    # Running the mutator alone would append twice, so the owner re-runs first.
     assert g.expand_roots(["mut"]) == ["mut", "own"]
     assert g.run_order(g.expand_roots(["mut"])) == ["own", "mut", "read"]
 
@@ -81,7 +78,6 @@ def test_magics_are_ignored_for_analysis():
 
 
 def test_marimo_path_cell_exports_only_run():
-    # marimo's sys.path cell: `_sys`/`_pathlib` are private, so only `run` is defined.
     src = (
         "import sys as _sys, pathlib as _pathlib\n"
         '_sys.path[:0] = [str(p) for p in _pathlib.Path(__file__).resolve().parents if (p / "lc.py").exists()]\n'

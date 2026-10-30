@@ -32,12 +32,12 @@ _WORD = re.compile(r"\w+|[^\w\s]+")
 _ESCAPE_KEYS = {"escape", "ctrl+left_square_bracket", "ctrl+left_square_brace"}
 _IDENT = re.compile(r"[\w.]$")
 _DEDENT_AFTER = ("return", "break", "continue", "pass", "raise")
-AUTOCOMPLETE_DELAY = 0.12  # seconds after the last keystroke
+AUTOCOMPLETE_DELAY = 0.12
 INDENT = "    "
 
 
 MONOKAI = TextAreaTheme.get_builtin_theme("monokai")
-MONOKAI_NORMAL = dataclasses.replace(  # normal mode: a yellow block cursor
+MONOKAI_NORMAL = dataclasses.replace(
     MONOKAI, name="monokai-normal", cursor_style=Style(color="#272822", bgcolor="#e6db74", bold=True)
 )
 
@@ -89,15 +89,12 @@ class CompletionPopup(OptionList):
 
 
 class VimTextArea(TextArea):
-    # Textual repaints the whole editor whenever the cursor moves (the reactive has
-    # repaint=True). Here a cursor move or an edit repaints only the lines involved; see
-    # _watch_selection and edit. A multi-line change or a selection still repaints all.
     selection: reactive[Selection] = reactive(Selection(), init=False, always_update=True, repaint=False)
 
-    enabled = True  # set False for plain (insert-only) editing
-    line_numbers = True  # gutter on new editors (the app toggles existing ones)
-    mode = "normal"  # one mode for the whole app, like a single vim buffer
-    register = ""  # shared yank buffer
+    enabled = True
+    line_numbers = True
+    mode = "normal"
+    register = ""
     register_linewise = False
 
     class ModeChanged(Message):
@@ -144,7 +141,6 @@ class VimTextArea(TextArea):
             self.step = step
 
     def __init__(self, text: str = "", language: str | None = "python", **kwargs) -> None:
-        # The language is set after construction so the document is only built once.
         super().__init__(
             text,
             theme="monokai",
@@ -167,7 +163,7 @@ class VimTextArea(TextArea):
 
     def on_mount(self) -> None:
         pair = getattr(self.app, "editor_theme_pair", None)
-        if pair is not None:  # editors mounted later follow the app's current theme
+        if pair is not None:
             self.set_editor_theme(*pair)
         self._apply_mode()
 
@@ -178,7 +174,6 @@ class VimTextArea(TextArea):
         self._theme_names = (insert.name, normal.name)
         self._apply_mode()
 
-    # ── speed ────────────────────────────────────────────────────────────
 
     def _set_document(self, text: str, language: str | None) -> None:
         """Like TextArea._set_document, but reuses the compiled highlight query."""
@@ -225,13 +220,11 @@ class VimTextArea(TextArea):
     def edit(self, edit: Edit) -> EditResult:
         rows_before = self.document.line_count
         gutter_before = self.gutter_width
-        old_highlights = dict(self._highlights)  # rebuilt from scratch by the edit; the old lists stay intact
+        old_highlights = dict(self._highlights)
         result = super().edit(edit)
         if self.soft_wrap or self.document.line_count != rows_before or self.gutter_width != gutter_before:
             self.refresh()
             return result
-        # The edited rows, plus every row whose syntax highlighting changed (an unclosed
-        # bracket or string recolours lines far away).
         rows = set(range(edit.top[0], max(edit.bottom[0], result.end_location[0]) + 1))
         new_highlights = self._highlights
         for row in old_highlights.keys() | new_highlights.keys():
@@ -248,7 +241,7 @@ class VimTextArea(TextArea):
         bracket_before = self._matching_bracket_location
         super()._watch_selection(previous, selection)
         if self.soft_wrap or previous.start != previous.end or selection.start != selection.end:
-            self.refresh()  # a real selection (or one that just ended): repaint everything
+            self.refresh()
             return
         self._refresh_rows(previous.end[0], previous.end[0])
         if selection.end[0] != previous.end[0]:
@@ -258,9 +251,8 @@ class VimTextArea(TextArea):
 
     def _on_focus(self, event: events.Focus) -> None:
         super()._on_focus(event)
-        self._apply_mode()  # the global mode may have changed while another cell had focus
+        self._apply_mode()
 
-    # ── mode ─────────────────────────────────────────────────────────────
 
     def set_mode(self, mode: str) -> None:
         if not self.enabled:
@@ -277,7 +269,6 @@ class VimTextArea(TextArea):
             self.theme = theme
         self.cursor_blink = mode == "insert"
 
-    # ── keys ─────────────────────────────────────────────────────────────
 
     async def _on_key(self, event: events.Key) -> None:
         if self._popup is not None and self._popup_key(event):
@@ -291,7 +282,7 @@ class VimTextArea(TextArea):
                 if not self.cursor_at_start_of_line:
                     self.action_cursor_left()
                 self.set_mode("normal")
-            elif _is_escape(event):  # no vim: escape goes straight to cell mode
+            elif _is_escape(event):
                 event.stop()
                 event.prevent_default()
                 self.post_message(self.LeaveEditor(self))
@@ -299,7 +290,7 @@ class VimTextArea(TextArea):
                 event.stop()
                 event.prevent_default()
                 self.run_worker(self._complete(), exclusive=True, group="complete")
-            elif event.key == "enter" and self.language == "python":  # markdown: a plain newline
+            elif event.key == "enter" and self.language == "python":
                 event.stop()
                 event.prevent_default()
                 self._newline()
@@ -320,7 +311,6 @@ class VimTextArea(TextArea):
                 self.post_message(self.LeaveEditor(self))
             return
         key = event.character if event.is_printable and event.character else event.key
-        # Unhandled non-printable keys (f-keys, ctrl combos) still reach app bindings.
         if self._normal(key) or event.is_printable:
             event.stop()
             event.prevent_default()
@@ -345,7 +335,7 @@ class VimTextArea(TextArea):
                 self.move_cursor((0, 0) if n == 1 else (min(self.document.line_count - 1, n - 1), 0))
             elif key == "J":
                 self._join(n)
-            elif key == "t":  # gt: next tab, {n}gt: tab n
+            elif key == "t":
                 self.post_message(self.TabSwitch(self, n if had_count else None, 1))
             elif key == "T":
                 self.post_message(self.TabSwitch(self, None, -n))
@@ -427,7 +417,6 @@ class VimTextArea(TextArea):
                 self.replace(sep + nxt.lstrip(), (row, len(cur)), (row + 1, len(nxt)))
                 self.move_cursor((row, len(cur)))
 
-    # ── python editing helpers ───────────────────────────────────────────
 
     def _newline(self) -> None:
         """Enter: newline plus the indentation Python would want next."""
@@ -439,7 +428,6 @@ class VimTextArea(TextArea):
         if self.selection.start != self.selection.end:
             self.delete(*sorted([self.selection.start, self.selection.end]), maintain_selection_offset=False)
             row, col = self.cursor_location
-        # Enter between brackets: put the closing bracket on its own line.
         if before.rstrip()[-1:] in "([{" and after.lstrip()[:1] in ")]}" and after.strip():
             outer = line[: len(line) - len(line.lstrip())]
             self.replace("\n" + indent + "\n" + outer + after.lstrip(), (row, col), (row, len(line)), maintain_selection_offset=False)
@@ -464,7 +452,6 @@ class VimTextArea(TextArea):
         if col >= length > 0:
             self.move_cursor((row, length - 1))
 
-    # ── motions ──────────────────────────────────────────────────────────
 
     def _move(self, key: str, n: int) -> bool | None:
         """Move the cursor; return True for linewise motions, None if not a motion."""
@@ -540,13 +527,12 @@ class VimTextArea(TextArea):
             row, col = row + 1, -1
         return self.document.end
 
-    # ── operators ────────────────────────────────────────────────────────
 
     def _operator(self, op: str, key: str, n: int) -> None:
         start = row, col = self.cursor_location
         last = self.document.line_count - 1
 
-        if key == op:  # dd / cc / yy
+        if key == op:
             end_row = min(last, row + n - 1)
             self._yank_lines(row, end_row)
             if op == "y":
@@ -575,7 +561,7 @@ class VimTextArea(TextArea):
             self.move_cursor((min(start[0], end[0]), 0))
             self._operator(op, op, abs(end[0] - start[0]) + 1)
             return
-        if op == "c" and key == "w":  # cw behaves like ce
+        if op == "c" and key == "w":
             self.move_cursor(start)
             end = self._word_end()
             end = (end[0], end[1] + 1)
@@ -613,7 +599,6 @@ class VimTextArea(TextArea):
             self.insert(text * n, at, maintain_selection_offset=False)
             self._clamp()
 
-    # ── completion ───────────────────────────────────────────────────────
 
     def _word_before_cursor(self) -> bool:
         row, col = self.cursor_location
@@ -692,7 +677,7 @@ class VimTextArea(TextArea):
         self._popup, self._popup_start = popup, start
         x, y = self.cursor_screen_offset
         height = min(len(matches), 10) + 2
-        if y + 1 + height > self.screen.size.height:  # no room below: open upwards
+        if y + 1 + height > self.screen.size.height:
             y = max(0, y - height) - 1
         popup.styles.offset = (max(0, x - (self.cursor_location[1] - start[1]) - 1), y + 1)
         self.screen.mount(popup)

@@ -23,7 +23,7 @@ from textual.widgets import Header, Input, Label, Static
 from textual.widgets._header import HeaderIcon
 
 from . import config
-from .cell import Cell, CellSnapshot, ends_with_string  # noqa: F401  (re-exported for tests and scripts)
+from .cell import Cell, CellSnapshot, ends_with_string
 from .explorer import Explorer
 from .help import HelpScreen
 from .pane import NotebookPane
@@ -43,7 +43,6 @@ _MODE_STYLES = {
 }
 EXPLORER_WIDTH = 34
 
-# ctrl+w <key>: vim's window commands.
 _WINDOW_KEYS = {
     "s": "split", "S": "split", "ctrl+s": "split", "n": "split", "ctrl+n": "split",
     "v": "vsplit", "ctrl+v": "vsplit",
@@ -58,7 +57,7 @@ _WINDOW_KEYS = {
     "T": "totab",
     "=": "equal",
     "+": "taller", "-": "shorter", ">": "wider", "<": "narrower",
-}  # fmt: skip
+}
 
 
 class NotebookScreen(Screen):
@@ -120,7 +119,6 @@ def _state_style(state: str) -> str:
 class GPython(App):
     CSS_PATH = "app.tcss"
     TITLE = "gpython"
-    # Every key here must be listed in keymap.KEYMAP (tests/test_commands.py checks).
     BINDINGS = [
         Binding("ctrl+enter,ctrl+shift+enter,ctrl+e", "run_cell", "Run", priority=True),
         Binding("shift+enter", "run_cell('next')", "Run + next", priority=True),
@@ -144,9 +142,9 @@ class GPython(App):
         Binding("f4", "run_stale", "Run stale"),
         Binding("f5", "run_all", "Run all"),
         Binding("ctrl+t", "pick_theme", "Theme"),
-        Binding("f6", "pick_env", "Env", priority=True),  # TextArea binds f6 to select_line
+        Binding("f6", "pick_env", "Env", priority=True),
     ]
-    _previewing_theme = False  # True while ThemePicker previews: watch_theme does not persist
+    _previewing_theme = False
 
     def __init__(
         self,
@@ -157,7 +155,7 @@ class GPython(App):
     ) -> None:
         super().__init__()
         settings = config.load()
-        VimTextArea.mode = "normal"  # before compose, so every editor mounts in the same mode
+        VimTextArea.mode = "normal"
         self._editor_theme_cache: dict[str, tuple] = {}
         self._theme_warning: str | None = None
         for custom in (*CUSTOM_APP_THEMES.values(), TERMINAL_THEME):
@@ -168,11 +166,11 @@ class GPython(App):
         if name not in self.available_themes:
             self._theme_warning = f"Unknown theme {name!r}; using {DEFAULT_THEME}"
             name = DEFAULT_THEME
-        self._loaded_theme = name  # only persist choices that differ from what we started with
-        if self.theme == name:  # unchanged (e.g. "textual-dark"): Textual skips the watcher
+        self._loaded_theme = name
+        if self.theme == name:
             self.watch_theme(name)
         self.theme = name
-        if vim is None:  # an explicit argument wins over the config file
+        if vim is None:
             vim = settings.get("vim", True) is not False
         VimTextArea.enabled = vim
         VimTextArea.line_numbers = settings.get("line_numbers", True) is not False
@@ -182,17 +180,18 @@ class GPython(App):
         self._explorer_open_at_start = False
         notebooks: list[Path] = []
         for file in files:
-            if file.is_dir():  # `gpython some/dir`: open the explorer there
+            if file.is_dir():
                 self.explorer_root = file
                 self._explorer_open_at_start = True
             else:
                 notebooks.append(file)
         if notebooks and not any(f.is_dir() for f in files):
             self.explorer_root = notebooks[0].resolve().parent
-        # Panes are built now so their kernels can boot while the widgets are composed.
         self._initial_panes = [NotebookPane(p) for p in notebooks] or [NotebookPane(None)]
 
         self.lazy = False
+        self._first_frame_done = False
+        self._first_frame_callbacks: list = []
         self.workspace = Workspace()
         self.explorer: Explorer | None = None
         self._tabbar = TabBar()
@@ -203,31 +202,41 @@ class GPython(App):
         self._mode_chip_mode: str | None = None
         self._status_key: tuple | None = None
         self._cell_clipboard: CellSnapshot | None = None
-        self._prompt_mode = "normal"  # ui mode when a ':' or '/' prompt was opened
+        self._prompt_mode = "normal"
 
     def get_default_screen(self) -> Screen:
         return NotebookScreen(id="_default")
 
-    def on_load(self) -> None:
-        # Boot the kernels while the widgets are being built.
-        for pane in self._initial_panes:
-            if (boot := pane.start_kernel()) is not None:
-                self.run_worker(boot, group="kernel")
+
+    def after_first_frame(self, callback) -> None:
+        if self._first_frame_done:
+            self.call_after_refresh(callback)
+        else:
+            self._first_frame_callbacks.append(callback)
+
+    def on_ready(self) -> None:
+        self.call_after_refresh(self._first_frame)
+
+    def _first_frame(self) -> None:
+        self._first_frame_done = True
+        callbacks, self._first_frame_callbacks = self._first_frame_callbacks, []
+        for callback in callbacks:
+            callback()
 
     def compose(self) -> ComposeResult:
         yield Header()
         yield self._tabbar
         with Horizontal(id="body"):
-            yield self.workspace  # the explorer is mounted before it on first use (ctrl+b)
+            yield self.workspace
         self._status = Static(id="status")
-        yield self._status  # no Footer: it rebuilt itself on every focus change (half the cost of a cell move)
+        yield self._status
 
     async def on_mount(self) -> None:
         VimTextArea.mode = "normal"
         header = self.query_one(Header)
-        self._mode_chip = Static(id="mode-chip")  # left: CELL or EDIT
+        self._mode_chip = Static(id="mode-chip")
         await header.mount(self._mode_chip, after=header.query_one(HeaderIcon))
-        self._kernel_chip = KernelChip(id="kernel")  # right: Python version · env
+        self._kernel_chip = KernelChip(id="kernel")
         await header.mount(self._kernel_chip)
         for pane in self._initial_panes:
             await self.workspace.add(pane, "tab")
@@ -242,7 +251,6 @@ class GPython(App):
     async def on_unmount(self) -> None:
         await asyncio.gather(*(pane.kernel.shutdown() for pane in self.workspace.buffers), return_exceptions=True)
 
-    # ── the active notebook (tests and scripts use these) ────────────────
 
     @property
     def pane(self) -> NotebookPane:
@@ -296,7 +304,6 @@ class GPython(App):
     def goto_cell(self, n: int, mode: str, row: int = 0, clamp: bool = True) -> bool:
         return self.pane.goto_cell(n, mode, row, clamp)
 
-    # ── helpers ──────────────────────────────────────────────────────────
 
     @property
     def ui_mode(self) -> str:
@@ -312,8 +319,6 @@ class GPython(App):
 
     def watch_theme(self, name: str) -> None:
         """Point every editor and cell header at the new theme; remember the choice."""
-        # Textual reads theme.ansi only at start-up: keep native ANSI colours (the terminal's
-        # own palette and background) in step with the theme being switched to.
         self.ansi_color = self.current_theme.ansi
         self.palette = palette_for(self.current_theme)
         pair = self._editor_theme_cache.get(self.palette.name)
@@ -322,7 +327,7 @@ class GPython(App):
         self.editor_theme_pair = pair
         variables = self.get_css_variables()
         self.bar_colors = {role: variables[role] for role in ("panel", "accent", "warning", "primary", "error")}
-        try:  # the "terminal" (ANSI) theme has a transparent $panel: the idle bar must still show
+        try:
             if Color.parse(self.bar_colors["panel"]).a == 0:
                 self.bar_colors["panel"] = "ansi_bright_black" if self.current_theme.ansi else variables["foreground-muted"]
         except Exception:
@@ -356,7 +361,7 @@ class GPython(App):
 
     def update_status(self, kernel_state: str | None = None) -> None:
         """Header: kernel chip + file subtitle. Status line: vim mode, run mode, kernel state, theme, hints."""
-        if self._status is None or not self.workspace.tabs:  # not composed yet
+        if self._status is None or not self.workspace.tabs:
             return
         pane = self.pane
         if kernel_state is not None:
@@ -373,17 +378,12 @@ class GPython(App):
         if self._kernel_chip is not None and pane.kernel_label != self._chip_label:
             self._chip_label = pane.kernel_label
             version, _, env = pane.kernel_label.partition(" · ")
-            # width: auto, so a layout
             self._kernel_chip.update(Text.assemble((version, "dim"), (f" · {env}" if env else "", "bold"), (" ▾", "dim")))
-        # The header says only whether a cell is selected (CELL) or being edited (EDIT); the
-        # bottom bar has the vim detail. Same width both ways: a repaint, never a layout.
         chip_mode = "cell" if mode == "cell" else "edit"
         if self._mode_chip is not None and chip_mode != self._mode_chip_mode:
             self._mode_chip_mode = chip_mode
             style = _MODE_STYLES["cell"] if chip_mode == "cell" else _MODE_STYLES["insert"]
             self._mode_chip.update(Text(f" {chip_mode.upper()} ", style=style), layout=False)
-        # The file name lives in the header subtitle; the bottom bar shows the vim mode
-        # chip, run mode, kernel state, theme and key hints.
         self._status.update(
             Text.assemble(
                 (f" {mode.upper()} ", _MODE_STYLES[mode]) if show_mode else "",
@@ -392,10 +392,9 @@ class GPython(App):
                 f"{pane.kernel_state}  ·  {self.theme}",
                 (f"    {KEY_HINTS}", "dim"),
             ),
-            layout=False,  # one fixed line: no layout pass needed
+            layout=False,
         )
 
-    # ── files, windows and tabs ──────────────────────────────────────────
 
     def find_open(self, path: Path) -> NotebookPane | None:
         """The buffer (shown or hidden) for `path`, if the file is open."""
@@ -449,7 +448,6 @@ class GPython(App):
         pane.focus_pane()
         return pane
 
-    # ── buffers (vim's :ls, :b, :bn, :bp, :bd) ───────────────────────────
 
     def buffer_lines(self) -> list[str]:
         """One line per buffer, vim style: number, %a current / a shown / h hidden, + dirty, name."""
@@ -542,7 +540,7 @@ class GPython(App):
         if where in ("left", "right", "up", "down"):
             direction = {"left": "h", "right": "l", "up": "k", "down": "j"}[where]
             if in_explorer:
-                if direction == "l" and panes:  # the window right of the explorer: the leftmost one
+                if direction == "l" and panes:
                     rects = self.workspace.tab.rects
                     leftmost = min(panes, key=lambda p: (rects[p].x, rects[p].y) if p in rects else (0, 0))
                     self.workspace.set_active(leftmost)
@@ -553,7 +551,6 @@ class GPython(App):
                 self.explorer.focus()
                 return
         elif where in ("next", "prev"):
-            # The explorer counts as the first window of the tab, like NERDTree's.
             ring: list = ([self.explorer] if explorer_open else []) + panes
             at = ring.index(self.explorer) if in_explorer else (ring.index(current) if current in ring else 0)
             target = ring[(at + (1 if where == "next" else -1)) % len(ring)]
@@ -674,12 +671,11 @@ class GPython(App):
         """ctrl+w: wait for the window command (s v h j k l w q o T = ...)."""
         focused = self.focused
         if isinstance(focused, VimTextArea) and self.ui_mode == "insert":
-            focused.action_delete_word_left()  # vim: ctrl+w in insert mode deletes a word
+            focused.action_delete_word_left()
             return
         if isinstance(focused, Input):
             return
         if not isinstance(self.screen, KeyCapture):
-            # Awaited so the capture screen is up before the next key (typed quickly) arrives.
             await self.push_screen(KeyCapture("^W"), self._window_command)
 
     async def _window_command(self, key: str | None) -> None:
@@ -709,7 +705,6 @@ class GPython(App):
             case _:
                 self.notify(f"ctrl+w {key}: not a window command (s v h j k l w p q o T = + - < >)", severity="warning")
 
-    # ── actions: forwarded to the active pane ────────────────────────────
 
     async def action_run_cell(self, advance: str = "stay") -> None:
         await self.pane.run_cell(advance)
@@ -733,7 +728,7 @@ class GPython(App):
     async def action_undo(self) -> None:
         await self.pane.undo()
 
-    action_undo_delete = action_undo  # old name
+    action_undo_delete = action_undo
 
     def action_copy_cell(self) -> None:
         self.pane.copy_cell()
@@ -807,7 +802,6 @@ class GPython(App):
     async def action_restart_kernel(self) -> None:
         await self.pane.restart_kernel()
 
-    # ── vim glue ─────────────────────────────────────────────────────────
 
     @on(VimTextArea.ModeChanged)
     def _mode_changed(self) -> None:
@@ -1022,7 +1016,7 @@ class GPython(App):
 
     def get_system_commands(self, screen):
         for command in super().get_system_commands(screen):
-            if command.title != "Theme":  # Textual's picker has no live preview; ours replaces it
+            if command.title != "Theme":
                 yield command
         yield SystemCommand("Change theme", "Pick a colorscheme with live preview", self.action_pick_theme)
         for names, desc, handler in self.ex_commands():

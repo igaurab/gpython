@@ -3,7 +3,7 @@
 State: plans 01–07 implemented (07 = file explorer, splits, tabs; see `docs/plans/07-windows.md`),
 204 tests green (`uv run python3 -m pytest -q`, ~110 s). Read `docs/plans/README.md` first.
 
-## 1. Performance (round 2 done 2026-10-30; what is left is Textual-internal)
+## 1. Performance (rounds 2 and 3 done 2026-10-30; what is left is Textual-internal)
 
 `uv run python3 scripts/bench.py`, headless, 60 cells, quiet machine (never while the test
 suite runs: every number doubles). "before" = main cad579e.
@@ -38,39 +38,44 @@ widgets per cell (merge the header into the editor gutter), a virtualised cell l
 Verify in a REAL terminal (kitty/ghostty/iTerm2), not only headless: typing latency, scrolling a
 150-cell marimo notebook, theme switching with the picker, splits with 3+ windows.
 
-### Perf round 3 (profiled 2026-10-30, NOT started; do this in a fresh session)
+### Perf round 3 (done 2026-10-30)
 
-Measured with `uv run python3 -X importtime -c "import gpython.app"` and
-`uv run python3 scripts/bench.py --profile mount|moves|keys` (quiet machine, nothing else running):
+Headless (`scripts/bench.py`, 60 cells) and a real pseudo-terminal (`scripts/ptybench.py`,
+launch `./gpython bench.py`, answer the terminal queries, press `j` ten times):
 
-1. Import before the first frame: 337 ms total. Eager imports that only some features need:
-   `jupyter_client` 78 ms (kernel.py top level), `markdown_it` via `textual.widgets.Markdown`
-   41 ms (markdown.py), `textual_image` + `PIL` 22 ms (outputs.py; its import also probes the
-   terminal). Make them lazy: import inside `Kernel.start()`, inside `MarkdownView` when first
-   composed, inside `OutputArea._add_image`. Check `textual_image` still works when imported
-   after the app started (its comment says "must be imported before the app starts": test an
-   image output in a real terminal; if it breaks, import it in `on_load` instead).
-2. Start the kernels after the first frame: `GPython.on_load` boots them before compose; move
-   to `call_after_refresh` in `on_mount` so the first paint is not delayed by kernel start
-   (~100 ms CPU in `_boot_kernel`/`Kernel.start` during mount in the profile).
-3. Mount: 12 `Screen._refresh_layout` calls during start-up at ~27 ms each (one per mount batch
-   in `NotebookPane._mount_rest`, MOUNT_BATCH=10). Try larger batches after the first frame
-   (e.g. 25) or `with self.app.batch_update():` around each batch; measure `loaded_60`.
-   CSS `stylesheet.apply` is 0.24 s for 322 widgets: fewer widgets per cell would help (the
-   header Static could become part of the TextArea gutter, a bigger change).
-4. Real-terminal latency floor: Textual coalesces paints at `TEXTUAL_FPS` (default 60 →
-   up to 16 ms between a key and its paint). Set `os.environ.setdefault("TEXTUAL_FPS", "120")`
-   in `gpython/__init__.py:main()` BEFORE importing textual (constants read the env at import).
-   Measure with a pty harness: write a key, time until output bytes arrive (see the pty smoke
-   script idea in the 2026-10-30 session: `pty.fork` + `uv run --project ... gpython file.py`).
-5. Cell moves: ~17 ms CPU per *scrolling* move, all inside Textual: `reflow_visible` (3.5 ms),
-   the compositor rebuilding its full map on the next `widget.size` lookup (4 ms, one
-   `_arrange_root` over all cells), one full-screen `_render_chops` (8 ms). Tried and rejected:
-   `refresh(layout=True)` instead of a scroll (slower). Untried: a virtualised cell list (mount
-   only cells near the viewport; big change), fewer widgets per cell.
-6. Keystrokes are done: 3–6 ms CPU each (`tests/test_repaint.py` guards the partial repaints).
+| metric | before | after |
+|---|---|---|
+| import of `gpython.app` (`-X importtime`) | 160–195 ms | 150–165 ms |
+| first paint after `GPython()` (headless `first_paint`) | 0.19 s (`mount_60`) | 0.08 s |
+| cells mounted before the first paint | 12 | what fits the screen (4 for 45 rows) |
+| `loaded_60` (every cell mounted) | 0.37 s | 0.30–0.36 s |
+| `kernel_ready` | 0.57 s | 0.65–0.75 s (starts after the first frame) |
+| pty: launch → first cell fully on screen | 0.39–0.42 s | 0.25–0.29 s |
+| pty: `j` → paint | 10–16 ms (33 ms worst) | 1–9 ms (most under 5) |
+| `./gpython --help` (launcher overhead) | 121 ms | 36–90 ms |
 
-Rules: never bench while the test suite runs; run each bench twice; keep the table above updated.
+What changed:
+- `jupyter_client` is imported on the first `Kernel.start()`, not at import (`Kernel.manager`
+  is None until then); `textual.widgets.Markdown` is imported when a `MarkdownView` composes.
+  `textual_image` must stay eager: it queries the terminal and that only works before Textual
+  owns stdin (headless it costs ~14 ms with PIL).
+- `GPython.after_first_frame(callback)`: during start-up Textual runs everything inside a
+  `batch_update`, where `call_after_refresh` fires *before* the first paint (the screen's idle
+  skips the refresh check while a batch is open). `Ready` arrives once the batch is over, so a
+  `call_after_refresh` from `on_ready` lands after the first frame. The kernel boot and the
+  cells below the fold (`NotebookPane._mount_rest`) wait for it; the boot was in `on_load`.
+- `NotebookPane._initial_count()` composes only as many cells as fill `app.size.height`
+  (at least 4) before the first frame instead of a fixed 12.
+- Each `_mount_rest` batch is wrapped in `app.batch_update()` (one layout pass per batch);
+  MOUNT_BATCH stays 10 so keys get through between batches. Measured: batch 10 without
+  0.39–0.42 s, with 0.32–0.34 s, batch 56 with 0.30–0.32 s (not worth losing the key gaps).
+- `TEXTUAL_FPS=120` is set in `gpython.main()` before textual is imported.
+- `./gpython` execs `.venv/bin/gpython` directly when the env exists (`uv run` cost ~85 ms per
+  launch); run `uv sync` after changing dependencies.
+
+Left on the table: Textual's own import (~100 ms: `textual.app`, css, compositor, command
+palette), tree-sitter's Python query compile (15 ms, once), and bash start-up in the launcher
+(~35 ms; a symlink straight to `.venv/bin/gpython` avoids it).
 
 ## 2. Acceptance in a real terminal
 

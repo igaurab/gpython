@@ -1,6 +1,7 @@
 """gpython: a reactive Python notebook in the terminal."""
 
 import inspect
+import os
 import sys
 from pathlib import Path
 
@@ -41,9 +42,9 @@ def main() -> None:
         print(USAGE)
         return
 
+    os.environ.setdefault("TEXTUAL_FPS", "120")
     from .app import GPython
 
-    # Only pass what was given on the command line, so saved config applies otherwise.
     kwargs = {} if opts["vim"] else {"vim": False}
     if opts["theme"] is not None:
         if "theme" in inspect.signature(GPython).parameters:

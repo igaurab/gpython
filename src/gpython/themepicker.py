@@ -19,7 +19,7 @@ from textual.widgets.option_list import Option
 
 from .themes import PALETTES, TERMINAL
 
-OTHER_ID = "__other__"  # id of the disabled "other" divider row
+OTHER_ID = "__other__"
 
 
 def _row(name: str, dark: bool) -> Table:
@@ -139,6 +139,6 @@ class ThemePicker(ModalScreen[str | None]):
 
     def action_cancel(self) -> None:
         if self._original and self.app.theme != self._original:
-            self.app.theme = self._original  # still previewing: nothing is written
+            self.app.theme = self._original
         self.app._previewing_theme = False
         self.dismiss(None)

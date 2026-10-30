@@ -80,7 +80,6 @@ def test_parse_example():
         "class Solution:\n    def twoSum(self, nums: list[int], target: int) -> list[int]:\n        pass",
         decorator="class_definition",
     )
-    # marimo strips the 4-space indent from string contents too.
     assert cells[4] == CellSpec('TESTS = """\nInput: nums = [2,7,11,15], target = 9\nOutput: [0,1]\n"""')
     assert cells[5] == CellSpec("run(Solution, TESTS, any_order=True, ns=globals())")
     assert all(c.kind == "code" and c.name is None for c in cells)
@@ -107,7 +106,6 @@ def test_markdown_cell():
     cells = parse_marimo(text)
     assert cells[1] == CellSpec("# Title\n\nSome *text*", "markdown", hide_code=True)
     assert dump_marimo(cells) == text
-    # A fresh markdown cell gets hide_code and the `mo` parameter.
     out = dump_marimo([cells[0], CellSpec("hello", "markdown")])
     assert '@app.cell(hide_code=True)\ndef _(mo):\n    mo.md(r"""\n    hello\n    """)\n    return' in out
 
@@ -124,10 +122,8 @@ def test_edited_cells_recompute_refs_and_defs():
     cells.append(CellSpec("n = len(TESTS)\nhelper = 1"))
     cells.append(CellSpec("print(n)"))
     out = dump_marimo(cells)
-    # Uses TESTS (defined by another cell) -> parameter; returns only names another cell uses.
     assert "@app.cell\ndef _(TESTS):\n    n = len(TESTS)\n    helper = 1\n    return (n,)" in out
     assert "@app.cell\ndef _(n):\n    print(n)\n    return" in out
-    # The class_definition name is module-level, never a parameter.
     assert "def _(TESTS, run):\n    run(Solution" in out
 
 

@@ -13,15 +13,15 @@ import queue
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
-
-from jupyter_client.kernelspec import KernelSpec
-from jupyter_client.manager import AsyncKernelManager
+from typing import TYPE_CHECKING
 
 from . import envs
 
+if TYPE_CHECKING:
+    from jupyter_client.manager import AsyncKernelManager
+
 OutputCallback = Callable[[str, dict], None]
 
-# Helpers defined in the kernel. Leading underscores keep them out of the graph.
 _HELPERS = r"""
 def _gp_delete(names):
     g = globals()
@@ -51,7 +51,6 @@ def _gp_setup(file):
             sys.path.insert(0, folder)
 
 def _gp_marimo_shim():
-    # A tiny stand-in for `marimo` so marimo notebooks run when it is not installed.
     try:
         import marimo
         return
@@ -103,7 +102,7 @@ def _gp_marimo_shim():
             return self._repr_markdown_()
 
     def _keep(obj=None, **kw):
-        if obj is None:  # used as @app.cell(hide_code=True)
+        if obj is None:
             return lambda f: f
         return obj
 
@@ -176,16 +175,19 @@ class Kernel:
     def __init__(self, kernel_name: str = "python3", file: Path | None = None, env: envs.Env | None = None) -> None:
         self.kernel_name = kernel_name
         self.env = env or envs.builtin()
-        self.manager = self._manager()
+        self.manager: AsyncKernelManager | None = None
         self.client = None
         self.file = file
         self.ready = asyncio.Event()
         self._lock = asyncio.Lock()
 
     def _manager(self) -> AsyncKernelManager:
+        from jupyter_client.manager import AsyncKernelManager
+
         manager = AsyncKernelManager(kernel_name=self.kernel_name)
         if self.env.kind != "builtin":
-            # Run ipykernel from the chosen interpreter instead of the installed "python3" spec.
+            from jupyter_client.kernelspec import KernelSpec
+
             manager._kernel_spec = KernelSpec(
                 argv=[str(self.env.python), "-m", "ipykernel_launcher", "-f", "{connection_file}"],
                 display_name=self.env.short,
@@ -194,9 +196,9 @@ class Kernel:
         return manager
 
     async def start(self) -> None:
+        if self.manager is None:
+            self.manager = self._manager()
         cwd = str(self.file.parent) if self.file else os.getcwd()
-        # The kernel's own stdout/stderr would draw over the TUI; user output
-        # still arrives through the Jupyter protocol.
         await self.manager.start_kernel(
             cwd=cwd, env=envs.kernel_env(self.env), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
@@ -208,9 +210,7 @@ class Kernel:
         """Replace the kernel process with one running in `env`. All variables are lost."""
         self.ready.clear()
         old_env = self.env
-        # Kill the process first and keep the channels open: a running cell then sees the
-        # kernel die and returns; closing the channels under it would cancel it instead.
-        if await self.manager.is_alive():
+        if self.manager is not None and await self.manager.is_alive():
             await self.manager.shutdown_kernel(now=True)
         async with self._lock:
             pass
@@ -220,13 +220,14 @@ class Kernel:
         try:
             await self.start()
         except Exception:
-            # Leave a working kernel behind: go back to the previous interpreter.
             self.env, self.client = old_env, None
             self.manager = self._manager()
             await self.start()
             raise
 
     async def restart(self) -> None:
+        if self.manager is None:
+            return await self.start()
         self.ready.clear()
         await self.manager.restart_kernel(now=True)
         await self._prepare()
@@ -246,11 +247,12 @@ class Kernel:
     async def shutdown(self) -> None:
         if self.client:
             self.client.stop_channels()
-        if await self.manager.is_alive():
+        if self.manager is not None and await self.manager.is_alive():
             await self.manager.shutdown_kernel(now=True)
 
     async def interrupt(self) -> None:
-        await self.manager.interrupt_kernel()
+        if self.manager is not None:
+            await self.manager.interrupt_kernel()
 
     async def execute(self, code: str, on_output: OutputCallback | None = None) -> bool:
         """Run code, streaming iopub messages to on_output. Returns True on success."""

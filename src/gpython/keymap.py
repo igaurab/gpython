@@ -11,7 +11,6 @@ mode (the cell itself is selected), "normal" is vim normal mode inside an editor
 from __future__ import annotations
 
 KEYMAP: list[tuple[str, str, str]] = [
-    # ── run (any mode) ──
     ("any", "shift+enter", "Run cell (markdown: render it), then go to the cell below (a new cell only on the last one)"),
     ("any", "ctrl+enter", "Run cell (markdown: render it), stay"),
     ("any", "ctrl+shift+enter", "Run cell, stay"),
@@ -22,7 +21,6 @@ KEYMAP: list[tuple[str, str, str]] = [
     ("any", "f4", "Run stale cells"),
     ("any", "f6", "Python environment: switch the kernel's venv/interpreter, new uv or python venv, install packages (also click the kernel chip; :env :venv :uv :pip)"),
     ("any", "ctrl+k", "Interrupt running code"),
-    # ── edit / navigate (any mode) ──
     ("any", "ctrl+n", "New cell below"),
     ("any", "ctrl+shift+n", "New cell above"),
     ("any", "ctrl+d", "Delete cell (u in cell mode undoes)"),
@@ -40,7 +38,6 @@ KEYMAP: list[tuple[str, str, str]] = [
     ("any", "f3", "Toggle lazy mode"),
     ("any", "ctrl+p", "Command palette"),
     ("any", "ctrl+q", "Quit (asks if unsaved)"),
-    # ── files, windows, tabs (any mode) ──
     ("any", "ctrl+b", "File explorer: open / focus / hide (also :Ex, :e)"),
     ("any", "ctrl+w", "Window prefix (vim): then s split · v vsplit · h j k l move · w next · q close · o only · T to tab · = equal · + - < > resize"),
     ("any", "ctrl+w s / ctrl+w v", "Split this window horizontally / vertically (new untitled notebook; :sp file, :vs file open a file)"),
@@ -49,7 +46,6 @@ KEYMAP: list[tuple[str, str, str]] = [
     ("any", "ctrl+w q / o", "Close this window (the last one quits) / keep only this window"),
     ("any", "ctrl+w T", "Move this window to a new tab"),
     ("any", "ctrl+w + / - / > / <", "Resize: taller / shorter / wider / narrower (ctrl+w = equalizes)"),
-    # ── vim normal mode ──
     ("normal", "escape", "Leave the editor: cell mode"),
     ("normal", "J / K", "Next / previous cell (3J jumps three)"),
     ("normal", "j / k", "Down / up a line; past the edge moves to the next cell"),
@@ -59,7 +55,6 @@ KEYMAP: list[tuple[str, str, str]] = [
     ("normal", "/", "Jump: /3 = third cell, /text = next cell containing text"),
     ("normal", ":", "Ex command (:help lists them)"),
     ("normal", "gt / gT / 2gt", "Next / previous / second tab"),
-    # ── cell mode ──
     ("cell", "j / k", "Select next / previous cell (counts: 3j)"),
     ("cell", "gg / G / 3G", "Select first / last / third cell"),
     ("cell", "enter", "Edit cell (vim normal mode; markdown: show the source)"),
@@ -80,7 +75,6 @@ KEYMAP: list[tuple[str, str, str]] = [
     ("cell", "?", "Help"),
     ("cell", "gt / gT / 2gt", "Next / previous / second tab"),
     ("cell", "escape", "Stay in cell mode, clear pending keys"),
-    # ── file explorer ──
     ("files", "j / k / gg / G", "Move through the tree"),
     ("files", "h / l", "Collapse (or go to the parent) / expand a folder; l on a file opens it"),
     ("files", "enter / o / t", "Open the file in its own tab (a blank untitled window is reused; an open file's tab is focused)"),

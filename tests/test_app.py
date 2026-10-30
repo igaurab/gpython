@@ -17,7 +17,6 @@ def test_reactive_run_edit_delete_save(tmp_path):
             await asyncio.wait_for(app.kernel.ready.wait(), 60)
             first, second, third = app.cells()
 
-            # Running the first cell re-runs its dependent, but not the unrelated cell.
             first.editor.focus()
             await pilot.press("ctrl+enter")
             await app.workers.wait_for_complete()
@@ -25,7 +24,6 @@ def test_reactive_run_edit_delete_save(tmp_path):
             assert third.status == "idle"
             assert (first.status, second.status) == ("ok", "ok")
 
-            # Editing marks the cell stale; running again propagates the new value.
             first.editor.text = "x = 10"
             await pilot.pause()
             assert first.status == "stale"
@@ -35,7 +33,6 @@ def test_reactive_run_edit_delete_save(tmp_path):
             rows = {app.query_one("#vars", DataTable).get_row_at(i)[0] for i in range(2)}
             assert rows == {"x", "y"}
 
-            # Lazy mode: dependents are only marked stale, f4 runs them.
             await pilot.press("f3")
             first.editor.text = "x = 100"
             await pilot.press("ctrl+e")
@@ -46,7 +43,6 @@ def test_reactive_run_edit_delete_save(tmp_path):
             assert second.status == "ok" and second.output_text.strip() == "200"
             await pilot.press("f3")
 
-            # Two cells defining the same name is an error.
             third.editor.text = "x = 3"
             third.editor.focus()
             await pilot.press("ctrl+e")
@@ -54,7 +50,6 @@ def test_reactive_run_edit_delete_save(tmp_path):
             assert third.status == "error" and "defined in 2 cells" in third.output_text
             third.editor.text = "print('independent')"
 
-            # Deleting the first cell removes x, so the dependent re-runs and fails.
             first.editor.focus()
             await pilot.press("ctrl+d")
             await app.workers.wait_for_complete()
@@ -64,7 +59,6 @@ def test_reactive_run_edit_delete_save(tmp_path):
             await pilot.press("ctrl+s")
             assert [c.source for c in parse(path.read_text())] == ["y = x * 2\ny", "print('independent')"]
 
-            # shift+enter (Jupyter): run, then go to the cell below; a new cell only on the last one.
             second.editor.focus()
             await pilot.press("shift+enter")
             await app.workers.wait_for_complete()
@@ -73,14 +67,13 @@ def test_reactive_run_edit_delete_save(tmp_path):
             await app.workers.wait_for_complete()
             cells = app.cells()
             assert len(cells) == 3 and app.focused is cells[2].editor
-            assert cells[2].editor.mode == "insert" and cells[0].editor.mode == "insert"  # the mode is global
+            assert cells[2].editor.mode == "insert" and cells[0].editor.mode == "insert"
             await pilot.press("escape")
             assert cells[1].editor.mode == "normal"
             assert "NORMAL" in str(app.query_one("#status").render())
             assert "NORMAL" not in app.sub_title and app.sub_title.startswith(str(path))
-            assert app.dirty and app.sub_title.endswith("•")  # a cell was added
+            assert app.dirty and app.sub_title.endswith("•")
 
-            # The status bar shows the global vim mode; the header chip shows the kernel.
             status = app.query_one("#status", Static)
             assert "NORMAL" in str(status.render())
             await pilot.press("i")
@@ -102,7 +95,7 @@ def test_mutation_reruns_owner_and_orders_readers(tmp_path):
             await asyncio.wait_for(app.kernel.ready.wait(), 60)
             own, mut, read = app.cells()
             mut.editor.focus()
-            for _ in range(2):  # running the mutator twice must not append twice
+            for _ in range(2):
                 await pilot.press("ctrl+e")
                 await app.workers.wait_for_complete()
             assert read.output_text.strip() == "1"
@@ -123,14 +116,12 @@ def test_untitled_plain_script_split_and_completion(tmp_path):
             assert [c.source for c in cells] == ["import math", "def area(r):\n    return math.pi * r * r", "print(area(2))"]
             assert app.markers is False
 
-            # __file__ points at the script so sys.path tricks work.
             cells[2].editor.text = "print(__file__)"
             cells[2].editor.focus()
             await pilot.press("ctrl+e")
             await app.workers.wait_for_complete()
             assert cells[2].output_text.strip() == str(script.resolve())
 
-            # Tab completion comes from the kernel.
             cells[0].editor.focus()
             await pilot.press("ctrl+e")
             await app.workers.wait_for_complete()
@@ -145,22 +136,20 @@ def test_untitled_plain_script_split_and_completion(tmp_path):
             await app.workers.wait_for_complete()
             await pilot.pause()
             popup = app.query(CompletionPopup)
-            assert popup and popup.first().option_count >= 2  # tan, tanh
+            assert popup and popup.first().option_count >= 2
             await pilot.press("escape")
             assert not app.query(CompletionPopup)
 
-            # Autocomplete as you type: the popup opens on its own, enter accepts.
             cells[2].editor.text = ""
             await pilot.press(*"math.fl")
             await pilot.pause(0.3)
             await app.workers.wait_for_complete()
             await pilot.pause()
-            assert app.query(CompletionPopup).first().option_count >= 1  # floor
+            assert app.query(CompletionPopup).first().option_count >= 1
             await pilot.press("enter")
             assert cells[2].source.startswith("math.fl") and len(cells[2].source) > 7
             assert not app.query(CompletionPopup)
 
-            # Saving a plain script keeps it a plain script.
             await pilot.press("escape", "ctrl+s")
             assert "# %%" not in script.read_text()
 
@@ -189,7 +178,7 @@ def test_ex_commands(tmp_path, monkeypatch):
         app = GPython(None)
         async with app.run_test(size=(120, 40)) as pilot:
             table = app.query_one("#vars")
-            assert table.display is False  # hidden until asked for
+            assert table.display is False
             await pilot.press(":")
             await pilot.press(*"variables", "enter")
             await pilot.pause()
@@ -217,10 +206,10 @@ def test_click_anywhere_in_cell_focuses_it():
             first, second = app.cells()
             assert app.focused is second.editor
             await pilot.click(first.query_one(".cell-header"))
-            assert app.focused is first and app.ui_mode == "cell"  # the header selects the cell
+            assert app.focused is first and app.ui_mode == "cell"
             await pilot.click(first.editor)
             assert app.focused is first.editor
-            await pilot.click("#cells", offset=(10, 25))  # empty area below the last cell
+            await pilot.click("#cells", offset=(10, 25))
             assert app.focused is second.editor
 
     asyncio.run(main())

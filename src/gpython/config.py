@@ -10,7 +10,6 @@ CONFIG_PATH = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) /
 
 
 def _path() -> Path:
-    # Re-read the env each call so tests (and callers) can point XDG_CONFIG_HOME elsewhere.
     base = os.environ.get("XDG_CONFIG_HOME")
     return Path(base) / "gpython" / "config.toml" if base else CONFIG_PATH
 

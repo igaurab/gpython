@@ -37,12 +37,12 @@ def test_order_and_current_highlighted(notebook_path):
         async with app.run_test(size=(120, 40)) as pilot:
             await open_picker(app, pilot)
             ids = option_ids(app)
-            assert ids[0] == TERMINAL  # the terminal's own colours come first
+            assert ids[0] == TERMINAL
             split = ids.index(OTHER_ID)
             ours, others = ids[1:split], ids[split + 1 :]
             assert set(ours) == set(PALETTES) & set(app.available_themes)
             darks = [n for n in ours if app.available_themes[n].dark]
-            assert ours[: len(darks)] == sorted(darks)  # dark group first, sorted
+            assert ours[: len(darks)] == sorted(darks)
             assert ours[len(darks) :] == sorted(n for n in ours if not app.available_themes[n].dark)
             assert others == sorted(others) and not set(others) & set(PALETTES)
             options = app.screen.query_one(OptionList)
@@ -59,7 +59,7 @@ def test_down_previews_and_escape_restores(notebook_path):
             await pilot.press("down")
             await pilot.pause()
             previewed = app.theme
-            assert previewed != DEFAULT_THEME  # applied before any confirm
+            assert previewed != DEFAULT_THEME
             assert {e.theme for e in app.query(VimTextArea)} == {f"{previewed}-normal"}
             assert previewed in str(app.query_one("#status").render())
             await pilot.press("escape")
@@ -81,7 +81,7 @@ def test_enter_confirms_and_persists(notebook_path):
             await pilot.pause()
             chosen = app.theme
             assert chosen != DEFAULT_THEME
-            assert config.load() == {}  # previews are not written
+            assert config.load() == {}
             await pilot.press("enter")
             await pilot.pause()
             assert not isinstance(app.screen, ThemePicker)

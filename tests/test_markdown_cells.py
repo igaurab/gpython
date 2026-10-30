@@ -53,7 +53,7 @@ def test_markdown_cell_loads_rendered(tmp_path):
         view = md.query_one(MarkdownView)
         assert view.display is True and "Hello" in view_text(md)
         assert md.editor.language == "markdown"
-        assert not code.query(MarkdownView)  # code cells never build one
+        assert not code.query(MarkdownView)
         header = str(md.query_one(".cell-header").render())
         assert "¶" in header and "MARKDOWN" in header and "defines" not in header
         assert md.info == ""
@@ -75,7 +75,6 @@ def test_edit_and_render_markdown_with_keys(tmp_path):
         assert md.editor.display is False and view_text(md).startswith("Hi ")
         assert app.dirty
 
-        # shift+enter on markdown renders it and moves on; the kernel is not touched.
         await pilot.press("enter")
         md.editor.text = "# Title"
         await pilot.press("shift+enter")
@@ -83,11 +82,9 @@ def test_edit_and_render_markdown_with_keys(tmp_path):
         assert md.rendered and view_text(md) == "# Title"
         assert app.focused is third.editor and md.exec_count == 0 and md.status == "idle"
 
-        # Moving the cursor into a rendered cell selects it (cell mode) instead of a hidden editor.
         await pilot.press("alt+up")
         assert app.focused is md
 
-        # Leaving the editor by focusing another cell renders it too.
         await pilot.press("i")
         assert app.focused is md.editor and app.ui_mode == "insert"
         await pilot.press("x")
@@ -122,12 +119,11 @@ def test_m_and_y_switch_kind_and_reactivity(tmp_path):
         await pilot.pause()
         assert first.kind == "code" and first.editor.display is True and app.focused is first
         assert first.editor.language == "python"
-        await pilot.press("escape")  # end the pending `y` (yy would copy)
+        await pilot.press("escape")
         await pilot.press("shift+enter")
         await app.workers.wait_for_complete()
         assert first.status == "ok" and second.output_text == "2\n"
 
-        # :md / :code from the editor keep editing; the cell renders when left.
         second.editor.focus()
         await pilot.press(":", *"md", "enter")
         await pilot.pause()
@@ -140,7 +136,6 @@ def test_m_and_y_switch_kind_and_reactivity(tmp_path):
         await pilot.pause()
         assert second.kind == "code" and app.focused is second
 
-        # yy on a markdown cell copies it and leaves it markdown.
         await app.set_cell_kind(second, "markdown")
         await pilot.press("y", "y", "p")
         await pilot.pause()
@@ -199,7 +194,7 @@ def test_docstring_cells_do_not_echo(tmp_path):
         assert all(c.status == "ok" for c in app.cells())
         assert doc.output_text == "" and note.output_text == ""
         assert value.output_text == "1"
-        assert printed.output_text == "hi\n"  # streams still show
+        assert printed.output_text == "hi\n"
 
     ui(tmp_path, test, cells=cells, kernel=True)
 
@@ -212,7 +207,7 @@ def test_cell_undo_covers_moves_deletes_inserts_and_kind(tmp_path):
         original = kinds_and_sources()
         first = app.cells()[0]
         first.focus()
-        await pilot.press("J")  # move down
+        await pilot.press("J")
         assert app.cells()[1] is first
         await pilot.press("u")
         assert kinds_and_sources() == original and app.focused is first
@@ -238,13 +233,13 @@ def test_cell_undo_covers_moves_deletes_inserts_and_kind(tmp_path):
         await pilot.pause()
         assert third.kind == "code" and app.focused is third
 
-        await pilot.press("b")  # insert below; undo removes it
+        await pilot.press("b")
         assert len(app.cells()) == 4
         await pilot.press("escape", "escape", "u")
         await pilot.pause()
         assert kinds_and_sources() == original
 
-        await pilot.press("z")  # alias; the stack is now empty
+        await pilot.press("z")
         assert kinds_and_sources() == original
 
     ui(tmp_path, test)

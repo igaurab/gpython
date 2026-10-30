@@ -41,20 +41,15 @@ Decorator = Literal["cell", "class_definition", "function"]
 class CellSpec:
     source: str
     kind: Kind = "code"
-    # marimo only; ignored by the other formats.
-    name: str | None = None  # function name when it is not `_`
+    name: str | None = None
     hide_code: bool = False
     decorator: Decorator = "cell"
-    # .ipynb only: stored outputs (nbformat output dicts) and the execution count.
     outputs: list = field(default_factory=list)
     execution_count: int | None = None
 
 
 def _spec(cell: CellSpec | str) -> CellSpec:
     return cell if isinstance(cell, CellSpec) else CellSpec(cell)
-
-
-# ── percent format ───────────────────────────────────────────────────────
 
 
 def has_markers(text: str) -> bool:
@@ -86,7 +81,7 @@ def parse(text: str) -> list[CellSpec]:
     cells = []
     for i, (kind, lines) in enumerate(chunks):
         if i == 0 and not "".join(lines).strip():
-            continue  # nothing before the first marker
+            continue
         if kind == "markdown":
             cells.append(CellSpec(_markdown_from_comments(lines), "markdown"))
         else:
@@ -104,9 +99,6 @@ def _dump_percent(cells: list[CellSpec]) -> str:
         else:
             parts.append(f"{MARKER}\n{body}\n")
     return "\n".join(parts)
-
-
-# ── plain scripts ────────────────────────────────────────────────────────
 
 
 def _kind(node: ast.stmt) -> str:
@@ -196,13 +188,11 @@ def _dump_script(cells: list[CellSpec]) -> str:
     return "\n\n\n".join(parts) + "\n"
 
 
-# ── ipynb ────────────────────────────────────────────────────────────────
-
 _DEFAULT_IPYNB_META = {
     "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
     "language_info": {"name": "python"},
 }
-_ipynb_meta: dict[Path, dict] = {}  # metadata seen at load, reused on save
+_ipynb_meta: dict[Path, dict] = {}
 
 
 def _is_ipynb(path: Path) -> bool:
@@ -259,12 +249,10 @@ def dump_ipynb(cells: list[CellSpec], path: Path | None = None) -> str:
     return json.dumps(nb, indent=1, ensure_ascii=False) + "\n"
 
 
-# ── marimo ───────────────────────────────────────────────────────────────
-
 MARIMO_PRELUDE = 'import marimo\n\n__generated_with = "0.25.2"\napp = marimo.App(width="medium")\n\n\n'
 MARIMO_FOOTER = '\n\n\nif __name__ == "__main__":\n    app.run()\n'
-_LINE_LIMIT = 88  # ruff/black line length marimo formats with
-_marimo_frame: dict[Path, tuple[str, str]] = {}  # path -> (prelude, footer) seen at load
+_LINE_LIMIT = 88
+_marimo_frame: dict[Path, tuple[str, str]] = {}
 _SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
 
 
@@ -380,7 +368,7 @@ def _as_markdown(source: str) -> str | None:
 
 
 def _cell_from_function(lines: list[str], node: ast.FunctionDef | ast.AsyncFunctionDef, hide: bool) -> CellSpec:
-    start = _header_end(lines, node)  # 0-based index of the first body line
+    start = _header_end(lines, node)
     end = node.end_lineno
     if node.body and isinstance(node.body[-1], ast.Return):
         end = node.body[-1].lineno - 1
@@ -418,7 +406,6 @@ def _split_marimo(text: str) -> tuple[str, list[CellSpec], str]:
             cells.append(_cell_from_function(lines, node, found[2]))
         elif found:
             dec, kind, hide = found
-            # The whole class/def without its `@app...` line; comments up to the next cell stay.
             chunk = _strip_blank(lines[dec.end_lineno : stop])
             cells.append(CellSpec("\n".join(chunk), "code", None, hide, kind))
         else:
@@ -492,8 +479,6 @@ def _dump_marimo_cell(cell: CellSpec, code: str, params: list[str], returns: lis
     parts = [deco, signature]
     parts.extend(f"    {line}" if line else "" for line in body)
     if body:
-        # Formatter rule: one blank line after a trailing import or nested def/class,
-        # unless comments follow it.
         last = tree.body[-1] if tree is not None and tree.body else None
         if (
             isinstance(last, (ast.Import, ast.ImportFrom, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
@@ -543,9 +528,6 @@ def _starts_with_marimo_import(cells: list[CellSpec]) -> bool:
     except SyntaxError:
         return False
     return bool(body) and isinstance(body[0], ast.Import) and any(a.name == "marimo" for a in body[0].names)
-
-
-# ── public API ───────────────────────────────────────────────────────────
 
 
 def dump(cells: list[CellSpec | str], markers: bool = True) -> str:

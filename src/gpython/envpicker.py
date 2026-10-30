@@ -31,14 +31,14 @@ from . import envs
 KIND_TAGS = {
     "uv": ("uv", "green"), "venv": ("venv", "cyan"), "conda": ("conda", "magenta"),
     "builtin": ("built-in", "blue"), "uv-python": ("uv python", "yellow"), "system": ("python", "yellow"),
-}  # fmt: skip
+}
 SECTIONS = {
     "project": "Project",
     "envs": "Environments",
     "interpreters": "Interpreters (picking one makes a venv from it if it has no ipykernel)",
 }
 
-_cache: dict[Path, list[envs.Env]] = {}  # last discovery per folder: shown at once, then refreshed
+_cache: dict[Path, list[envs.Env]] = {}
 
 
 def _home(path: Path | str) -> str:
@@ -87,7 +87,7 @@ class EnvPicker(ModalScreen[tuple | None]):
         self.current, self.start, self.title_text = current, start, title
         self.root = envs.project_root(start)
         self.found: list[envs.Env] = _cache.get(start, [])
-        self._ask: tuple | None = None  # ("create", tool, python) or ("install"|"add",): the Input asks for text
+        self._ask: tuple | None = None
         self._first_ask = ask
 
     def compose(self) -> ComposeResult:
@@ -112,7 +112,6 @@ class EnvPicker(ModalScreen[tuple | None]):
             if self._ask is None:
                 self._fill(self.query_one(Input).value, keep=True)
 
-    # ── list mode ────────────────────────────────────────────────────────
 
     def _title(self, text: str) -> None:
         self.query_one("#env-title", Static).update(Text.assemble((" Python environment ", "bold reverse"), f"  {text}"))
@@ -206,7 +205,6 @@ class EnvPicker(ModalScreen[tuple | None]):
         elif rest == "restart":
             self.dismiss(("restart",))
 
-    # ── ask mode: the Input takes a folder or package names ─────────────
 
     def _start_ask(self, what: str, tool: str | None = None, python: str | None = None) -> None:
         self._ask = (what, tool, python)
@@ -269,9 +267,6 @@ class KernelChip(Static):
         self.app.action_pick_env()
 
 
-# ── actions (shared by the picker, :env, :venv, :uv and :pip) ────────────
-
-
 def _progress(pane, label: str):
     """An on_line callback: the latest output line in the bottom bar, at most ~10 redraws a second."""
     last = [0.0]
@@ -300,7 +295,7 @@ async def use(pane, env: envs.Env) -> None:
         await envs.ensure_ipykernel(env, _progress(pane, f"installing ipykernel into {env.name}"))
     except envs.EnvError:
         pane.set_kernel_state(state)
-        if env.prefix is None:  # a bare interpreter: offer a venv made from it
+        if env.prefix is None:
             pane.app.push_screen(
                 EnvPicker(pane.kernel.env, _base(pane), ask=("create", "uv" if envs.uv() else "venv", str(env.python))),
                 lambda choice: handle(pane, choice),
@@ -353,7 +348,6 @@ async def install(pane, packages: list[str], project: bool = False) -> None:
         return
     finally:
         pane.set_kernel_state(state)
-    # New packages import without a restart once the import system forgets its cached listings.
     if pane.kernel.ready.is_set():
         await pane.kernel._execute("__import__('importlib').invalidate_caches()", None, store_history=False)
     pane.notify(f"{'Added' if project else 'Installed'} {names} → {env.name}")
@@ -395,9 +389,6 @@ def handle(pane, choice: tuple | None) -> None:
 def open_picker(pane, ask: tuple | None = None) -> None:
     if not isinstance(pane.app.screen, EnvPicker):
         pane.app.push_screen(EnvPicker(pane.kernel.env, _base(pane), ask=ask), lambda choice: handle(pane, choice))
-
-
-# ── ex commands ──────────────────────────────────────────────────────────
 
 
 def _words(arg: str) -> list[str]:

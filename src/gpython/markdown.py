@@ -7,11 +7,15 @@ switch to editing when it is double-clicked.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from textual import events
 from textual.app import ComposeResult
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Markdown
+
+if TYPE_CHECKING:
+    from textual.widgets import Markdown
 
 PLACEHOLDER = "*empty markdown cell – press enter to edit*"
 
@@ -57,6 +61,8 @@ class MarkdownView(Widget):
 
     @property
     def markdown(self) -> Markdown:
+        from textual.widgets import Markdown
+
         return self.query_one(Markdown)
 
     def _shown(self) -> str:
@@ -65,6 +71,8 @@ class MarkdownView(Widget):
         return self._text
 
     def compose(self) -> ComposeResult:
+        from textual.widgets import Markdown
+
         yield Markdown(self._shown())
 
     async def update(self, text: str) -> None:

@@ -43,9 +43,6 @@ def rendered(widget: Static) -> str:
     return str(widget.render())
 
 
-# ── streams ──────────────────────────────────────────────────────────────
-
-
 @sync
 async def test_stream_chunks_accumulate_before_and_after_flush():
     app = OutApp()
@@ -54,7 +51,7 @@ async def test_stream_chunks_accumulate_before_and_after_flush():
         for i in range(5):
             out.add(*stream("stdout", f"line {i}\n"))
         expected = "".join(f"line {i}\n" for i in range(5))
-        assert out.text == expected  # before the timer fires
+        assert out.text == expected
         assert out._flush_timer is not None
         await settle(pilot)
         assert out._flush_timer is None
@@ -137,9 +134,6 @@ async def test_execute_result_after_stream_keeps_order():
         assert out.text == "printed\n42"
         assert [rendered(b).strip() for b in out._blocks] == ["printed", "42"]
         assert list(out.children) == out._blocks
-
-
-# ── rich MIME outputs ────────────────────────────────────────────────────
 
 
 @sync

@@ -15,20 +15,20 @@ from textual.color import Color
 from textual.theme import BUILTIN_THEMES, Theme
 from textual.widgets.text_area import TextAreaTheme
 
-TERMINAL = "terminal"  # the terminal's own colours and background
+TERMINAL = "terminal"
 DEFAULT_THEME = TERMINAL
 THEME_ALIASES = {
     "default": TERMINAL, "ansi": TERMINAL,
     "material-dark": "material-darker", "material": "material-darker",
     "gruvbox-dark": "gruvbox", "catppuccin": "catppuccin-mocha",
-}  # fmt: skip
+}
 
 
 @dataclass(frozen=True)
 class Palette:
     """Colors a syntax theme needs. All hex strings."""
 
-    name: str  # app theme id, e.g. "catppuccin-mocha"
+    name: str
     dark: bool
     bg: str
     fg: str
@@ -45,14 +45,11 @@ class Palette:
     builtin: str
     constant: str
     punctuation: str
-    cursor_insert: str  # bar/block color in insert mode
-    cursor_normal: str  # block color in normal mode (distinct, e.g. yellow/peach)
+    cursor_insert: str
+    cursor_normal: str
 
-
-# --------------------------------------------------------------------------- catppuccin
 
 _CATPPUCCIN = {
-    #               mocha      macchiato  frappe     latte
     "base":      ("#1e1e2e", "#24273a", "#303446", "#eff1f5"),
     "surface0":  ("#313244", "#363a4f", "#414559", "#ccd0da"),
     "surface2":  ("#585b70", "#5b6078", "#626880", "#acb0be"),
@@ -67,7 +64,7 @@ _CATPPUCCIN = {
     "sky":       ("#89dceb", "#91d7e3", "#99d1db", "#04a5e5"),
     "blue":      ("#89b4fa", "#8aadf4", "#8caaee", "#1e66f5"),
     "mauve":     ("#cba6f7", "#c6a0f6", "#ca9ee6", "#8839ef"),
-}  # fmt: skip
+}
 
 
 def _catppuccin(flavor: str, i: int) -> Palette:
@@ -95,16 +92,12 @@ def _catppuccin(flavor: str, i: int) -> Palette:
     )
 
 
-# --------------------------------------------------------------------------- material
-
 _MAT_RED, _MAT_ORANGE, _MAT_YELLOW, _MAT_GREEN = "#F07178", "#F78C6C", "#FFCB6B", "#C3E88D"
 _MAT_CYAN, _MAT_BLUE, _MAT_PURPLE = "#89DDFF", "#82AAFF", "#C792EA"
-# The shared accents are made for dark backgrounds (string is 1.3:1 on #FAFAFA), so the
-# lighter variant uses Material Lighter's own darker accent set.
 _MAT_LIGHTER = dict(
     red="#E53935", orange="#F76D47", yellow="#F6A434", green="#91B859",
     cyan="#39ADB5", blue="#6182B8", purple="#7C4DFF",
-)  # fmt: skip
+)
 
 
 def _material_accents(variant: str) -> dict[str, str]:
@@ -113,16 +106,15 @@ def _material_accents(variant: str) -> dict[str, str]:
     return dict(
         red=_MAT_RED, orange=_MAT_ORANGE, yellow=_MAT_YELLOW, green=_MAT_GREEN,
         cyan=_MAT_CYAN, blue=_MAT_BLUE, purple=_MAT_PURPLE,
-    )  # fmt: skip
+    )
 
 
 _MATERIAL = {
-    # variant:   (bg,        fg,        gutter_fg, cursor_line_bg, selection_bg, comment, surface, panel)
     "oceanic":   ("#263238", "#EEFFFF", "#546E7A", "#2C3B41", "#314549", "#546E7A", "#2E3C43", "#314549"),
     "palenight": ("#292D3E", "#A6ACCD", "#4A4E6A", "#32374D", "#3C435E", "#676E95", "#32374D", "#3C435E"),
     "darker":    ("#212121", "#EEFFFF", "#424242", "#2B2B2B", "#353535", "#616161", "#292929", "#353535"),
     "lighter":   ("#FAFAFA", "#546E7A", "#CFD8DC", "#F0F0F0", "#E0E0E0", "#90A4AE", "#F0F0F0", "#E7E7E8"),
-}  # fmt: skip
+}
 
 
 def _material_palette(variant: str) -> Palette:
@@ -170,8 +162,6 @@ def _material_theme(variant: str) -> Theme:
         dark=variant != "lighter",
     )
 
-
-# --------------------------------------------------------------------------- the rest
 
 _SOLARIZED_ACCENTS = dict(
     keyword="#859900",
@@ -239,14 +229,12 @@ _PALETTE_LIST = [
         cursor_insert="#93a1a1", cursor_normal="#b58900", **_SOLARIZED_ACCENTS,
     ),
     Palette(
-        # operator/punctuation use base01 (#586e75): base1 (#93a1a1) is unreadable on base3.
         name="solarized-light", dark=False,
         bg="#fdf6e3", fg="#657b83", gutter_fg="#93a1a1", cursor_line_bg="#eee8d5",
         selection_bg="#eee8d5", comment="#93a1a1", operator="#586e75", punctuation="#586e75",
         cursor_insert="#586e75", cursor_normal="#b58900", **_SOLARIZED_ACCENTS,
     ),
     Palette(
-        # Values taken from Textual's builtin TextAreaTheme "monokai".
         name="monokai", dark=True,
         bg="#272822", fg="#f8f8f2", gutter_fg="#90908a", cursor_line_bg="#3e3d32",
         selection_bg="#65686a", comment="#75715e", keyword="#f92672", string="#e6db74",
@@ -254,9 +242,7 @@ _PALETTE_LIST = [
         builtin="#f8f8f2", constant="#66d9ef", punctuation="#f8f8f2",
         cursor_insert="#f8f8f0", cursor_normal="#e6db74",
     ),
-    # ---- light variants of dark-only themes (custom app themes below)
     Palette(
-        # Nord Snow Storm background with the darker "nord-light" accents for contrast.
         name="nord-light", dark=False,
         bg="#ECEFF4", fg="#2E3440", gutter_fg="#9AA3B5", cursor_line_bg="#E5E9F0",
         selection_bg="#D8DEE9", comment="#7B88A1", keyword="#3B6EA8", string="#4F894C",
@@ -265,7 +251,6 @@ _PALETTE_LIST = [
         cursor_insert="#3B4252", cursor_normal="#9A7500",
     ),
     Palette(
-        # Dracula's official light variant ("Alucard").
         name="dracula-light", dark=False,
         bg="#FFFBEB", fg="#1F1F1F", gutter_fg="#9F9BB8", cursor_line_bg="#F2EDD8",
         selection_bg="#CFCFDE", comment="#635D97", keyword="#A3144D", string="#846E15",
@@ -274,7 +259,6 @@ _PALETTE_LIST = [
         cursor_insert="#1F1F1F", cursor_normal="#A34D14",
     ),
     Palette(
-        # Tokyo Night "Day".
         name="tokyo-night-light", dark=False,
         bg="#e1e2e7", fg="#3760bf", gutter_fg="#a8aecb", cursor_line_bg="#d0d5e3",
         selection_bg="#b7c1e3", comment="#848cb5", keyword="#9854f1", string="#587539",
@@ -283,7 +267,6 @@ _PALETTE_LIST = [
         cursor_insert="#3760bf", cursor_normal="#8c6c3e",
     ),
     Palette(
-        # Monokai Pro "Light".
         name="monokai-light", dark=False,
         bg="#faf4f2", fg="#29242a", gutter_fg="#bfb9ba", cursor_line_bg="#efe8e6",
         selection_bg="#e0d9d7", comment="#a59fa0", keyword="#e14775", string="#cc7a0a",
@@ -291,7 +274,7 @@ _PALETTE_LIST = [
         builtin="#e16032", constant="#7058be", punctuation="#706b6e",
         cursor_insert="#29242a", cursor_normal="#cc7a0a",
     ),
-]  # fmt: skip
+]
 
 PALETTES: dict[str, Palette] = {p.name: p for p in _PALETTE_LIST}
 
@@ -331,12 +314,9 @@ CUSTOM_APP_THEMES: dict[str, Theme] = {
         warning="#e16032", error="#e14775", success="#269d69", foreground="#29242a",
         background="#faf4f2", surface="#f2ebe9", panel="#e6dfdd", dark=False,
     ),
-}  # fmt: skip
+}
 
 
-# "terminal": Textual's ANSI theme under our name. Colours are the terminal's 16 named
-# ones and the background is the terminal's own, so gpython looks like the terminal it
-# runs in (whatever colorscheme that is) instead of painting its own.
 TERMINAL_THEME = replace(BUILTIN_THEMES["ansi-dark"], name=TERMINAL)
 TERMINAL_PALETTE = Palette(
     name=TERMINAL, dark=True,
@@ -344,10 +324,7 @@ TERMINAL_PALETTE = Palette(
     selection_bg="bright_black", comment="bright_black", keyword="magenta", string="green",
     number="yellow", function="blue", type="cyan", operator="default", builtin="red",
     constant="yellow", punctuation="default", cursor_insert="default", cursor_normal="yellow",
-)  # fmt: skip
-
-
-# --------------------------------------------------------------------------- factories
+)
 
 
 def editor_themes(palette: Palette) -> tuple[TextAreaTheme, TextAreaTheme]:
@@ -359,7 +336,7 @@ def editor_themes(palette: Palette) -> tuple[TextAreaTheme, TextAreaTheme]:
 
     syntax: dict[str, Style] = {"comment": c(p.comment, italic=True)}
     for key in ("keyword", "keyword.operator", "conditional", "repeat", "exception", "include",
-                "keyword.return"):  # fmt: skip
+                "keyword.return"):
         syntax[key] = c(p.keyword)
     syntax["keyword.function"] = c(p.keyword, bold=True)
     for key in ("string", "string.documentation"):
@@ -377,7 +354,6 @@ def editor_themes(palette: Palette) -> tuple[TextAreaTheme, TextAreaTheme]:
         syntax[key] = c(p.constant)
     for key in ("punctuation.bracket", "punctuation.delimiter", "punctuation.special"):
         syntax[key] = c(p.punctuation)
-    # markdown
     syntax["heading"] = c(p.keyword, bold=True)
     syntax["heading.marker"] = c(p.punctuation)
     syntax["bold"] = c(p.fg, bold=True)
@@ -401,7 +377,7 @@ def editor_themes(palette: Palette) -> tuple[TextAreaTheme, TextAreaTheme]:
             syntax_styles=dict(syntax),
         )
 
-    if p.bg == "default":  # terminal colours: no known background to draw the cursor text in
+    if p.bg == "default":
         insert = make(p.name, Style(reverse=True))
         normal = make(f"{p.name}-normal", Style(color="black", bgcolor=p.cursor_normal, bold=True))
     else:

@@ -21,7 +21,7 @@ def strips(editor):
 
 async def same_as_full(editor, pilot) -> None:
     cached = strips(editor)
-    editor.refresh()  # everything dirty: the next render is from scratch
+    editor.refresh()
     await pilot.pause()
     assert cached == strips(editor)
 
@@ -39,24 +39,23 @@ def test_editor_partial_repaints_match_full_render(tmp_path):
             editor.focus()
             await pilot.pause()
             steps = [
-                ("j",), ("j",), ("l", "l", "l"),  # cursor moves across lines and columns
+                ("j",), ("j",), ("l", "l", "l"),
                 ("$",), ("0",), ("G",), ("g", "g"),
-                ("f",),  # not a motion here: nothing happens
-                ("i", "a", "b", "c"),  # typing on a line
-                ("enter", "x", "y"),  # new line: full repaint path
-                ("backspace", "backspace", "backspace"),  # join lines back
-                ("escape", "j", "$"),  # onto ')' : bracket match highlight
-                ("h", "h", "h"),  # off the bracket
-                ("o", "z", "=", "(", ")"),  # open a line, type brackets
+                ("f",),
+                ("i", "a", "b", "c"),
+                ("enter", "x", "y"),
+                ("backspace", "backspace", "backspace"),
+                ("escape", "j", "$"),
+                ("h", "h", "h"),
+                ("o", "z", "=", "(", ")"),
                 ("escape", "d", "w"), ("u",), ("ctrl+r",),
-                ("shift+right", "shift+right"),  # a selection
+                ("shift+right", "shift+right"),
                 ("escape",), ("x",), ("escape",), ("y", "y", "p"),
             ]
             for keys in steps:
                 await pilot.press(*keys)
                 await pilot.pause()
                 await same_as_full(editor, pilot)
-            # Leaving and re-entering the editor (focus = cursor shown / hidden).
             await pilot.press("escape", "escape")
             await pilot.pause()
             await same_as_full(editor, pilot)
@@ -78,18 +77,18 @@ def test_cell_bar_follows_status_and_focus(tmp_path):
             await pilot.pause()
             first, second = app.cells()
             colors = {role: Color.parse(value) for role, value in app.bar_colors.items()}
-            assert colors["panel"].a > 0  # the idle bar is visible in every theme
+            assert colors["panel"].a > 0
             bar = lambda cell: cell.styles.outline_left[1]
-            assert bar(first) == colors["accent"]  # focused
+            assert bar(first) == colors["accent"]
             assert bar(second) == colors["panel"]
-            await pilot.press("escape", "escape", "j")  # cell mode, select the second cell
+            await pilot.press("escape", "escape", "j")
             await pilot.pause()
             assert bar(second) == colors["accent"] and bar(first) == colors["panel"]
             assert second.selected and second.has_class("-selected") and not first.has_class("-selected")
             header = str(second.query_one(".cell-header").render())
             assert "c2" in header
             second.set_status("error")
-            assert bar(second) == colors["accent"]  # selection wins while selected
+            assert bar(second) == colors["accent"]
             await pilot.press("k")
             await pilot.pause()
             assert bar(second) == colors["error"]
@@ -97,10 +96,9 @@ def test_cell_bar_follows_status_and_focus(tmp_path):
             assert bar(second) == colors["warning"]
             second.set_status("running")
             assert bar(second) == colors["primary"]
-            # Theme change recolours every bar.
             app.theme = "nord"
             await pilot.pause()
             assert bar(second) == Color.parse(app.bar_colors["primary"]) and bar(first) == Color.parse(app.bar_colors["accent"])
-            assert bar(second) != colors["primary"]  # really a different colour now
+            assert bar(second) != colors["primary"]
 
     asyncio.run(asyncio.wait_for(main(), 60))

@@ -32,19 +32,19 @@ SYNTAX_KEYS = [
     "punctuation.bracket", "punctuation.delimiter", "punctuation.special",
     "heading", "heading.marker", "bold",
     "inline_code", "link.uri", "link.label", "list.marker", "italic", "strikethrough",
-]  # fmt: skip
+]
 
 SUPPORTED = [
     "catppuccin-mocha", "catppuccin-macchiato", "catppuccin-frappe", "catppuccin-latte",
     "gruvbox", "gruvbox-light",
     "material-oceanic", "material-palenight", "material-darker", "material-lighter",
     "nord", "dracula", "tokyo-night", "solarized-dark", "solarized-light", "monokai",
-]  # fmt: skip
+]
 
 LIGHT = {
     "catppuccin-latte", "gruvbox-light", "material-lighter", "solarized-light",
     "nord-light", "dracula-light", "tokyo-night-light", "monokai-light",
-}  # fmt: skip
+}
 
 
 def app_theme(name):
@@ -60,7 +60,7 @@ def test_terminal_theme_uses_the_terminals_own_colours(notebook_path):
     """Native ANSI colours (terminal background and palette) while "terminal" is on, and
     back to truecolor after switching to a regular theme."""
     assert TERMINAL_THEME.ansi and TERMINAL_THEME.background == "ansi_default"
-    insert, normal = editor_themes(TERMINAL_PALETTE)  # every colour usable by rich
+    insert, normal = editor_themes(TERMINAL_PALETTE)
     assert insert.cursor_style.reverse
 
     async def main():
@@ -69,7 +69,7 @@ def test_terminal_theme_uses_the_terminals_own_colours(notebook_path):
             await pilot.pause()
             assert app.theme == "terminal" and app.native_ansi_color
             assert editor_names(app) == {"terminal-normal"}
-            app.cells()[0].set_status("ok")  # header icon colour from theme.success ("ansi_green")
+            app.cells()[0].set_status("ok")
             await pilot.pause()
             app.theme = "nord"
             await pilot.pause()
@@ -129,7 +129,7 @@ def test_palette_for_never_raises(name):
     assert isinstance(palette, Palette)
     assert palette.name == name
     assert palette.dark == theme.dark
-    editor_themes(palette)  # every color must be usable by rich
+    editor_themes(palette)
 
 
 def test_palette_for_supported_returns_exact_data():
@@ -143,9 +143,6 @@ def test_generic_palette_follows_app_theme():
     assert palette.bg.lower() == theme.background.lower()
     assert palette.keyword.lower() == theme.primary.lower()
     assert not palette.dark
-
-
-# ── app-level wiring (no kernel needed) ──────────────────────────────────
 
 
 @pytest.fixture
@@ -171,7 +168,7 @@ def test_switch_theme_updates_every_editor(notebook_path):
             assert editor_names(app) == {"gruvbox-normal"}
             assert app.palette is PALETTES["gruvbox"]
 
-            await pilot.press("i")  # insert mode: switching keeps the insert naming
+            await pilot.press("i")
             app.theme = "nord"
             await pilot.pause()
             assert editor_names(app) == {"nord"}
@@ -179,7 +176,7 @@ def test_switch_theme_updates_every_editor(notebook_path):
             await pilot.press("escape", "ctrl+n")
             await pilot.pause()
             assert len(app.cells()) == 3
-            assert app.current_cell().editor.theme == "nord"  # new cells start in insert mode
+            assert app.current_cell().editor.theme == "nord"
             await pilot.press("escape")
             assert app.current_cell().editor.theme == "nord-normal"
             assert config.load() == {"theme": "nord"}
@@ -192,7 +189,7 @@ def test_theme_persists_and_ex_command(notebook_path):
         app = GPython(notebook_path)
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
-            assert config.load() == {}  # the starting theme is not written
+            assert config.load() == {}
             await app._run_ex("theme material-palenight")
             await pilot.pause()
             assert app.theme == "material-palenight"
@@ -200,8 +197,8 @@ def test_theme_persists_and_ex_command(notebook_path):
             assert app.theme == "material-palenight"
         assert config.load()["theme"] == "material-palenight"
 
-        assert GPython(notebook_path).theme == "material-palenight"  # config is read back
-        assert GPython(notebook_path, theme="dracula").theme == "dracula"  # argument beats config
+        assert GPython(notebook_path).theme == "material-palenight"
+        assert GPython(notebook_path, theme="dracula").theme == "dracula"
 
     asyncio.run(main())
 

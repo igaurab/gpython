@@ -21,8 +21,8 @@ from textual.widgets import Static
 
 from .pane import NotebookPane
 
-GAP = 1  # columns between side-by-side windows (the Workspace background shows through)
-MIN_SIZE = 8  # a window never gets narrower / shorter than this
+GAP = 1
+MIN_SIZE = 8
 
 
 @dataclass
@@ -33,7 +33,7 @@ class Leaf:
 
 @dataclass
 class Branch:
-    row: bool  # True: children side by side (vsplit); False: stacked (split)
+    row: bool
     children: list[Node]
     weight: float = 1.0
 
@@ -97,14 +97,14 @@ def remove_leaf(root: Node, pane: NotebookPane) -> Node | None:
     if parent is None:
         return None
     parent.children.remove(leaf)
-    if len(parent.children) == 1:  # a branch with one child collapses into it
+    if len(parent.children) == 1:
         only = parent.children[0]
         only.weight = parent.weight
         grand = _parent_of(root, parent)
         if grand is None:
             return only
         grand.children[grand.children.index(parent)] = only
-        if isinstance(only, Branch) and only.row == grand.row:  # same orientation: flatten
+        if isinstance(only, Branch) and only.row == grand.row:
             index = grand.children.index(only)
             total = sum(c.weight for c in only.children) or 1.0
             for child in only.children:
@@ -135,7 +135,7 @@ def arrange(node: Node, region: Region, out: dict[NotebookPane, Region]) -> None
     weights = [max(c.weight, 0.05) for c in children]
     whole = sum(weights)
     sizes = [max(1, int(total * w / whole)) for w in weights]
-    sizes[-1] += total - sum(sizes)  # rounding leftovers go to the last child
+    sizes[-1] += total - sum(sizes)
     pos = region.x if node.row else region.y
     for child, size in zip(children, sizes):
         if node.row:
@@ -171,7 +171,7 @@ class TabBar(Static):
 
     def __init__(self) -> None:
         super().__init__(id="tabbar")
-        self._ranges: list[tuple[int, int, str, int]] = []  # start, end, "tab" | "buffer", index
+        self._ranges: list[tuple[int, int, str, int]] = []
 
     def show(self, tabs: list[Tab], current: int, hidden: list[tuple[int, NotebookPane]]) -> None:
         text = Text()
@@ -211,8 +211,8 @@ class Workspace(Widget):
     def __init__(self) -> None:
         super().__init__(id="workspace")
         self.tabs: list[Tab] = []
-        self.index = 0  # current tab
-        self.buffers: list[NotebookPane] = []  # every open notebook, in opening order (:ls numbers)
+        self.index = 0
+        self.buffers: list[NotebookPane] = []
         self._layout = WindowLayout()
         self.can_focus = False
 
@@ -268,7 +268,6 @@ class Workspace(Widget):
                 return i
         return None
 
-    # ── structure changes ────────────────────────────────────────────────
 
     async def _adopt(self, pane: NotebookPane) -> None:
         """Mount a new pane (a hidden buffer is already mounted) and register it as a buffer."""
@@ -291,7 +290,6 @@ class Workspace(Widget):
             return
         tab = self.tabs[self.tab_of(anchor)]
         row = how == "vsplit"
-        # vim puts the new window above / to the left; `splitbelow`/`splitright` style here.
         tab.root = split_leaf(tab.root, anchor, pane, row, after=True)
         await self._adopt(pane)
         self.set_active(pane)
@@ -356,7 +354,7 @@ class Workspace(Widget):
     async def show(self, pane: NotebookPane, window: NotebookPane | None = None) -> None:
         """vim's :b N: show buffer `pane` in `window` (default: the active one)."""
         window = window or self.active
-        if pane in self.panes():  # already in a window: go there (we cannot show it twice)
+        if pane in self.panes():
             self.set_active(pane)
             return
         if window is None or not self.tabs:
@@ -371,10 +369,10 @@ class Workspace(Widget):
         fresh untitled one).
         """
         nxt = await self.close(pane, delete=True)
-        if pane in self.buffers:  # was hidden: close() found no window
+        if pane in self.buffers:
             await self._drop(pane)
             self._changed()
-        if nxt is None and self.buffers:  # the last window went: show another buffer
+        if nxt is None and self.buffers:
             await self.add(self.buffers[-1], "tab")
             nxt = self.active
         return nxt
@@ -435,7 +433,6 @@ class Workspace(Widget):
             walk(self.tab.root)
             self._changed()
 
-    # ── tabs / active window ─────────────────────────────────────────────
 
     def switch(self, index: int) -> None:
         """Show tab `index` (0-based): its panes are displayed, every other pane hidden."""
@@ -470,7 +467,6 @@ class Workspace(Widget):
         self.refresh(layout=True)
         self.app.workspace_changed()
 
-    # ── navigation ───────────────────────────────────────────────────────
 
     def neighbour(self, pane: NotebookPane, direction: str) -> NotebookPane | None:
         """The window next to `pane` in direction h/j/k/l (by screen geometry)."""

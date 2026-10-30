@@ -64,7 +64,6 @@ def test_motions():
 def test_delete_and_change():
     assert run("foo bar", "d", "w")[0] == "bar"
     assert run("foo bar", "x")[0] == "oo bar"
-    # dd deletes lines, like vim (cells are deleted in cell mode); u brings them back.
     assert run("one\ntwo\nthree", "j", "d", "d")[0] == "one\nthree"
     assert run("one\ntwo\nthree", "2", "d", "d")[0] == "three"
     assert run("one\ntwo\nthree", "G", "d", "d")[0] == "one\ntwo"
@@ -101,7 +100,6 @@ def test_cell_level_keys_post_messages():
     run("a", "/", messages=messages)
     assert messages == [("search",)]
     messages.clear()
-    # escape in normal mode: first clears a pending operator, then leaves the editor.
     run("a", "d", "escape", messages=messages)
     assert messages == []
     run("a", "escape", messages=messages)
@@ -126,5 +124,4 @@ def test_auto_indent():
     assert run("    y = 2", "A", "enter", "x")[0] == "    y = 2\n    x"
     assert run("xs = [", "A", "]", "left", "enter")[0] == "xs = [\n    \n]"
     assert run("def f():", "o", "x")[0] == "def f():\n    x"
-    # Backspace in leading whitespace removes a whole indent level.
     assert run("        x", "I", "backspace")[0] == "    x"

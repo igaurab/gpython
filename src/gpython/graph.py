@@ -13,7 +13,6 @@ from dataclasses import dataclass, field
 
 _SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
 _BUILTINS = set(dir(builtins))
-# Methods that change their object in place (list, dict, set, deque, DataFrame...).
 _MUTATORS = {
     "append", "extend", "insert", "pop", "remove", "clear", "sort", "reverse",
     "update", "setdefault", "popitem", "add", "discard", "appendleft", "extendleft",
@@ -37,7 +36,6 @@ def _module_stores(tree: ast.Module) -> tuple[set[str], set[str]]:
                 continue
             if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store):
                 (comp if in_comp else real).add(child.id)
-            # Walrus inside a comprehension binds in the enclosing scope.
             if isinstance(child, ast.NamedExpr):
                 real.add(child.target.id)
             visit(child, in_comp or isinstance(child, _COMPREHENSIONS))
@@ -77,9 +75,6 @@ def analyze(source: str) -> tuple[set[str], set[str]]:
         elif sym.is_referenced():
             refs.add(sym.get_name())
 
-    # Functions, classes and comprehensions have their own scopes; any
-    # global they read counts as a use of the cell, and `global x; x = ...`
-    # counts as a definition.
     stack = list(table.get_children())
     while stack:
         child = stack.pop()
@@ -94,7 +89,6 @@ def analyze(source: str) -> tuple[set[str], set[str]]:
 
     public = lambda names: {n for n in names if not n.startswith("_")}
     defs = public(defs)
-    # Builtins are not cell dependencies (unless a cell shadows one).
     return defs, public(refs) - defs - _BUILTINS
 
 
@@ -140,7 +134,7 @@ def mutations(source: str) -> set[str]:
 
 @dataclass
 class Graph:
-    order: list[str]  # cell ids in display order
+    order: list[str]
     defs: dict[str, set[str]] = field(default_factory=dict)
     refs: dict[str, set[str]] = field(default_factory=dict)
     mutates: dict[str, set[str]] = field(default_factory=dict)
@@ -227,8 +221,6 @@ def build(cells: dict[str, str]) -> Graph:
                     g.parents[cid].add(owner)
                     g.children[owner].add(cid)
 
-    # Mutations: a cell that changes `x` in place runs before the other cells
-    # below it that read `x`, so they see the change.
     for cid in g.order:
         for name in g.mutates[cid]:
             for reader in g.order[g.order.index(cid) + 1 :]:
@@ -236,12 +228,11 @@ def build(cells: dict[str, str]) -> Graph:
                     name in g.refs[reader]
                     and reader != g.owner.get(name)
                     and reader not in g.children[cid]
-                    and cid not in g.descendants([reader])  # would make a cycle
+                    and cid not in g.descendants([reader])
                 ):
                     g.parents[reader].add(cid)
                     g.children[cid].add(reader)
 
-    # Kahn's algorithm over the whole graph; leftovers are in or behind a cycle.
     indegree = {c: len(g.parents[c]) for c in g.order}
     ready = [c for c in g.order if indegree[c] == 0]
     done = set()
