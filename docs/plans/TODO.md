@@ -139,6 +139,55 @@ profiled mount, half of it `_process_component_classes`) and the import profile:
 | first_paint | 0.07–0.08 s | 0.07 s |
 | pty first_frame / j → paint | 0.28–0.29 s / 3–15 ms | same (the spread is the machine) |
 
+### Memory (2026-10-30): two leaks fixed, what a cell costs, what is left
+
+`uv run python3 scripts/memprof.py` (headless, 60 cells, tracemalloc + live object counts
+per phase; `--who` walks the referrers of a removed cell or pane that is still alive;
+`--no-trace` for honest RSS, tracemalloc's bookkeeping roughly doubles it). `tests/test_memory.py`
+guards both fixes.
+
+Honest RSS (no tracemalloc, `psutil`), this machine, Python 3.13:
+
+| state | RSS |
+|---|---|
+| `import gpython.app` (Python 20 MB + textual 19 MB + gpython and friends 6 MB) | 46 MB |
+| first frame; `jupyter_client`/zmq/traitlets import after it | +13 MB |
+| loaded, 1 / 60 / 200 cells | 65 / 75 / 92 MB |
+| per extra cell (3 widgets: Cell, header Static, VimTextArea with its tree-sitter document) | ~120–170 kB RSS (~370 kB Python heap under tracemalloc) |
+| the IPython kernel process (not ours; a separate pid) | ~59 MB |
+
+Leaks found with `--who` and fixed:
+
+- Textual's `TextArea._on_mount` does `self.watch(self.app, "theme", ...)` and subscribes to
+  `screen.text_selection_started_signal`; neither is undone on unmount, and both hold the
+  editor strongly (the signal's `WeakKeyDictionary` value is a closure over the key). Every
+  deleted cell's editor stayed alive with its document, parser, syntax tree, history and line
+  cache; a theme change then also ran callbacks on dead editors. `VimTextArea.on_unmount`
+  removes both.
+- Textual's `NodeList.displayed` is a cached list rebuilt only on its next read (a mount or a
+  style refresh), never on a removal, so the children removed since the last read stay alive.
+  `dom.forget_removed(container)` reads it once after `_remove_cells`, `Workspace._drop` and
+  `OutputArea.clear`. What remains is bounded: the container's `_arrangement_cache` (FIFO of 4
+  layouts) keeps the last removed widgets until four more layouts happen.
+
+Growth that is bounded, measured over the profile's phases (heap deltas):
+
+- Cell moves over all 60 cells: +5 MB once (every widget renders and keeps its strips in
+  Textual's style cache; each `Strip` carries seven `FIFOCache` dicts), then +0.0 on repeat.
+  The editors' own `_line_cache` (LRU 1024 each) held 728 strips in total, 22 at most.
+- 2000 stream lines into a cell: +13 MB while shown (Rich `Text` → `Content` per line); a clear
+  returns it. `MAX_STREAM_CHARS` caps the shown text at 50 k characters, `_KEEP_RAW` the raw at
+  200 k, `Cell._log` at 200 k per stream block.
+- Typing 300 characters: +5 MB, mostly Textual's per-line byte→codepoint highlight map and the
+  edit history (50 checkpoints); undo gives nothing back until the checkpoints roll over.
+- First markdown output imports `markdown_it` + `pygments` (+1 MB, once).
+- Cell runs: +10 kB each, `jupyter_client`'s `digest_history` (capped at 65 k signatures).
+
+Left on the table, biggest first: a virtualised cell list (only the cells near the viewport
+mounted) is the one lever on the ~150 kB per cell and on Textual's full-screen repaints; the
+Textual import itself (19 MB RSS, ~100 ms); the kernel-client import (13 MB) could move to the
+kernel-boot worker thread, but that was measured slower for `kernel_ready` in round 4.
+
 ## 2. Acceptance in a real terminal
 
 - `./gpython ~/leetcode/notebooks/0001-two-sum.py`: run all (f5), problem statement renders as

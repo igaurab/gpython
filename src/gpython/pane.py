@@ -21,6 +21,7 @@ from textual.widgets import DataTable, Static
 
 from . import config, envs, notebook
 from .cell import Cell, CellSnapshot, ends_with_string, outputs_to_ipynb
+from .dom import forget_removed
 from .graph import Graph, build
 from .kernel import Kernel
 from .vim import VimTextArea, search_regex
@@ -587,6 +588,7 @@ class NotebookPane(Vertical):
             for offset in range(len(victims) - 1, -1, -1):
                 self._push_undo(("delete", self._snapshot(victims[offset], index + offset)))
         await self._cells_box.remove_children(victims)
+        forget_removed(self._cells_box)
         if not self.cells():
             await self._cells_box.mount(Cell())
         remaining = self.cells()

@@ -19,6 +19,7 @@ from textual.layout import ArrangeResult, Layout, WidgetPlacement
 from textual.widget import Widget
 from textual.widgets import Static
 
+from .dom import forget_removed
 from .pane import NotebookPane
 
 GAP = 1
@@ -321,6 +322,7 @@ class Workspace(Widget):
         if pane in self.buffers:
             self.buffers.remove(pane)
         await pane.close()
+        forget_removed(self)
 
     async def close(self, pane: NotebookPane, delete: bool = False) -> NotebookPane | None:
         """Close one window: its notebook becomes a hidden buffer (or is deleted with `delete`,

@@ -235,6 +235,7 @@ class VimTextArea(TextArea):
         self._popup: CompletionPopup | None = None
         self._popup_start: Location = (0, 0)
         self._auto_timer = None
+        self._mounted_screen = None
         self._theme_names = ("monokai", "monokai-normal")
         self.set_editor_theme(MONOKAI, MONOKAI_NORMAL)
         if language:
@@ -247,6 +248,19 @@ class VimTextArea(TextArea):
         if pair is not None:
             self.set_editor_theme(*pair)
         self._apply_mode()
+        self._mounted_screen = self.screen
+
+    def on_unmount(self) -> None:
+        """Textual's TextArea watches the app's theme and subscribes to the screen's
+        text-selection signal when mounted and never lets go: both keep a strong reference,
+        so every editor of a deleted cell stayed alive with its document, parser and caches.
+        """
+        watchers = getattr(self.app, "__watchers", None)
+        if watchers and "theme" in watchers:
+            watchers["theme"] = [pair for pair in watchers["theme"] if pair[0] is not self]
+        screen, self._mounted_screen = self._mounted_screen, None
+        if screen is not None:
+            screen.text_selection_started_signal.unsubscribe(self)
 
     def set_editor_theme(self, insert: TextAreaTheme, normal: TextAreaTheme) -> None:
         """Use `insert` in insert mode and `normal` (e.g. with a block cursor) in normal mode."""

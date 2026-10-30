@@ -23,6 +23,7 @@ from textual.widget import Widget
 from textual.widgets import Static
 from textual_image.widget import Image
 
+from .dom import forget_removed
 from .markdown import MarkdownView
 
 MAX_STREAM_CHARS = 50_000
@@ -155,6 +156,7 @@ class OutputArea(Vertical):
         self._close_stream(flush=False)
         self._blocks.clear()
         self.remove_children()
+        self.call_after_refresh(forget_removed, self)
         self.display = False
 
     def show_error(self, message: str) -> None:
