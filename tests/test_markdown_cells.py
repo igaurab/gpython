@@ -264,11 +264,10 @@ def test_h_folds_a_markdown_cell(tmp_path):
         await pilot.press("h")
         assert md.folded and md.query_one(MarkdownView).display is False
         assert "folded" in str(md.query_one(".cell-header").render())
-        assert not app.dirty  # folding is a view setting, not a file change
+        assert not app.dirty
         await pilot.press("h")
         assert not md.folded and md.query_one(MarkdownView).display is True
 
-        # Editing unfolds; rendering again keeps it unfolded.
         await pilot.press("h", "enter")
         assert not md.folded and app.focused is md.editor
         await pilot.press("escape", "escape")
@@ -291,7 +290,7 @@ def test_hidden_marimo_text_cell_shows_its_text_before_running(tmp_path):
         shown = problem.output_box.query_one(MarkdownView).shown
         assert "3Sum" in shown and "Return **triplets**" in shown
         assert "\\n" not in shown
-        assert not problem.outputs_snapshot()  # a preview, not an output that gets saved
+        assert not problem.outputs_snapshot()
         assert not plain.output_box.has_output
 
     path = ui(tmp_path, test, cells)
@@ -311,7 +310,7 @@ def test_markdown_follows_the_theme(tmp_path):
         app.theme = "nord"
         await pilot.pause()
         nord = heading_color(view)
-        assert nord == Color.parse(app.palette.type)  # ### is markdown.h3: the palette's type colour
+        assert nord == Color.parse(app.palette.type)
         app.theme = "catppuccin-latte"
         await pilot.pause()
         assert heading_color(view) == Color.parse(app.palette.type) != nord

@@ -93,6 +93,5 @@ def test_marimo_markdown_reads_display_only_cells():
     source = "mo.vstack([ mo.md('## 15. 3Sum\\n\\n*Two Pointers*'), mo.Html('<p>Given <code>nums</code></p><pre>Input: [1]\\nOutput: []</pre>'), ])"
     assert marimo_markdown(source) == "## 15. 3Sum\n\n*Two Pointers*\n\nGiven `nums`\n\n```\nInput: [1]\nOutput: []\n```"
     assert marimo_markdown("mo.hstack([mo.md('a'), mo.md('b')])") == "a  b"
-    # Anything that needs the kernel: None.
     for code in ("mo.md(f'{x}')", "mo.md(text)", "x = mo.md('a')", "mo.md('a')\nprint(1)", "mo.ui.slider(1, 2)", "mo.md("):
         assert marimo_markdown(code) is None

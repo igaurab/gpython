@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 
 t0 = time.perf_counter()
-import gpython.app as gapp  # noqa: E402
+import gpython.app as gapp
 
 IMPORT_APP = time.perf_counter() - t0
 
@@ -87,7 +87,7 @@ async def bench(problems: int, preview: bool, profile_what: str | None) -> dict[
         results["moves_30_proc"] = time.process_time() - cpu
         if profile_what == "moves":
             prof.disable()
-        app.kernel.ready.set()  # do not wait for the kernel on exit
+        app.kernel.ready.set()
 
     if profile_what:
         stats = pstats.Stats(prof, stream=sys.stderr)

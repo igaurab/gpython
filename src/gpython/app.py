@@ -327,7 +327,7 @@ class GPython(App):
         if pair is None:
             pair = self._editor_theme_cache[self.palette.name] = editor_themes(self.palette)
         self.editor_theme_pair = pair
-        if self._markdown_theme_pushed:  # MarkdownView draws with Rich: its markdown.* styles
+        if self._markdown_theme_pushed:
             self.console.pop_theme()
         self.console.push_theme(markdown_theme(self.palette))
         self._markdown_theme_pushed = True

@@ -160,7 +160,6 @@ class Cell(Vertical):
             if self.spec.execution_count:
                 self.exec_count = self.spec.execution_count
         elif self.code_hidden and (preview := marimo_markdown(self.source)) is not None:
-            # A hidden marimo cell that only shows text: show it now, not after a run.
             self.output_box.add("display_data", {"data": {"text/markdown": preview}})
         self._render_header()
         self.paint_bar()

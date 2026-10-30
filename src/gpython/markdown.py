@@ -15,7 +15,7 @@ from textual import events
 from textual.message import Message
 from textual.widget import Widget
 
-if TYPE_CHECKING:  # rich.markdown pulls in markdown_it (~13 ms): imported when first rendered
+if TYPE_CHECKING:
     from rich.console import Console, ConsoleOptions, RenderableType, RenderResult
     from rich.segment import Segment
     from rich.theme import Theme
@@ -109,7 +109,7 @@ def markdown_theme(palette: Palette) -> Theme:
         "markdown.link_url": c(p.function, underline=True),
         "markdown.table.border": c(p.comment),
         "markdown.table.header": c(p.type, bold=True),
-    })  # fmt: skip
+    })
 
 
 class _LinesByWidth:
@@ -163,7 +163,7 @@ class MarkdownView(Widget):
         super().__init__(**kwargs)
         self._text = text
         self.placeholder = placeholder
-        self._parsed: tuple[tuple[str, bool], _LinesByWidth] | None = None  # one parse and layout per text
+        self._parsed: tuple[tuple[str, bool], _LinesByWidth] | None = None
         self.set_class(not text.strip(), "-empty")
 
     @property
@@ -183,7 +183,6 @@ class MarkdownView(Widget):
         if self._parsed is None or self._parsed[0] != key:
             from rich.markdown import Markdown
 
-            # ansi_* code themes use the terminal's colours and no background of their own.
             markdown = Markdown(key[0], code_theme="ansi_dark" if dark else "ansi_light", hyperlinks=False)
             self._parsed = key, _LinesByWidth(markdown)
         return self._parsed[1]
