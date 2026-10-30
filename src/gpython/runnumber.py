@@ -3,7 +3,8 @@
 While it waits, the app sends every key here (GPython.on_event) and the bottom bar
 shows what has been typed. The number runs as soon as no longer number can name a
 cell, on enter, or after a short pause; with no digit at all it gives up after
-TIMEOUT seconds, like a vim key sequence.
+TIMEOUT seconds, like a vim key sequence. Before any digit, `a` runs every cell
+and `c` runs the cells from the first one down to the current one.
 """
 
 from __future__ import annotations
@@ -24,14 +25,15 @@ class RunByNumber:
         self._timer = app.set_timer(TIMEOUT, self.cancel)
 
     def status(self) -> Text:
-        return Text.assemble(
-            (" RUN ", "bold black on green"),
-            f"  run cell: c{self.digits}_",
-            ("   press a cell number to run that cell · enter runs · esc cancels", "dim"),
-        )
+        hint = "   number · a all · c up to here · enter runs · esc cancels" if not self.digits else "   enter runs · esc cancels"
+        return Text.assemble((" RUN ", "bold black on green"), f"  run cell: c{self.digits}_", (hint, "dim"))
 
     def key(self, key: str) -> None:
-        if key.isdigit():
+        if key in ("a", "c") and not self.digits:
+            self.cancel()
+            if self.pane.is_attached:
+                self.pane.run_all() if key == "a" else self.pane.run_relative(False, inclusive=True)
+        elif key.isdigit():
             self.digits += key
             number = int(self.digits)
             if number == 0 or number * 10 > self.pane.cell_count():

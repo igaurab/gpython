@@ -73,7 +73,7 @@ def test_status_bar_while_pending(tmp_path):
         await pilot.press("r")
         await pilot.pause()
         text = status(app)
-        assert "run cell: c_" in text and "press a cell number to run that cell" in text
+        assert "run cell: c_" in text and "number · a all · c up to here" in text
 
     ui(tmp_path, test, cells=many_cells(12))
 
@@ -244,3 +244,69 @@ def test_ex_run_number(tmp_path):
         assert cells[2].output_text == "3\n" and app.focused is cells[3]
 
     ui(tmp_path, test, kernel=True)
+
+
+CHAIN = [CellSpec("a = 1"), CellSpec("b = a + 1\nprint(b)"), CellSpec("print(a, b)"), CellSpec("c = 9")]
+
+
+def test_r_a_runs_every_cell(tmp_path):
+    async def test(app, pilot):
+        cells = app.cells()
+        cells[2].focus()
+        await pilot.press("r", "a")
+        await settle(app, pilot)
+        assert app._run_number is None
+        assert [c.status for c in cells] == ["ok"] * 4
+        assert cells[2].output_text == "1 2\n" and cells[3].exec_count == 4
+        assert app.focused is cells[2]
+
+    ui(tmp_path, test, cells=CHAIN, kernel=True)
+
+
+def test_r_c_runs_down_to_the_current_cell_and_leaves_the_rest(tmp_path):
+    async def test(app, pilot):
+        first, second, reader, last = app.cells()
+        second.focus()
+        await pilot.press("r", "c")
+        await settle(app, pilot)
+        assert app._run_number is None
+        assert first.status == second.status == "ok" and second.output_text == "2\n"
+        assert reader.status == "stale" and reader.exec_count == 0
+        assert last.status == "idle" and last.exec_count == 0
+        assert app.focused is second
+
+    ui(tmp_path, test, cells=CHAIN, kernel=True)
+
+
+def test_space_r_c_from_vim_normal_mode(tmp_path):
+    async def test(app, pilot):
+        first, second, reader, last = app.cells()
+        app.select(second, "normal")
+        await pilot.pause()
+        await pilot.press("space", "r", "c")
+        await settle(app, pilot)
+        assert first.status == second.status == "ok" and second.output_text == "2\n"
+        assert reader.exec_count == 0 and last.exec_count == 0
+        assert app.focused is second.editor and VimTextArea.mode == "normal"
+        assert second.source == "b = a + 1\nprint(b)"
+
+    ui(tmp_path, test, cells=CHAIN, kernel=True)
+
+
+def test_a_and_c_after_a_digit_cancel(tmp_path, monkeypatch):
+    monkeypatch.setattr(runnumber, "PAUSE", 30)
+
+    async def test(app, pilot):
+        cells = app.cells()
+        cells[0].focus()
+        for key in ("a", "c"):
+            await pilot.press("r", "1")
+            await pilot.pause()
+            assert app._run_number is not None and "enter runs · esc cancels" in status(app)
+            await pilot.press(key)
+            await settle(app, pilot)
+            assert app._run_number is None and "run cell" not in status(app)
+        assert all(c.exec_count == 0 and c.status == "idle" for c in cells)
+        assert app.focused is cells[0]
+
+    ui(tmp_path, test, cells=many_cells(12))

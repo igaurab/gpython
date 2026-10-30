@@ -8,7 +8,8 @@ since, or their inputs changed), then the cell. What happens to the cells
 *below* it, the ones that use its variables, is the **run mode** (`f3`, saved):
 
 - **lazy** (the default): they are only marked stale. You run what you want,
-  when you want: `r 6` runs cell c6, `f4` runs every stale cell.
+  when you want: `r 6` runs cell c6, `r c` runs the cells down to the current
+  one, `r a` runs all (`space r …` inside an editor), `f4` runs every stale cell.
 - **reactive**: they re-run automatically, like marimo.
 
 <img width="1372" height="1034" alt="image" src="https://github.com/user-attachments/assets/c93ed22f-cf15-4a26-9322-c62c940febf5" />

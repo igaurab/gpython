@@ -538,13 +538,14 @@ class NotebookPane(Vertical):
         if stale:
             self.run_worker(self.run_cells(stale, downstream=True), group="run")
 
-    def run_relative(self, below: bool) -> None:
+    def run_relative(self, below: bool, inclusive: bool = False) -> None:
+        """:runbelow / :runabove; `inclusive` (r c) counts the current cell in. The other cells are not run."""
         cell = self.current_cell()
         cells = self.cells()
         if cell is None or cell not in cells:
             return
         index = cells.index(cell)
-        subset = cells[index:] if below else cells[:index]
+        subset = cells[index:] if below else cells[: index + 1 if inclusive else index]
         if subset:
             self.run_worker(self.run_cells([c.cid for c in subset], downstream=False), group="run")
 
