@@ -35,7 +35,7 @@ KEYMAP: list[tuple[str, str, str]] = [
     ("any", "alt+shift+down", "Move cell down"),
     ("any", "f1", "Help (this screen)"),
     ("any", "f2", "Toggle variables panel"),
-    ("any", "f3", "Toggle lazy mode"),
+    ("any", "f3", "Toggle run mode, saved: lazy (default) runs the cell and the stale cells it uses, and only marks cells that use its variables stale; reactive re-runs those too (:lazy, :set lazy|nolazy)"),
     ("any", "ctrl+p", "Command palette"),
     ("any", "ctrl+q", "Quit (asks if unsaved)"),
     ("any", "ctrl+b", "File explorer: open / focus / hide (also :Ex, :e)"),

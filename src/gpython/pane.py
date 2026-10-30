@@ -304,7 +304,11 @@ class NotebookPane(Vertical):
         return graph
 
     async def run_cells(self, roots: list[str], downstream: bool | None = None) -> None:
-        """Run roots (and, unless lazy, every cell downstream) in dependency order."""
+        """Run roots in dependency order, stale ancestors first.
+
+        `downstream` None follows the app's run mode: lazy (the default) only marks the cells
+        downstream stale, reactive runs them too.
+        """
         await self.loaded.wait()
         async with self._run_lock:
             graph = self.refresh_info()
@@ -577,11 +581,18 @@ class NotebookPane(Vertical):
         self.select(remaining[min(index, len(remaining) - 1)], "cell" if mode == "cell" else "keep")
 
         await self.kernel.delete(defs)
-        if downstream:
+        self._rerun_or_mark_stale(downstream)
+
+    def _rerun_or_mark_stale(self, downstream: set[str]) -> None:
+        """Cells that used variables just removed from the kernel: re-run them when reactive, mark them stale when lazy."""
+        if downstream and not self.app.lazy:
             self.run_worker(self.run_cells(sorted(downstream)), group="run")
-        else:
-            self.refresh_info()
-            self.run_worker(self.refresh_vars(self.graph()), group="run")
+            return
+        graph = self.refresh_info()
+        for cell in self.cells():
+            if cell.cid in downstream:
+                cell.mark_inputs_stale()
+        self.run_worker(self.refresh_vars(graph), group="run")
 
     async def undo(self) -> None:
         """Undo the newest cell-level action: delete, move, insert or kind change."""
@@ -703,10 +714,7 @@ class NotebookPane(Vertical):
         if not defs:
             return
         await self.kernel.delete(defs)
-        if downstream:
-            self.run_worker(self.run_cells(sorted(downstream)), group="run")
-        else:
-            self.run_worker(self.refresh_vars(self.graph()), group="run")
+        self._rerun_or_mark_stale(downstream)
 
     def save(self, then=None) -> None:
         """Save; ask for a name when untitled. `then` runs after a successful save."""

@@ -13,6 +13,7 @@ def test_reactive_run_edit_delete_save(tmp_path):
 
     async def main():
         app = GPython(path)
+        app.lazy = False
         async with app.run_test(size=(120, 40)) as pilot:
             await asyncio.wait_for(app.kernel.ready.wait(), 60)
             first, second, third = app.cells()
@@ -91,6 +92,7 @@ def test_mutation_reruns_owner_and_orders_readers(tmp_path):
 
     async def main():
         app = GPython(path)
+        app.lazy = False
         async with app.run_test(size=(120, 40)) as pilot:
             await asyncio.wait_for(app.kernel.ready.wait(), 60)
             own, mut, read = app.cells()

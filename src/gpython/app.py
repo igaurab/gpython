@@ -36,6 +36,13 @@ from .vim import VimTextArea, _is_escape
 from .windows import TabBar, Workspace
 
 KEY_HINTS = "shift+enter run+next · ctrl+enter run · esc esc cell mode · / jump · ctrl+b files · ctrl+w splits · f1 help"
+LAZY_MESSAGE = (
+    "Lazy: a run runs that cell (and the stale cells it uses). Cells that use its variables are only "
+    "marked stale; run them yourself with r 6, or f4 for all stale cells. f3 switches to reactive."
+)
+REACTIVE_MESSAGE = (
+    "Reactive: a run also re-runs every cell that uses its variables, like marimo. f3 switches back to lazy."
+)
 _MODE_STYLES = {
     "insert": "bold black on green",
     "normal": "bold black on yellow",
@@ -194,7 +201,7 @@ class GPython(App):
             self.explorer_root = notebooks[0].resolve().parent
         self._initial_panes = [NotebookPane(p) for p in notebooks] or [NotebookPane(None)]
 
-        self.lazy = False
+        self.lazy = settings.get("run_mode") != "reactive"
         self._first_frame_done = False
         self._first_frame_callbacks: list = []
         self.workspace = Workspace()
@@ -845,9 +852,15 @@ class GPython(App):
         self.pane.toggle_vars()
 
     def action_toggle_lazy(self) -> None:
-        self.lazy = not self.lazy
+        self.set_lazy(not self.lazy)
+
+    def set_lazy(self, on: bool) -> None:
+        """Lazy (the default): a run runs that cell and the stale cells it uses; cells that use its
+        variables are only marked stale, you run them yourself (r 6, f4). Reactive: they re-run too. Saved."""
+        self.lazy = on
+        config.save({"run_mode": "lazy" if on else "reactive"})
         self.update_status()
-        self.notify("Lazy: dependents are marked stale, run them with f4" if self.lazy else "Reactive: dependents re-run automatically")
+        self.notify(LAZY_MESSAGE if on else REACTIVE_MESSAGE, title="Run mode")
 
     async def action_restart_kernel(self) -> None:
         await self.pane.restart_kernel()
@@ -931,7 +944,7 @@ class GPython(App):
             (("clear",), "Clear all outputs", lambda arg="": self.pane.clear_outputs()),
             (("set",), "Options: vim novim lazy nolazy nu nonu", self._ex_set),
             (("variables", "vars"), "Toggle variables panel", lambda arg="": self.action_toggle_vars()),
-            (("lazy",), "Toggle lazy mode", lambda arg="": self.action_toggle_lazy()),
+            (("lazy",), "Toggle run mode: lazy (dependents only marked stale) / reactive (they re-run); saved (f3)", lambda arg="": self.action_toggle_lazy()),
             (("new",), "New cell below", lambda arg="": self.action_add_cell()),
             (("delete", "del"), "Delete current cell", lambda arg="": self.action_delete_cell()),
             (("md", "markdown"), "Cell → Markdown", lambda arg="": self._ex_kind("markdown")),
@@ -967,8 +980,7 @@ class GPython(App):
         if option in ("vim", "novim"):
             self.set_vim(option == "vim")
         elif option in ("lazy", "nolazy"):
-            if self.lazy != (option == "lazy"):
-                self.action_toggle_lazy()
+            self.set_lazy(option == "lazy")
         elif option in ("nu", "number", "nonu", "nonumber"):
             self.set_line_numbers(not option.startswith("no"))
         else:

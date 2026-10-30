@@ -99,6 +99,7 @@ def test_m_and_y_switch_kind_and_reactivity(tmp_path):
     cells = [CellSpec("x = 1"), CellSpec("print(x + 1)")]
 
     async def test(app, pilot):
+        app.lazy = False
         first, second = app.cells()
         first.editor.focus()
         await pilot.press("ctrl+e")

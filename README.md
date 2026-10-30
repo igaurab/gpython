@@ -1,7 +1,15 @@
 # gpython
 
-A reactive Python notebook in the terminal, inspired by marimo.
-Run a cell and every cell that uses its variables re-runs automatically.
+A Python notebook in the terminal, inspired by marimo: cells know which
+variables they define and use, and runs follow that graph.
+
+Running a cell first runs the stale cells it depends on (never run, edited
+since, or their inputs changed), then the cell. What happens to the cells
+*below* it, the ones that use its variables, is the **run mode** (`f3`, saved):
+
+- **lazy** (the default): they are only marked stale. You run what you want,
+  when you want: `r 6` runs cell c6, `f4` runs every stale cell.
+- **reactive**: they re-run automatically, like marimo.
 
 <img width="1372" height="1034" alt="image" src="https://github.com/user-attachments/assets/c93ed22f-cf15-4a26-9322-c62c940febf5" />
 
@@ -37,7 +45,7 @@ Everywhere:
 | `f6` | Python environment: switch venv/interpreter, new uv or python venv, install packages |
 | `ctrl+k` | Interrupt running code |
 | `ctrl+n` / `ctrl+shift+n` | New cell below / above |
-| `ctrl+d` | Delete cell (dependents re-run; `u` in cell mode undoes) |
+| `ctrl+d` | Delete cell (cells that used its variables are marked stale, or re-run when reactive; `u` in cell mode undoes) |
 | `alt+↑/↓`, `ctrl+↑/↓` | Previous / next cell |
 | `ctrl+home` / `ctrl+end` | First / last cell |
 | `alt+shift+↑/↓` | Move the cell up / down |
@@ -46,7 +54,7 @@ Everywhere:
 | `ctrl+w` … | Window commands: `s` split, `v` vsplit, `h j k l` move, `q` close, `o` only, `T` to tab |
 | `f1` | Help |
 | `f2` | Toggle variables panel (hidden at start) |
-| `f3` | Toggle lazy mode (dependents only marked stale) |
+| `f3` | Toggle run mode, saved: lazy (default, cells that use the variables are only marked stale) / reactive (they re-run) |
 | `ctrl+p` | Command palette: run all, restart kernel, … |
 | `ctrl+q` / `:q` | Quit (asks when there are unsaved changes; `:q!` does not) |
 
@@ -89,8 +97,8 @@ Ex commands: `:w [file]`, `:wa`, `:q`, `:q!`, `:wq`, `:qa`, `:wqa`, `:e file`,
 `:sp [file]`, `:vs [file]`, `:only`, `:tabnew [file]`, `:tabclose`, `:tabn`,
 `:tabp`, `:ls`, `:Ex`, `:run`, `:runabove`, `:runbelow`, `:stale`, `:restart`,
 `:clear`, `:set vim|novim|lazy|nolazy|nu|nonu`, `:vars`, `:md`, `:code`,
-`:theme [name]`, `:N` (go to cell N), `:help`. `:set novim`, line numbers and
-the theme are remembered in `~/.config/gpython/config.toml`.
+`:theme [name]`, `:N` (go to cell N), `:help`. `:set novim`, line numbers, the
+run mode and the theme are remembered in `~/.config/gpython/config.toml`.
 
 Cell headers read `✓ c3 [4] 0.42s  defines x · uses y`: display position,
 execution count (like Jupyter's `In [4]`) and run time.
@@ -109,7 +117,8 @@ editor, and it never runs.
 
 - Make one: `ctrl+n` for a new cell, then `escape escape` (cell mode; one `escape` with `--no-vim`) and `m`. Or type
   `:md` in any cell. `y` or `:code` turns it back into code. Turning a code cell
-  into markdown removes its variables, so the cells that used them re-run (and fail).
+  into markdown removes its variables, so the cells that used them are marked
+  stale (reactive mode re-runs them, and they fail).
 - Edit: select the cell and press `enter` (or `i`), or double-click it.
 - Render: `escape escape` (back to cell mode), `shift+enter` (render and go to
   the next cell), `ctrl+enter` (render and stay), or just move to another cell.
