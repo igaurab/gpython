@@ -14,7 +14,10 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
+from jupyter_client.kernelspec import KernelSpec
 from jupyter_client.manager import AsyncKernelManager
+
+from . import envs
 
 OutputCallback = Callable[[str, dict], None]
 
@@ -129,25 +132,93 @@ def _gp_marimo_shim():
     sys.modules["marimo.ui"] = mod.ui
 
 _gp_marimo_shim()
+
+def _gp_uv_magics():
+    # %uv runs uv against *this* kernel's interpreter; %pip falls back to uv where pip is missing.
+    import importlib, importlib.util, os, shlex, subprocess, sys
+    try:
+        ip = get_ipython()
+    except NameError:
+        return
+    exe = os.environ.get("GPYTHON_UV")
+
+    def _run(argv, env):
+        p = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+        for line in p.stdout:
+            print(line, end="", flush=True)
+        p.wait()
+        importlib.invalidate_caches()
+        if p.returncode:
+            print(f"(exit code {p.returncode})")
+
+    def uv(line):
+        if not exe:
+            print("uv is not installed: https://docs.astral.sh/uv/")
+            return
+        args = shlex.split(line)
+        env = dict(os.environ)
+        if args[:1] == ["pip"] and len(args) > 1 and not {"--python", "-p"} & set(args):
+            args[2:2] = ["--python", sys.executable]
+        elif args[:1] in (["add"], ["remove"], ["sync"]) and sys.prefix != sys.base_prefix and "--active" not in args:
+            args[1:1] = ["--active"]
+            env["VIRTUAL_ENV"] = sys.prefix
+        _run([exe, *args], env)
+
+    ip.register_magic_function(uv, "line", "uv")
+    if exe and importlib.util.find_spec("pip") is None:
+        ip.register_magic_function(lambda line: uv("pip " + line), "line", "pip")
+
+_gp_uv_magics()
 """
 
 
 class Kernel:
-    def __init__(self, kernel_name: str = "python3", file: Path | None = None) -> None:
-        self.manager = AsyncKernelManager(kernel_name=kernel_name)
+    def __init__(self, kernel_name: str = "python3", file: Path | None = None, env: envs.Env | None = None) -> None:
+        self.kernel_name = kernel_name
+        self.env = env or envs.builtin()
+        self.manager = self._manager()
         self.client = None
         self.file = file
         self.ready = asyncio.Event()
         self._lock = asyncio.Lock()
 
+    def _manager(self) -> AsyncKernelManager:
+        manager = AsyncKernelManager(kernel_name=self.kernel_name)
+        if self.env.kind != "builtin":
+            # Run ipykernel from the chosen interpreter instead of the installed "python3" spec.
+            manager._kernel_spec = KernelSpec(
+                argv=[str(self.env.python), "-m", "ipykernel_launcher", "-f", "{connection_file}"],
+                display_name=self.env.short,
+                language="python",
+            )
+        return manager
+
     async def start(self) -> None:
         cwd = str(self.file.parent) if self.file else os.getcwd()
         # The kernel's own stdout/stderr would draw over the TUI; user output
         # still arrives through the Jupyter protocol.
-        await self.manager.start_kernel(cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        await self.manager.start_kernel(
+            cwd=cwd, env=envs.kernel_env(self.env), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
         self.client = self.manager.client()
         self.client.start_channels()
         await self._prepare()
+
+    async def switch(self, env: envs.Env) -> None:
+        """Replace the kernel process with one running in `env`. All variables are lost."""
+        self.ready.clear()
+        old_env = self.env
+        await self.shutdown()
+        self.env, self.client = env, None
+        self.manager = self._manager()
+        try:
+            await self.start()
+        except Exception:
+            # Leave a working kernel behind: go back to the previous interpreter.
+            self.env, self.client = old_env, None
+            self.manager = self._manager()
+            await self.start()
+            raise
 
     async def restart(self) -> None:
         self.ready.clear()

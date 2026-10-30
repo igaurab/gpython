@@ -31,6 +31,7 @@ Everywhere:
 | `ctrl+enter` / `ctrl+shift+enter` / `ctrl+e` | Run cell (markdown: render it), stay |
 | `alt+enter` | Run cell and insert a new cell below |
 | `f5` / `f4` | Run all / run stale cells |
+| `f6` | Python environment: switch venv/interpreter, new uv or python venv, install packages |
 | `ctrl+k` | Interrupt running code |
 | `ctrl+n` / `ctrl+shift+n` | New cell below / above |
 | `ctrl+d` | Delete cell (dependents re-run; `u` in cell mode undoes) |
@@ -185,6 +186,40 @@ same without the picker; `:theme` alone shows the current one.
 Themes: catppuccin (mocha, macchiato, frappe, latte), gruvbox (dark, light),
 material (oceanic, palenight, darker, lighter), nord, dracula, tokyo-night,
 solarized (dark, light), monokai, plus Textual's built-in themes.
+
+## Python environments and packages
+
+Each notebook's kernel runs in a Python environment. The header chip shows
+which one (`Python 3.12.4 · .venv ▾`); the bottom bar shows the kernel state
+with a dot (green ready, yellow starting or installing, red failed) and the
+live output of a running install.
+
+At start a notebook uses the environment it last used; otherwise the nearest
+`.venv` / `venv` (next to the file, up to the project root) that has
+ipykernel; otherwise gpython's own interpreter. A project venv without
+ipykernel is pointed out once.
+
+`f6` (or a click on the header chip) opens the environment picker:
+
+- **Switch**: every venv, uv env and conda env next to the notebook and in
+  `~/.virtualenvs`, `~/.venvs`, conda's `envs`, plus uv's managed Pythons and
+  `python3.x` on `PATH`. Type to filter, or type a path to a venv or a python.
+  Picking a venv without ipykernel installs it first. Picking a bare
+  interpreter offers to make a venv from it. Switching starts a fresh kernel
+  (cells become stale) and is remembered for that notebook.
+- **New uv env**: `uv venv <folder> [--python 3.12]`, then ipykernel, then
+  switch. Any Python version uv can download works.
+- **New venv**: the same with `python -m venv` and pip, no uv needed.
+- **Install packages**: `uv pip install` into the kernel's environment (pip
+  without uv). New imports work without restarting the kernel.
+- **Add to project**: `uv add`, writing to `pyproject.toml` and syncing into
+  the kernel's environment.
+
+The same as commands: `:env` (picker) or `:env name|path`, `:venv [folder]
+[python]`, `:uv venv [folder] [python]`, `:pip numpy pandas`, `:pip list`,
+`:pip uninstall x`, `:uv add httpx`, `:uv <anything>` (runs in the project).
+Inside cells, `%uv pip install x` and `%uv add x` target the kernel's own
+interpreter, and `%pip` uses uv in environments that have no pip.
 
 ## Rules (same as marimo)
 

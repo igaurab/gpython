@@ -191,12 +191,51 @@ ThemePicker {
     background: transparent;
 }
 
+EnvPicker {
+    background: transparent;
+}
+
+#env-picker {
+    dock: bottom;
+    height: 20;
+    background: $surface;
+    border-top: solid $accent;
+}
+
+#env-picker.-ask {
+    height: 7;
+}
+
+#env-title {
+    height: 1;
+    padding: 0 1;
+    color: $text-muted;
+}
+
+#env-picker Input {
+    border: none;
+    height: 1;
+    padding: 0 1;
+    margin-top: 1;
+    background: transparent;
+}
+
+#env-picker OptionList {
+    border: none;
+    height: 1fr;
+    background: transparent;
+}
+
 #kernel {
     dock: left;
     width: auto;
     height: 100%;
     padding: 0 1;
     content-align: center middle;
+}
+
+#kernel:hover {
+    background: $accent 30%;
 }
 
 #status {

@@ -20,6 +20,7 @@ KEYMAP: list[tuple[str, str, str]] = [
     ("any", "f5", "Run all cells"),
     ("any", "ctrl+t", "Pick colorscheme with live preview (type to filter, enter keeps, esc restores; :theme name)"),
     ("any", "f4", "Run stale cells"),
+    ("any", "f6", "Python environment: switch the kernel's venv/interpreter, new uv or python venv, install packages (also click the kernel chip; :env :venv :uv :pip)"),
     ("any", "ctrl+k", "Interrupt running code"),
     # ── edit / navigate (any mode) ──
     ("any", "ctrl+n", "New cell below"),

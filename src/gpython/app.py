@@ -26,6 +26,8 @@ from .cell import Cell, CellSnapshot, ends_with_string  # noqa: F401  (re-export
 from .explorer import Explorer
 from .help import HelpScreen
 from .pane import NotebookPane
+from . import envpicker
+from .envpicker import KernelChip
 from .themepicker import ThemePicker
 from .themes import CUSTOM_APP_THEMES, DEFAULT_THEME, editor_themes, palette_for
 from .vim import VimTextArea, _is_escape
@@ -105,6 +107,15 @@ class KeyCapture(ModalScreen[str | None]):
         self.dismiss(key)
 
 
+def _state_style(state: str) -> str:
+    """Colour of the kernel dot in the bottom bar: ready, busy (starting/installing) or failed."""
+    if state == "kernel ready":
+        return "bold green"
+    if "fail" in state or "died" in state:
+        return "bold red"
+    return "bold yellow"
+
+
 class GPython(App):
     CSS_PATH = "app.tcss"
     TITLE = "gpython"
@@ -132,6 +143,7 @@ class GPython(App):
         Binding("f4", "run_stale", "Run stale"),
         Binding("f5", "run_all", "Run all"),
         Binding("ctrl+t", "pick_theme", "Theme"),
+        Binding("f6", "pick_env", "Env", priority=True),  # TextArea binds f6 to select_line
     ]
     _previewing_theme = False  # True while ThemePicker previews: watch_theme does not persist
 
@@ -209,7 +221,7 @@ class GPython(App):
     async def on_mount(self) -> None:
         VimTextArea.mode = "normal"
         header = self.query_one(Header)
-        self._kernel_chip = Static(id="kernel")
+        self._kernel_chip = KernelChip(id="kernel")
         await header.mount(self._kernel_chip, after=header.query_one(HeaderIcon))
         for pane in self._initial_panes:
             await self.workspace.add(pane, "tab")
@@ -345,13 +357,17 @@ class GPython(App):
         self.sub_title = name
         if self._kernel_chip is not None and pane.kernel_label != self._chip_label:
             self._chip_label = pane.kernel_label
-            self._kernel_chip.update(Text(pane.kernel_label, style="dim"))  # width: auto, so a layout
+            version, _, env = pane.kernel_label.partition(" · ")
+            # width: auto, so a layout
+            self._kernel_chip.update(Text.assemble((version, "dim"), (f" · {env}" if env else "", "bold"), (" ▾", "dim")))
         # The file name lives in the header subtitle; the bottom bar shows the vim mode
         # chip, run mode, kernel state, theme and key hints.
         self._status.update(
             Text.assemble(
                 (f" {mode.upper()} ", _MODE_STYLES[mode]) if show_mode else "",
-                f"  {'lazy' if self.lazy else 'reactive'}  ·  {pane.kernel_state}  ·  {self.theme}",
+                f"  {'lazy' if self.lazy else 'reactive'}  ·  ",
+                ("● ", _state_style(pane.kernel_state)),
+                f"{pane.kernel_state}  ·  {self.theme}",
                 (f"    {KEY_HINTS}", "dim"),
             ),
             layout=False,  # one fixed line: no layout pass needed
@@ -793,6 +809,10 @@ class GPython(App):
             (("show",), "Show this cell's code", lambda arg="": self._ex_hide(False)),
             (("interrupt",), "Interrupt running code", lambda arg="": self.pane.kernel.interrupt()),
             (("theme",), "Set theme (:theme name) or show the current one", self._ex_theme),
+            (("env", "kernel", "envs"), "Python environment for this kernel: pick (f6), or :env name|path switches", lambda arg="": envpicker.ex_env(self.pane, arg)),
+            (("venv",), "New venv with python -m venv, then switch to it (:venv folder [python])", lambda arg="": envpicker.ex_venv(self.pane, arg)),
+            (("uv",), "uv for this kernel: :uv add pkg · :uv pip install pkg · :uv venv [folder] [python]", lambda arg="": envpicker.ex_uv(self.pane, arg)),
+            (("pip",), "Install into this kernel's env (:pip numpy; uses uv when available; :pip list, uninstall)", lambda arg="": envpicker.ex_pip(self.pane, arg)),
             (("help", "h"), "Keys and commands", lambda arg="": self.action_help()),
         ]
 
@@ -917,6 +937,10 @@ class GPython(App):
         """Theme picker with live preview; the config is written only on confirm."""
         if not isinstance(self.screen, ThemePicker):
             self.push_screen(ThemePicker(), self._theme_picked)
+
+    def action_pick_env(self) -> None:
+        """Env picker: switch the kernel's environment, create a venv, install packages."""
+        envpicker.open_picker(self.pane)
 
     def _theme_picked(self, name: str | None) -> None:
         if name:

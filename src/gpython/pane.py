@@ -17,7 +17,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import DataTable, Static
 
-from . import notebook
+from . import config, envs, notebook
 from .cell import Cell, CellSnapshot, ends_with_string, outputs_to_ipynb
 from .graph import Graph, build
 from .kernel import Kernel
@@ -39,7 +39,9 @@ class NotebookPane(Vertical):
         self.exec_counter = 0  # Jupyter's In [n]
         self.kernel_state = "starting kernel…"
         self.kernel_label = "Python …"  # filled in once the kernel reports its version
-        self.kernel = Kernel(file=path)
+        remembered = config.load().get(f"env:{path.resolve()}") if path is not None else None
+        env, self._env_hint = envs.default_for(path, remembered)
+        self.kernel = Kernel(file=path, env=env)
         self._kernel_started = False
         self._shutting_down = False
         self._run_lock = asyncio.Lock()
@@ -108,6 +110,8 @@ class NotebookPane(Vertical):
         self.render_status()
         if self.load_error:
             self.notify(self.load_error, severity="warning")
+        if self._env_hint is not None:
+            self.notify(f"Found {self._env_hint.name} without ipykernel: f6 to run the kernel there (ipykernel is installed for you)", timeout=8)
         self.call_after_refresh(lambda: self.run_worker(self._mount_rest(), group="mount"))
 
     async def _mount_rest(self) -> None:
@@ -136,13 +140,28 @@ class NotebookPane(Vertical):
         self.kernel_label = await self._kernel_version()
         self.set_kernel_state("kernel ready")
 
+    async def switch_env(self, env: envs.Env) -> None:
+        """Run this notebook's kernel in another environment; remembered per notebook file."""
+        self.set_kernel_state(f"starting kernel in {env.name}…")
+        try:
+            await self.kernel.switch(env)
+        except Exception as error:
+            self.notify(f"Could not start a kernel in {env.python}: {error}", severity="error", timeout=10)
+        else:
+            if self.path is not None:
+                config.save({f"env:{self.path.resolve()}": str(env.python)})
+        self.kernel_label = await self._kernel_version()
+        self._kernel_reset()
+        self.set_kernel_state("kernel ready")
+
     async def _kernel_version(self) -> str:
         """'Python 3.13.7' from the kernel itself (it may be a different interpreter than ours)."""
         out: list[str] = []
         code = "print(__import__('platform').python_version())"
         await self.kernel._execute(code, lambda kind, c: out.append(c.get("text", "")) if kind == "stream" else None, store_history=False)
         version = "".join(out).strip()
-        return f"Python {version}" if version else "Python"
+        label = f"Python {version}" if version else "Python"
+        return label if self.kernel.env.kind in ("system", "uv-python") else f"{label} · {self.kernel.env.name}"
 
     def set_kernel_state(self, state: str) -> None:
         self.kernel_state = state
@@ -659,13 +678,17 @@ class NotebookPane(Vertical):
     async def restart_kernel(self) -> None:
         self.set_kernel_state("restarting kernel…")
         await self.kernel.restart()
+        self._kernel_reset()
+        self.set_kernel_state("kernel ready")
+
+    def _kernel_reset(self) -> None:
+        """A fresh kernel process: every cell that ran is stale, the variables panel is empty."""
         for cell in self.cells():
             cell.last_defs = set()
             if cell.ran_source is not None:
                 cell.set_status("stale")
         if self._vars is not None:
             self._vars.clear()
-        self.set_kernel_state("kernel ready")
 
     def clear_outputs(self) -> None:
         for cell in self.cells():
