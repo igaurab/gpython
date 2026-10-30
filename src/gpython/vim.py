@@ -365,6 +365,11 @@ class VimTextArea(TextArea):
         super()._on_focus(event)
         self._apply_mode()
 
+    def watch_has_focus(self, has_focus: bool) -> None:
+        """Textual re-applies the stylesheet to a widget and its component classes whenever its
+        focus changes, for `:focus` rules. No rule depends on an editor's focus (a cell's TextArea
+        has no border either way), and that re-application cost about 2 ms per cell move."""
+
 
     @property
     def visual_mode(self) -> str:

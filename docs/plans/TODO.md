@@ -81,6 +81,35 @@ Left on the table: Textual's own import (~100 ms: `textual.app`, css, compositor
 palette), tree-sitter's Python query compile (15 ms, once), and bash start-up in the launcher
 (~35 ms; a symlink straight to `.venv/bin/gpython` avoids it).
 
+### Perf round 4 (2026-10-31): focus changes no longer re-apply CSS; what the bench really measures
+
+Traced every message during 30 cell moves (headless, 60 cells). Findings, in order of size:
+
+- 243 of the ~290 messages per move were `Callback`s posted by the pilot's `_wait_for_screen`
+  (one to every widget on each `pilot.pause()`), each costing a message dispatch plus an
+  `inspect.signature` call. That is harness cost, not app cost: 30 pauses alone are
+  0.16 s of process time. `bench.py` now reports `pause_30_floor_cpu` and
+  `moves_30_net = moves_30_proc - pause_30_floor_cpu`, the app's own cost of 30 moves.
+- Textual's `Widget.watch_has_focus` calls `update_node_styles()` on every focus change,
+  re-applying the stylesheet to the widget and all its children (and, for a TextArea, its
+  eight component classes). No rule in `app.tcss` depends on `Cell:focus` or on the editor's
+  `:focus` (the cell's TextArea has `border: none` either way; the focus colour is painted via
+  `outline_left`), so `Cell` and `VimTextArea` override `watch_has_focus` to skip it. The
+  `Cell TextArea:focus { border: none }` rule was dead and is gone.
+- Every scrolling move ends in `render_full_update` (the compositor marks the whole screen
+  dirty when the visible map moves). Non-scrolling moves are partial updates. This is Textual's
+  design; fewer widgets per cell is still the only lever.
+- A title/sub-title change (`HeaderTitle.set_title` → `Static.update` with layout) forces one
+  full reflow and repaint. It happens once per dirty/clean toggle, not per key.
+
+| metric (2 ms tick) | before | after |
+|---|---|---|
+| moves_30_proc | 0.41–0.50 s | 0.36–0.39 s |
+| moves_30_net (new) | – | 0.20–0.22 s (≈7 ms CPU per move) |
+| pause_30_floor_cpu (new) | – | 0.16 s |
+| keys_30_proc / keys_30_net | 0.05–0.06 / 0.10–0.15 s | 0.05 / 0.13 s (unchanged) |
+| first_paint / loaded_60 | 0.07–0.08 / 0.31–0.38 s | 0.07 / 0.31–0.33 s (unchanged) |
+
 ## 2. Acceptance in a real terminal
 
 - `./gpython ~/leetcode/notebooks/0001-two-sum.py`: run all (f5), problem statement renders as

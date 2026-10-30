@@ -105,6 +105,12 @@ class Cell(Vertical):
 
     can_focus = True
 
+    def watch_has_focus(self, has_focus: bool) -> None:
+        """Textual re-applies the stylesheet to a widget and all its children whenever its focus
+        changes, for `:focus` rules. A cell's focus colour is painted through `outline_left` in
+        `_paint_state`, no rule depends on `Cell:focus`, and the re-application walked the header,
+        editor and output on every move in cell mode."""
+
     def __init__(self, source: str = "", kind: str = "code", spec: notebook.CellSpec | None = None) -> None:
         self.cid = f"c{next(_ids)}"
         super().__init__(id=self.cid)

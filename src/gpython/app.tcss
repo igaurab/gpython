@@ -109,10 +109,6 @@ Cell TextArea {
     padding: 0;
 }
 
-Cell TextArea:focus {
-    border: none;
-}
-
 .cell-header {
     height: 1;
 }

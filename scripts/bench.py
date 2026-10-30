@@ -141,12 +141,17 @@ async def bench(n: int, profile_what: str | None) -> dict[str, float]:
             await pilot.pause()
         results["pause_30_floor"] = time.perf_counter() - t
 
+        cpu = time.process_time()
+        for _ in range(30):
+            await pilot.pause()
+        results["pause_30_floor_cpu"] = time.process_time() - cpu
         t, cpu = time.perf_counter(), time.process_time()
         for _ in range(30):
             app.action_focus_cell(1)
             await pilot.pause()
         results["moves_30"] = time.perf_counter() - t
         results["moves_30_proc"] = time.process_time() - cpu
+        results["moves_30_net"] = max(0.0, results["moves_30_proc"] - results["pause_30_floor_cpu"])
         if profile_what == "moves":
             prof = cProfile.Profile()
             prof.enable()
