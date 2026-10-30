@@ -13,8 +13,8 @@ Run a cell and every cell that uses its variables re-runs automatically.
 
 | Key | Action |
 |---|---|
-| `shift+enter` / `ctrl+e` | Run cell (and everything downstream) |
-| `ctrl+enter` | Run cell and open a new cell below |
+| `shift+enter` | Run cell and open a new cell below |
+| `ctrl+enter` / `ctrl+e` | Run cell in place (and everything downstream) |
 | `ctrl+n` | New cell below (starts in insert mode) |
 | `ctrl+d` | Delete cell (dependents re-run) |
 | `alt+↑/↓` | Previous / next cell (`j`/`k` past the edge also work) |
@@ -36,8 +36,8 @@ Editing: Enter indents after `:` or an open bracket and dedents after
 `return`/`pass`/…; backspace in leading whitespace removes one indent level;
 Tab inserts four spaces.
 
-`shift+enter` needs a terminal that reports it (Ghostty, Kitty, WezTerm,
-iTerm2). In Terminal.app use `ctrl+e`.
+`shift+enter` and `ctrl+enter` need a terminal that reports them (Ghostty,
+Kitty, WezTerm, iTerm2). In Terminal.app use `ctrl+e` and `ctrl+n`.
 
 ## Rules (same as marimo)
 

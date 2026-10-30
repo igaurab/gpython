@@ -19,7 +19,7 @@ def test_reactive_run_edit_delete_save(tmp_path):
 
             # Running the first cell re-runs its dependent, but not the unrelated cell.
             first.editor.focus()
-            await pilot.press("shift+enter")
+            await pilot.press("ctrl+enter")
             await app.workers.wait_for_complete()
             assert second.output_text.strip() == "2"
             assert third.status == "idle"
@@ -64,9 +64,9 @@ def test_reactive_run_edit_delete_save(tmp_path):
             await pilot.press("ctrl+s")
             assert parse(path.read_text()) == ["y = x * 2\ny", "print('independent')"]
 
-            # ctrl+enter runs and opens a new cell below in insert mode; the mode is global.
+            # shift+enter runs and opens a new cell below in insert mode; the mode is global.
             second.editor.focus()
-            await pilot.press("escape", "ctrl+enter")
+            await pilot.press("escape", "shift+enter")
             await app.workers.wait_for_complete()
             cells = app.cells()
             assert len(cells) == 3 and app.focused is cells[1].editor

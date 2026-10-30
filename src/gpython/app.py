@@ -183,8 +183,8 @@ class GPython(App):
     CSS_PATH = "app.tcss"
     TITLE = "gpython"
     BINDINGS = [
-        Binding("shift+enter,ctrl+e", "run_cell", "Run", priority=True),
-        Binding("ctrl+enter", "run_and_add", "Run + new", priority=True),
+        Binding("ctrl+enter,ctrl+e", "run_cell", "Run", priority=True),
+        Binding("shift+enter", "run_and_add", "Run + new", priority=True),
         Binding("ctrl+n", "add_cell", "New cell", priority=True),
         Binding("ctrl+d", "delete_cell", "Delete cell", priority=True),
         Binding("alt+up,ctrl+up", "focus_cell(-1)", "Prev cell", show=False, priority=True),
@@ -355,7 +355,7 @@ class GPython(App):
         cell.scroll_visible()
 
     async def action_run_and_add(self) -> None:
-        """ctrl+enter: run this cell, then start typing in a fresh cell below."""
+        """shift+enter: run this cell, then start typing in a fresh cell below."""
         cell = self.current_cell()
         if cell is None:
             return
