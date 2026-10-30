@@ -162,6 +162,59 @@ viewport. It saves memory (1000 cells: 134 MB) and 40 ms of `loaded_60`, but the
 editor mounts land on scrolling (`moves_30_proc` 0.35 → 0.39 s), and the user wants speed
 first. A widget-free off-screen cell list has the same scroll-time mounting by construction.
 
+### Next: a virtual cell list for notebooks over ~100 cells (decided 2026-10-30, not started)
+
+Every keystroke and every cell move costs time in proportion to the number of mounted
+widgets: Textual re-arranges all of them (`_arrange_root`), rebuilds its compositor map over
+all of them and repaints the screen. Measured on this branch (`scripts/bench.py --cells N`,
+2 ms tick, per key and per move = the `_net` rows divided by 30):
+
+| cells | loaded | per keystroke | per cell move |
+|---|---|---|---|
+| 60 | 0.24 s | 2 ms | 6 ms |
+| 200 | 0.51 s | 5 ms | 12 ms |
+| 500 | 1.19 s | 5 ms | 25 ms |
+| 1000 | 1.37 s | 16 ms | 34 ms |
+
+The user's notebooks can be over 200 cells, and the budget is 10 ms per keystroke.
+
+The two options and their trade-off:
+
+- **Cheaper repaints on scroll** (Textual repaints the whole screen on every scrolling move,
+  `_render_chops` ≈ 8 ms at 140×45). Gains 2–3 ms per move at every size, nothing per
+  keystroke, and does not touch the scaling above; it means patching Textual's compositor,
+  which is fragile across Textual releases. Not worth it on its own.
+- **A virtual cell list** (widget-free off-screen cells): only the cells near the viewport are
+  widgets; the rest are plain objects (`CellState`: source, kind, spec, status, outputs log,
+  exec count, cursor). Per-key and per-move cost and load time become independent of the
+  notebook size (1000 cells would feel like 60: ~2 ms per key, ~6 ms per move, load ~0.15 s),
+  and memory is ~1 kB per off-screen cell. The cost: widgets must be built as the viewport
+  moves into unseen cells. Done after the frame paints and ahead of the viewport, key-to-paint
+  latency stays flat, but `moves_30_proc` counts that work, exactly as it did for the parked
+  sleeping-cells branch (`08-sleeping-cells.md`: +40 ms over 30 moves at 60 cells).
+
+How to serve both small and large notebooks: a **mounted-cells budget** (~100). A notebook
+under the budget mounts every cell at load, as today, and never mounts or unmounts on scroll,
+so nothing changes for it and the 60-cell bench cannot regress. Over the budget the mounted
+cells are a window around the viewport: after each paint, cells entering the margin are
+mounted and the farthest ones unmounted, both under one `batch_update`. Jumps (`G`, search,
+`:N`, run-by-number) move the window to the target first.
+
+What the refactor touches (about a day, plan it in `docs/plans/09-virtual-cells.md` first):
+- `cell.py`: split `Cell` into `CellState` (all data, including the outputs log that
+  `outputs_snapshot` already keeps, and the editor's text and cursor while unmounted) and the
+  `Cell` widget as its view; `begin_run`/`add_output`/`end_run`/`set_status` act on the state
+  and update the widget when there is one.
+- `pane.py`: `self.states` is the notebook; `cells()` stays the mounted widgets so the ~40
+  call sites and the tests keep working for notebooks under the budget; the graph, `run_cells`,
+  `write_file`, search, undo snapshots, relabel and `refresh_info` iterate states; `select`,
+  `goto_cell`, `_go_to_match` move the window before focusing.
+- Unmounting loses the editor's undo history for cells that scrolled more than a window away
+  (text and cursor are kept); vim keeps undo per buffer, so decide whether to keep
+  `TextArea.history` objects in the state.
+- Markdown cells: `_LinesByWidth` renders are rebuilt on remount; images in outputs are
+  re-decoded from the log on remount.
+
 ### Memory (2026-10-30): two leaks fixed, what a cell costs, what is left
 
 `uv run python3 scripts/memprof.py` (headless, 60 cells, tracemalloc + live object counts
