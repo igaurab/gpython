@@ -10,24 +10,41 @@ without markers so the file stays an ordinary script.
 
 `.ipynb` files load code and markdown cells (outputs are dropped) and save as
 nbformat 4 with empty outputs, keeping the notebook metadata that was loaded.
+
+marimo files (`import marimo` + `app = marimo.App(...)`) load one cell per
+`@app.cell` function (body without the trailing `return`), `@app.class_definition`
+or `@app.function`, and save back in marimo's own layout, byte for byte when
+nothing was edited.
 """
 
 from __future__ import annotations
 
 import ast
+import io
 import json
+import textwrap
+import tokenize
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from gpython import graph
+
 MARKER = "# %%"
 Kind = Literal["code", "markdown"]
+
+
+Decorator = Literal["cell", "class_definition", "function"]
 
 
 @dataclass(frozen=True)
 class CellSpec:
     source: str
     kind: Kind = "code"
+    # marimo only; ignored by the other formats.
+    name: str | None = None  # function name when it is not `_`
+    hide_code: bool = False
+    decorator: Decorator = "cell"
 
 
 def _spec(cell: CellSpec | str) -> CellSpec:
@@ -226,6 +243,292 @@ def dump_ipynb(cells: list[CellSpec], path: Path | None = None) -> str:
     return json.dumps(nb, indent=1, ensure_ascii=False) + "\n"
 
 
+# ── marimo ───────────────────────────────────────────────────────────────
+
+MARIMO_PRELUDE = 'import marimo\n\n__generated_with = "0.25.2"\napp = marimo.App(width="medium")\n\n\n'
+MARIMO_FOOTER = '\n\n\nif __name__ == "__main__":\n    app.run()\n'
+_LINE_LIMIT = 88  # ruff/black line length marimo formats with
+_marimo_frame: dict[Path, tuple[str, str]] = {}  # path -> (prelude, footer) seen at load
+_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+
+
+def is_marimo(text: str) -> bool:
+    """True when the module does `import marimo` and `app = marimo.App(...)` at top level."""
+    try:
+        body = ast.parse(text).body
+    except SyntaxError:
+        return False
+    imports = any(
+        isinstance(node, ast.Import) and any(a.name == "marimo" and a.asname is None for a in node.names)
+        for node in body
+    )
+    return imports and any(
+        isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "app" for t in node.targets)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Attribute)
+        and node.value.func.attr == "App"
+        and isinstance(node.value.func.value, ast.Name)
+        and node.value.func.value.id == "marimo"
+        for node in body
+    )
+
+
+def _app_decorator(node: ast.stmt) -> tuple[ast.expr, str, bool] | None:
+    """(decorator, "cell" | "class_definition" | "function", hide_code) for `@app.x` / `@app.x(...)`."""
+    for dec in getattr(node, "decorator_list", []):
+        call = dec if isinstance(dec, ast.Call) else None
+        target = call.func if call else dec
+        if (
+            isinstance(target, ast.Attribute)
+            and isinstance(target.value, ast.Name)
+            and target.value.id == "app"
+            and target.attr in ("cell", "class_definition", "function")
+        ):
+            hide = any(
+                k.arg == "hide_code" and isinstance(k.value, ast.Constant) and k.value.value is True
+                for k in (call.keywords if call else [])
+            )
+            return dec, target.attr, hide
+    return None
+
+
+def _header_end(lines: list[str], node: ast.stmt) -> int:
+    """1-based line on which the `def ...(...):` header of node ends."""
+    text = "\n".join(lines[node.lineno - 1 : node.end_lineno]) + "\n"
+    depth = 0
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.type == tokenize.OP:
+                if tok.string in "([{":
+                    depth += 1
+                elif tok.string in ")]}":
+                    depth -= 1
+                elif tok.string == ":" and depth == 0:
+                    return node.lineno + tok.start[0] - 1
+    except (tokenize.TokenError, SyntaxError):
+        pass
+    return node.lineno
+
+
+def _unindent(line: str) -> str:
+    """Remove the 4-space function indent (marimo strips it from every line, strings included)."""
+    if line.startswith("    "):
+        return line[4:]
+    return "" if not line.strip() else line
+
+
+def _strip_blank(lines: list[str]) -> list[str]:
+    start, end = 0, len(lines)
+    while start < end and not lines[start].strip():
+        start += 1
+    while end > start and not lines[end - 1].strip():
+        end -= 1
+    return lines[start:end]
+
+
+def _md_code(text: str) -> str:
+    """Cell code for a markdown cell, the way marimo writes it."""
+    if '"""' in text or text.endswith("\\"):
+        escaped = text.replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
+        return f'mo.md("""\n{escaped}\n""")'
+    return f'mo.md(r"""\n{text}\n""")'
+
+
+def _as_markdown(source: str) -> str | None:
+    """The markdown text when the cell is exactly `mo.md(r\"\"\"...\"\"\")` in marimo's layout.
+
+    Other spellings stay code cells so that saving never rewrites them.
+    """
+    try:
+        body = ast.parse(source).body
+    except SyntaxError:
+        return None
+    if len(body) != 1 or not isinstance(body[0], ast.Expr):
+        return None
+    call = body[0].value
+    if not (
+        isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "md"
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "mo"
+        and len(call.args) == 1
+        and not call.keywords
+        and isinstance(call.args[0], ast.Constant)
+        and isinstance(call.args[0].value, str)
+    ):
+        return None
+    text = textwrap.dedent(call.args[0].value).strip("\n")
+    return text if _md_code(text) == source else None
+
+
+def _cell_from_function(lines: list[str], node: ast.FunctionDef | ast.AsyncFunctionDef, hide: bool) -> CellSpec:
+    start = _header_end(lines, node)  # 0-based index of the first body line
+    end = node.end_lineno
+    if node.body and isinstance(node.body[-1], ast.Return):
+        end = node.body[-1].lineno - 1
+    source = "\n".join(_strip_blank([_unindent(line) for line in lines[start:end]]))
+    if source.strip() == "pass":
+        source = ""
+    name = None if node.name == "_" else node.name
+    text = _as_markdown(source) if hide else None
+    if text is not None:
+        return CellSpec(text, "markdown", name, True, "cell")
+    return CellSpec(source, "code", name, hide, "cell")
+
+
+def _first_line(node: ast.stmt) -> int:
+    return min([node.lineno, *(d.lineno for d in getattr(node, "decorator_list", []))])
+
+
+def _split_marimo(text: str) -> tuple[str, list[CellSpec], str]:
+    """(prelude, cells, footer) of a marimo file; prelude + cells joined + footer == text."""
+    lines = text.split("\n")
+    body = ast.parse(text).body
+    first = next((i for i, n in enumerate(body) if _app_decorator(n)), len(body))
+    footer_at = len(body)
+    for i in range(len(body) - 1, first - 1, -1):
+        if isinstance(body[i], ast.If) and "__name__" in ast.unparse(body[i].test):
+            footer_at = i
+            break
+
+    nodes = body[first:footer_at]
+    cells: list[CellSpec] = []
+    for i, node in enumerate(nodes):
+        found = _app_decorator(node)
+        stop = _first_line(nodes[i + 1]) - 1 if i + 1 < len(nodes) else node.end_lineno
+        if found and found[1] == "cell" and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            cells.append(_cell_from_function(lines, node, found[2]))
+        elif found:
+            dec, kind, hide = found
+            # The whole class/def without its `@app...` line; comments up to the next cell stay.
+            chunk = _strip_blank(lines[dec.end_lineno : stop])
+            cells.append(CellSpec("\n".join(chunk), "code", None, hide, kind))
+        else:
+            cells.append(CellSpec("\n".join(_strip_blank(lines[_first_line(node) - 1 : stop]))))
+
+    if nodes:
+        prelude = "\n".join(lines[: _first_line(nodes[0]) - 1]) + "\n"
+        footer = "\n" + "\n".join(lines[nodes[-1].end_lineno :])
+    else:
+        cut = _first_line(body[footer_at]) - 1 if footer_at < len(body) else len(lines)
+        prelude = "\n".join(lines[:cut]).rstrip("\n") + "\n\n\n"
+        footer = "\n" + "\n".join(lines[cut:]) if cut < len(lines) else MARIMO_FOOTER
+    return prelude, cells, footer
+
+
+def parse_marimo(text: str, path: Path | None = None) -> list[CellSpec]:
+    """Cells of a marimo notebook. With a path, its prelude/footer are kept for save()."""
+    prelude, cells, footer = _split_marimo(text)
+    if path is not None:
+        _marimo_frame[path.resolve()] = (prelude, footer)
+    return cells or [CellSpec("")]
+
+
+def _has_top_level_await(tree: ast.AST) -> bool:
+    for child in ast.iter_child_nodes(tree):
+        if isinstance(child, _SCOPES):
+            continue
+        if isinstance(child, (ast.Await, ast.AsyncFor, ast.AsyncWith)) or _has_top_level_await(child):
+            return True
+    return False
+
+
+def _cell_code(cell: CellSpec) -> str:
+    return _md_code(cell.source.strip("\n")) if cell.kind == "markdown" else cell.source
+
+
+def _wrapped(names: list[str], prefix: str, close: str, indent: str) -> str:
+    """`prefix a, b close`, or one name per line when too long (as ruff formats it)."""
+    flat = prefix + ", ".join(names) + close
+    if len(flat) <= _LINE_LIMIT:
+        return flat
+    inner = "".join(f"{indent}    {n},\n" for n in names)
+    return f"{prefix}\n{inner}{indent}{close}"
+
+
+def _dump_marimo_cell(cell: CellSpec, code: str, params: list[str], returns: list[str]) -> str:
+    hide = cell.hide_code or cell.kind == "markdown"
+    if cell.decorator in ("class_definition", "function"):
+        deco = f"@app.{cell.decorator}" + ("(hide_code=True)" if hide else "")
+        return f"{deco}\n" + "\n".join(_strip_blank(code.split("\n")))
+
+    deco = "@app.cell(hide_code=True)" if hide else "@app.cell"
+    body = _strip_blank(code.split("\n"))
+    try:
+        tree = ast.parse(graph.strip_magics("\n".join(body)))
+    except SyntaxError:
+        tree = None
+    is_async = tree is not None and _has_top_level_await(tree)
+    head = ("async def " if is_async else "def ") + (cell.name or "_") + "("
+    signature = _wrapped(params, head, "):", "")
+
+    if len(returns) == 1:
+        ret = f"    return ({returns[0]},)"
+    elif returns:
+        ret = "    return " + ", ".join(returns)
+        if len(ret) > _LINE_LIMIT:
+            ret = _wrapped(returns, "    return (", ")", "    ")
+    else:
+        ret = "    return"
+
+    parts = [deco, signature]
+    parts.extend(f"    {line}" if line else "" for line in body)
+    if body:
+        # Formatter rule: one blank line after a trailing import or nested def/class,
+        # unless comments follow it.
+        last = tree.body[-1] if tree is not None and tree.body else None
+        if (
+            isinstance(last, (ast.Import, ast.ImportFrom, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and last.end_lineno == len(body)
+        ):
+            parts.append("")
+    parts.append(ret)
+    return "\n".join(parts)
+
+
+def dump_marimo(cells: list[CellSpec | str], path: Path | None = None) -> str:
+    """marimo file text.
+
+    Like marimo: a cell's parameters are the names it uses that another `@app.cell`
+    defines, and it returns the names it defines that another cell uses, both sorted.
+    Names from `@app.class_definition`/`@app.function` cells are module-level, never parameters.
+    """
+    specs = [_spec(c) for c in cells]
+    codes = [_cell_code(c) for c in specs]
+    analyses: list[tuple[set[str], set[str]]] = []
+    for spec, code in zip(specs, codes):
+        try:
+            defs, refs = graph.analyze(code)
+        except SyntaxError:
+            defs, refs = set(), set()
+        analyses.append((defs if spec.decorator == "cell" else set(), refs))
+
+    parts = []
+    for i, (spec, code) in enumerate(zip(specs, codes)):
+        defs, refs = analyses[i]
+        others = [a for j, a in enumerate(analyses) if j != i]
+        defined = set().union(*(d for d, _ in others))
+        used = set().union(*(r for _, r in others))
+        parts.append(_dump_marimo_cell(spec, code, sorted(refs & defined), sorted(defs & used)))
+
+    prelude, footer = MARIMO_PRELUDE, MARIMO_FOOTER
+    if path is not None:
+        prelude, footer = _marimo_frame.get(path.resolve(), (prelude, footer))
+    return prelude + "\n\n\n".join(parts) + footer
+
+
+def _starts_with_marimo_import(cells: list[CellSpec]) -> bool:
+    if not cells or cells[0].kind != "code":
+        return False
+    try:
+        body = ast.parse(cells[0].source).body
+    except SyntaxError:
+        return False
+    return bool(body) and isinstance(body[0], ast.Import) and any(a.name == "marimo" for a in body[0].names)
+
+
 # ── public API ───────────────────────────────────────────────────────────
 
 
@@ -241,6 +544,9 @@ def load_cells(path: Path) -> tuple[list[CellSpec], bool]:
     text = path.read_text()
     if _is_ipynb(path):
         return parse_ipynb(text, path), True
+    _marimo_frame.pop(path.resolve(), None)
+    if is_marimo(text):
+        return parse_marimo(text, path), True
     if has_markers(text):
         return parse(text), True
     return split_script(text), False
@@ -265,5 +571,7 @@ def save(path: Path, cells: list[CellSpec | str], markers: bool = True) -> None:
     specs = [_spec(c) for c in cells]
     if _is_ipynb(path):
         path.write_text(dump_ipynb(specs, path))
+    elif path.resolve() in _marimo_frame or (not path.exists() and _starts_with_marimo_import(specs)):
+        path.write_text(dump_marimo(specs, path))
     else:
         path.write_text(dump(specs, markers))

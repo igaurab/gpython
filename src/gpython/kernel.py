@@ -46,6 +46,89 @@ def _gp_setup(file):
         os.chdir(folder)
         if folder not in sys.path:
             sys.path.insert(0, folder)
+
+def _gp_marimo_shim():
+    # A tiny stand-in for `marimo` so marimo notebooks run when it is not installed.
+    try:
+        import marimo
+        return
+    except ImportError:
+        pass
+    import html, re, sys, types
+
+    def _md_of(item):
+        f = getattr(item, "_repr_markdown_", None)
+        return f() if callable(f) else str(item)
+
+    def _html_to_md(text):
+        t = re.sub(r"<pre[^>]*>(.*?)</pre>", lambda m: "\n```\n" + re.sub(r"<[^>]+>", "", m.group(1)).strip("\n") + "\n```\n", text, flags=re.S | re.I)
+        t = re.sub(r"<code[^>]*>(.*?)</code>", r"`\1`", t, flags=re.S | re.I)
+        t = re.sub(r"<(strong|b)(\s[^>]*)?>(.*?)</\1>", r"**\3**", t, flags=re.S | re.I)
+        t = re.sub(r"<(em|i)(\s[^>]*)?>(.*?)</\1>", r"*\3*", t, flags=re.S | re.I)
+        t = re.sub(r"<sup>(.*?)</sup>", r"^\1", t, flags=re.S | re.I)
+        t = re.sub(r"\s*<li[^>]*>", "\n- ", t, flags=re.I)
+        t = re.sub(r"<br\s*/?>|</?p[^>]*>", "\n\n", t, flags=re.I)
+        t = re.sub(r"<[^>]+>", "", t)
+        t = html.unescape(t).replace("\xa0", " ")
+        t = re.sub(r"[ \t]+\n", "\n", t)
+        return re.sub(r"\n{3,}", "\n\n", t).strip()
+
+    class _Md:
+        def __init__(self, text):
+            self.text = text
+        def _repr_markdown_(self):
+            return self.text
+        def __repr__(self):
+            return self.text
+
+    class Html:
+        def __init__(self, text):
+            self.text = text
+        def _repr_html_(self):
+            return self.text
+        def _repr_markdown_(self):
+            return _html_to_md(self.text)
+        def __repr__(self):
+            return self._repr_markdown_()
+
+    class _Stack:
+        def __init__(self, items, sep):
+            self.items, self.sep = list(items), sep
+        def _repr_markdown_(self):
+            return self.sep.join(_md_of(i) for i in self.items)
+        def __repr__(self):
+            return self._repr_markdown_()
+
+    def _keep(obj=None, **kw):
+        if obj is None:  # used as @app.cell(hide_code=True)
+            return lambda f: f
+        return obj
+
+    class App:
+        def __init__(self, **kw):
+            self.kw = kw
+        cell = class_definition = function = staticmethod(_keep)
+        def run(self):
+            pass
+
+    class _Ui(types.ModuleType):
+        def __getattr__(self, name):
+            if name.startswith("__"):
+                raise AttributeError(name)
+            raise NotImplementedError("marimo.ui widgets are not supported in gpython")
+
+    mod = types.ModuleType("marimo")
+    mod.__gpython_shim__ = True
+    mod.md = lambda text: _Md(text)
+    mod.Html = Html
+    mod.vstack = lambda items, **kw: _Stack(items, "\n\n")
+    mod.hstack = lambda items, **kw: _Stack(items, "  ")
+    mod.App = App
+    mod.ui = _Ui("marimo.ui")
+    sys.modules["marimo"] = mod
+    sys.modules["marimo.ui"] = mod.ui
+
+_gp_marimo_shim()
 """
 
 

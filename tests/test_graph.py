@@ -78,3 +78,13 @@ def test_reader_above_mutator_is_not_reordered():
 
 def test_magics_are_ignored_for_analysis():
     assert analyze("%matplotlib inline\n!ls\nx = 1\nx?") == ({"x"}, set())
+
+
+def test_marimo_path_cell_exports_only_run():
+    # marimo's sys.path cell: `_sys`/`_pathlib` are private, so only `run` is defined.
+    src = (
+        "import sys as _sys, pathlib as _pathlib\n"
+        '_sys.path[:0] = [str(p) for p in _pathlib.Path(__file__).resolve().parents if (p / "lc.py").exists()]\n'
+        "from lc import run"
+    )
+    assert analyze(src) == ({"run"}, set())
