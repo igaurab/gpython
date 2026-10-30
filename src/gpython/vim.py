@@ -594,6 +594,8 @@ class VimTextArea(TextArea):
                 self.undo()
             case "ctrl+r":
                 self.redo()
+            case "r":
+                self.post_message(self.RunByNumber(self))
             case ":":
                 self.post_message(self.ExCommand(self))
             case _:

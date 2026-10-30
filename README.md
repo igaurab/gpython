@@ -11,7 +11,7 @@ since, or their inputs changed), then the cell. What happens to the cells
   when you want, without moving: `r 6` runs cell c6, `r r` this cell, `r C` the
   cells down to this one, `r a` the cells after it, `r A` all, `r s` the stale
   ones (`f4`); `r k` restarts the kernel, `r R` restarts and runs all, `r i`
-  interrupts (`space r …` inside an editor).
+  interrupts (the same keys work in the editor's normal mode, where `space r …` is a synonym).
 - **reactive**: they re-run automatically, like marimo.
 
 <img width="1372" height="1034" alt="image" src="https://github.com/user-attachments/assets/c93ed22f-cf15-4a26-9322-c62c940febf5" />

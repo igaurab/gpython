@@ -730,7 +730,7 @@ class GPython(App):
 
 
     def start_run_by_number(self, pane: NotebookPane | None = None) -> None:
-        """r (cell mode) / space r (vim normal mode): wait for a cell number, then run that cell."""
+        """r (cell mode and vim normal mode; space r is a synonym): wait for a cell number, then run that cell."""
         from .runnumber import RunByNumber
 
         self._start_number_sequence(RunByNumber(self, pane or self.pane))

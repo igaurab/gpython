@@ -1,4 +1,4 @@
-"""Act on a cell by its number: `r 6` runs c6, `g 6` goes to c6 (cell mode), `space r 6` runs it from vim normal mode.
+"""Act on a cell by its number: `r 6` runs c6 (cell mode and vim normal mode, where `space r 6` is a synonym), `g 6` goes to c6 (cell mode).
 
 While a sequence waits, the app sends every key here (GPython.on_event) and the bottom bar
 shows what has been typed. The number is used as soon as no longer number can name a

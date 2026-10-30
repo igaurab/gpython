@@ -1,4 +1,4 @@
-"""Run a cell by its number: r N in cell mode, space r N in vim normal mode, :run N."""
+"""Run a cell by its number: r N in cell mode and in vim normal mode (space r N too), :run N."""
 
 import asyncio
 
@@ -221,6 +221,39 @@ def test_space_r_from_vim_normal_mode(tmp_path):
         assert last.source == "b = 4"
 
     ui(tmp_path, test, kernel=True)
+
+
+def test_r_from_vim_normal_mode_runs_without_editing(tmp_path):
+    async def test(app, pilot):
+        first, _, show, last = app.cells()
+        app.select(last, "normal")
+        await pilot.pause()
+        await pilot.press("r")
+        await pilot.pause()
+        assert "run cell: c_" in status(app)
+        await pilot.press("3")
+        await settle(app, pilot)
+        assert show.output_text == "3\n"
+        await pilot.press("r", "C")
+        await settle(app, pilot)
+        assert first.status == last.status == "ok" and last.exec_count > 0
+        assert app.focused is last.editor and VimTextArea.mode == "normal"
+        assert last.source == "b = 4"
+
+    ui(tmp_path, test, kernel=True)
+
+
+def test_r_then_an_unknown_letter_in_normal_mode_cancels_and_edits_nothing(tmp_path):
+    async def test(app, pilot):
+        last = app.cells()[-1]
+        app.select(last, "normal")
+        await pilot.pause()
+        await pilot.press("r", "x")
+        await pilot.pause()
+        assert app._number_sequence is None
+        assert last.source == "b = 4" and VimTextArea.mode == "normal"
+
+    ui(tmp_path, test)
 
 
 def test_insert_mode_types_r_and_space(tmp_path):
