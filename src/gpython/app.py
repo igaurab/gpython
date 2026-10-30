@@ -186,6 +186,7 @@ class GPython(App):
         VimTextArea.enabled = vim
         VimTextArea.line_numbers = settings.get("line_numbers", True) is not False
         bigtext.enabled = settings.get("experimental.true_markdown") is True
+        VimTextArea.search = None
 
         files = [p for p in ([path] if path is not None else []) + list(paths or [])]
         self.explorer_root = Path.cwd()
@@ -821,6 +822,16 @@ class GPython(App):
                 cell.editor.show_line_numbers = on
         config.save({"line_numbers": on})
 
+    def show_search(self, regex) -> None:
+        """Paint the matches of `regex` in every editor (None: no highlight); repaints only on a change."""
+        if regex == VimTextArea.search:
+            return
+        VimTextArea.search = regex
+        for pane in self.workspace.buffers:
+            for cell in pane.cells():
+                if cell._editor is not None:
+                    cell._editor.repaint_search()
+
     def set_vim(self, on: bool) -> None:
         VimTextArea.enabled = on
         VimTextArea.mode = "normal" if on else "insert"
@@ -883,6 +894,14 @@ class GPython(App):
     def _search(self) -> None:
         self._open_search()
 
+    @on(VimTextArea.SearchNext)
+    def _search_next(self, event: VimTextArea.SearchNext) -> None:
+        mode = self.ui_mode
+        if event.pattern is None:
+            self.pane.search_next(event.step, mode)
+        else:
+            self.pane.search(event.pattern, event.step, mode)
+
     @on(VimTextArea.ExCommand)
     def _ex(self) -> None:
         self._open_ex()
@@ -905,7 +924,7 @@ class GPython(App):
 
     def _open_search(self) -> None:
         self._prompt_mode = self.ui_mode
-        self.push_screen(Prompt("/", placeholder="cell number or text"), self._jump)
+        self.push_screen(Prompt("/", placeholder="cell number or text to search"), self._jump)
 
     def _jump(self, target: str | None) -> None:
         if target:
@@ -945,6 +964,7 @@ class GPython(App):
             (("bd", "bdelete"), "Delete buffer N or name (default: this one); stops its kernel", lambda arg="": self.delete_buffer(arg)),
             (("bd!", "bdelete!"), "Delete buffer without asking about unsaved changes", lambda arg="": self.delete_buffer(arg, force=True)),
             (("Ex", "Explore", "explorer", "tree", "Lex", "Vex"), "Toggle the file explorer (ctrl+b)", lambda arg="": self._ex_explore(arg)),
+            (("noh", "nohlsearch"), "Stop highlighting search matches (n shows them again)", lambda arg="": self.pane.clear_search_highlight()),
             (("run", "runall"), "Run all cells; :run 6 runs cell c6 (stale cells it uses first)", self._ex_run),
             (("runabove",), "Run the cells above the current one", lambda arg="": self.pane.run_relative(False)),
             (("runbelow",), "Run the current cell and the cells below", lambda arg="": self.pane.run_relative(True)),

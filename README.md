@@ -69,7 +69,9 @@ Vim normal mode (in the editor):
 | `gg` / `G` / `3G` | First / last / third line of this cell |
 | `dd` | Delete line, like vim (`3dd` three lines; `u` undoes). To delete the cell: `esc`, then `dd` |
 | `gJ` | Join lines (vim's `J`) |
-| `/` | Jump: `/3` third cell (as numbered in the headers), `/text` next cell containing text |
+| `/` | Jump: `/3` third cell (as numbered in the headers), `/text` next match after the cursor (smart case, highlighted) |
+| `n` / `N` | Next / previous match of the last search, across cells (`3n` skips three) |
+| `*` / `#` | Search forward / backward for the word under the cursor |
 | `gt` / `gT` / `2gt` | Next / previous / second tab |
 | `:` | Ex command |
 
@@ -92,11 +94,14 @@ Cell mode:
 | `o` / `O` | Collapse output / clear output |
 | `l` | Toggle line numbers |
 | `gt` / `gT` | Next / previous tab |
-| `/`, `:`, `?` | Jump, ex command, help |
+| `/` | Jump to `/3`, or select the next cell matching `/text` |
+| `n` / `N` | Select the next / previous cell matching the last search |
+| `escape` | Clear pending keys and the search highlight |
+| `:`, `?` | Ex command, help |
 
 Ex commands: `:w [file]`, `:wa`, `:q`, `:q!`, `:wq`, `:qa`, `:wqa`, `:e file`,
 `:sp [file]`, `:vs [file]`, `:only`, `:tabnew [file]`, `:tabclose`, `:tabn`,
-`:tabp`, `:ls`, `:Ex`, `:run`, `:runabove`, `:runbelow`, `:stale`, `:restart`,
+`:tabp`, `:ls`, `:noh`, `:Ex`, `:run`, `:runabove`, `:runbelow`, `:stale`, `:restart`,
 `:clear`, `:set vim|novim|lazy|nolazy|nu|nonu`, `:vars`, `:md`, `:code`,
 `:theme [name]`, `:N` (go to cell N), `:help`. `:set novim`, line numbers, the
 run mode and the theme are remembered in `~/.config/gpython/config.toml`.

@@ -9,8 +9,9 @@ o gv work as in vim. Visual mode belongs to one editor: losing focus ends it.
 dd deletes lines, as in vim; cells are deleted in cell mode (esc esc, then dd),
 where u brings them back. Cell-level keys are posted as messages for the app:
 j/k past the first/last line and J/K move to a neighbouring cell (EdgeReached),
-"/" asks for a jump (SearchRequested), escape with nothing pending leaves the
-editor (LeaveEditor).
+"/" asks for a jump or a search (SearchRequested), n N * # repeat or start a
+search (SearchNext), escape with nothing pending leaves the editor (LeaveEditor).
+Every match of the active search is painted with SEARCH_STYLE (VimTextArea.search).
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import os
 import re
 
 from rich.style import Style
+from rich.text import Text
 from textual import events
 from textual._tree_sitter import TREE_SITTER, get_language
 from textual.document._document_navigator import DocumentNavigator
@@ -49,6 +51,22 @@ MONOKAI = TextAreaTheme.get_builtin_theme("monokai")
 MONOKAI_NORMAL = dataclasses.replace(
     MONOKAI, name="monokai-normal", cursor_style=Style(color="#272822", bgcolor="#e6db74", bold=True)
 )
+SEARCH_STYLE = Style(color="#000000", bgcolor="#ffd75f", bold=True)
+_REVERSE = Style(reverse=True)
+
+
+def search_regex(pattern: str) -> re.Pattern:
+    """Plain-text search with vim's smartcase: any capital letter makes it case-sensitive."""
+    flags = 0 if any(c.isupper() for c in pattern) else re.IGNORECASE
+    return re.compile(re.escape(pattern), flags)
+
+
+def word_at(line: str, col: int) -> re.Match | None:
+    """The word under column `col`, or the first one after it on the line (vim's * and #)."""
+    for match in _WORD.finditer(line):
+        if match.end() > col:
+            return match
+    return None
 
 
 @functools.cache
@@ -81,6 +99,32 @@ def indent_after(line: str) -> str:
     return current
 
 
+class SearchLine(Text):
+    """An editor line whose search-match spans stay above the styles TextArea adds
+    afterwards (syntax colours, the cursor line) but below the cursor. A cursor on a
+    match is drawn reversed, since most normal-mode cursors are yellow too.
+
+    The match spans are `_spans[first_match : first_match + matches]`; a later span is
+    slotted in before them, the cursor goes on top.
+    """
+
+    __slots__ = ("first_match", "matches", "cursor_style")
+
+    def stylize(self, style, start: int = 0, end: int | None = None) -> None:
+        spans = self._spans
+        count = len(spans)
+        first, matches = self.first_match, self.matches
+        if style is self.cursor_style:
+            if any(span.start <= start < span.end for span in spans[first : first + matches]):
+                style = style + _REVERSE
+            super().stylize(style, start, end)
+            return
+        super().stylize(style, start, end)
+        if matches and len(spans) > count:
+            spans.insert(first, spans.pop())
+            self.first_match = first + 1
+
+
 class CompletionPopup(OptionList):
     DEFAULT_CSS = """
     CompletionPopup {
@@ -106,6 +150,7 @@ class VimTextArea(TextArea):
     register = ""
     register_linewise = False
     visual = ""
+    search: re.Pattern | None = None
 
     class ModeChanged(Message):
         def __init__(self, editor: VimTextArea, mode: str) -> None:
@@ -132,6 +177,15 @@ class VimTextArea(TextArea):
         def __init__(self, editor: VimTextArea) -> None:
             super().__init__()
             self.editor = editor
+
+    class SearchNext(Message):
+        """n / N (and * / # with the word under the cursor as `pattern`): search `step` matches on."""
+
+        def __init__(self, editor: VimTextArea, step: int, pattern: str | None = None) -> None:
+            super().__init__()
+            self.editor = editor
+            self.step = step
+            self.pattern = pattern
 
     class LeaveEditor(Message):
         """escape in normal mode with nothing pending: the cell takes focus (cell mode)."""
@@ -217,6 +271,30 @@ class VimTextArea(TextArea):
         self.move_cursor((0, 0))
         self._rewrap_and_refresh_virtual_size()
 
+    def get_line(self, line_index: int):
+        """The line's text: search matches painted in SEARCH_STYLE; in linewise visual mode the selected lines are highlighted end to end."""
+        line = self._search_line(line_index) if self.search is not None else super().get_line(line_index)
+        if self.visual == "V" and self._theme is not None and self._theme.selection_style is not None:
+            first, last = sorted((self._anchor[0], self.cursor_location[0]))
+            if first <= line_index <= last:
+                line.stylize(self._theme.selection_style)
+        return line
+
+    def _search_line(self, line_index: int) -> SearchLine:
+        text = self.document.get_line(line_index)
+        line = SearchLine(text, end="", no_wrap=True)
+        line.first_match = line.matches = 0
+        line.cursor_style = self._theme.cursor_style if self._theme else None
+        for match in self.search.finditer(text):
+            line.stylize(SEARCH_STYLE, match.start(), match.end())
+        line.matches = len(line.spans)
+        return line
+
+    def repaint_search(self) -> None:
+        """Forget the cached lines so the search highlight is painted afresh."""
+        self._line_cache.clear()
+        self.refresh()
+
     def _refresh_size(self) -> None:
         """Only ask for a screen layout when the editor's height changes.
 
@@ -282,15 +360,6 @@ class VimTextArea(TextArea):
             self._refresh_rows(selection.end[0], selection.end[0])
         if bracket_before is not None and bracket_before != self._matching_bracket_location:
             self._refresh_rows(bracket_before[0], bracket_before[0])
-
-    def get_line(self, line_index: int):
-        """The line's text; in linewise visual mode, selected lines are highlighted end to end."""
-        line = super().get_line(line_index)
-        if self.visual == "V" and self._theme is not None and self._theme.selection_style is not None:
-            first, last = sorted((self._anchor[0], self.cursor_location[0]))
-            if first <= line_index <= last:
-                line.stylize(self._theme.selection_style)
-        return line
 
     def _on_focus(self, event: events.Focus) -> None:
         super()._on_focus(event)
@@ -476,6 +545,15 @@ class VimTextArea(TextArea):
                 self.post_message(self.EdgeReached(self, n if key == "J" else -n))
             case "/":
                 self.post_message(self.SearchRequested(self))
+            case "n" | "N":
+                self.post_message(self.SearchNext(self, n if key == "n" else -n))
+            case "*" | "#":
+                word = word_at(line, col)
+                if word is None:
+                    self.notify("No string under cursor", severity="warning")
+                else:
+                    self.move_cursor((row, word.start()))
+                    self.post_message(self.SearchNext(self, n if key == "*" else -n, word.group()))
             case "u":
                 self.undo()
             case "ctrl+r":

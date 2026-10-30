@@ -15,13 +15,14 @@ from rich.text import Text
 from textual import events, on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.geometry import Region
 from textual.widgets import DataTable, Static
 
 from . import config, envs, notebook
 from .cell import Cell, CellSnapshot, ends_with_string, outputs_to_ipynb
 from .graph import Graph, build
 from .kernel import Kernel
-from .vim import VimTextArea
+from .vim import VimTextArea, search_regex
 
 MIN_INITIAL_CELLS = 4
 MOUNT_BATCH = 10
@@ -63,6 +64,8 @@ class NotebookPane(Vertical):
         self._cmd_pending = ""
         self._cmd_count = ""
         self._kind_before_y: str | None = None
+        self.search_pattern = ""
+        self.search_highlight = False
         self.load_error: str | None = None
         self._read_file()
 
@@ -776,25 +779,79 @@ class NotebookPane(Vertical):
                 cells[-1].editor.focus()
 
     def jump(self, target: str, mode: str) -> None:
-        """'3' focuses the third cell by display position; 'text' the next cell containing text."""
+        """'3' focuses the third cell by display position; 'text' searches forward for text."""
 
         def go() -> None:
             if target.isdigit():
                 self.goto_cell(int(target), mode, clamp=False)
-                return
-            cells = self.cells()
-            current = self.current_cell()
-            start = cells.index(current) + 1 if current in cells else 0
-            needle = target.lower()
-            for i in range(len(cells)):
-                cell = cells[(start + i) % len(cells)]
-                if needle in cell.source.lower():
-                    self.select(cell, mode if mode == "cell" else "keep")
-                    return
-            self.notify(f"Not found: {target}", severity="warning")
+            else:
+                self.search(target, 1, mode)
 
         self._after_loaded(go)
 
+    def search(self, pattern: str, step: int, mode: str) -> None:
+        """Make `pattern` the search of this pane, highlight it and go `step` matches on."""
+        self.search_pattern = pattern
+        self.search_next(step, mode)
+
+    def search_next(self, step: int, mode: str) -> None:
+        """n / N: the `step`-th match after (or before, when negative) the cursor, wrapping.
+
+        From an editor ("normal"/"insert" mode) the cursor lands on the match; in cell mode
+        the next cell holding a match is selected. Hidden code and rendered markdown are
+        searched by their source and selected as cells.
+        """
+        if not self.search_pattern:
+            self.notify("No previous search", severity="warning")
+            return
+        self.search_highlight = True
+        regex = search_regex(self.search_pattern)
+        self.app.show_search(regex)
+        self._after_loaded(lambda: self._go_to_match(regex, step, mode))
+
+    def clear_search_highlight(self) -> bool:
+        """:noh / escape in cell mode: stop highlighting (the pattern stays for n). False if it was off."""
+        if not self.search_highlight:
+            return False
+        self.search_highlight = False
+        self.app.show_search(None)
+        return True
+
+    def _go_to_match(self, regex, step: int, mode: str) -> None:
+        cells = self.cells()
+        if not cells:
+            return
+        current = self.current_cell()
+        index = cells.index(current) if current in cells else 0
+        offset = None
+        if mode != "cell" and not cells[index].editor_hidden:
+            editor = cells[index].editor
+            offset = editor._offset(editor.cursor_location)
+        sources = [cell.source for cell in cells]
+        position = (index, offset)
+        for _ in range(abs(step)):
+            found = _find_match(regex, sources, *position, forward=step > 0)
+            if found is None:
+                self.notify(f"Not found: {self.search_pattern}", severity="warning")
+                return
+            position = found if offset is not None else (found[0], None)
+        index, start = position
+        cell = cells[index]
+        if start is None or cell.editor_hidden:
+            self.select(cell, "cell")
+            return
+        self.select(cell, "keep")
+        row, column = _location_in(sources[index], start)
+        cell.editor.move_cursor((row, column))
+        self.call_after_refresh(self._reveal_row, cell, row)
+
+    def _reveal_row(self, cell: Cell, row: int) -> None:
+        """Scroll so line `row` of a tall cell's editor is on screen, not only the cell's top."""
+        box = self._cells_box
+        if box is None or not cell.is_attached:
+            return
+        y = cell.virtual_region.y + cell.editor.virtual_region.y + row
+        box.scroll_to_region(Region(0, y, 1, 1), animate=False, immediate=True)
 
     async def cell_command(self, cell: Cell, key: str) -> bool:
         """One key in cell mode (the cell itself has focus). Returns False if unknown."""
@@ -878,12 +935,14 @@ class NotebookPane(Vertical):
                 app.set_line_numbers(not VimTextArea.line_numbers)
             case "/":
                 app._open_search()
+            case "n" | "N":
+                self.search_next(n if key == "n" else -n, "cell")
             case ":":
                 app._open_ex()
             case "?" | "question_mark":
                 app.action_help()
             case "escape":
-                pass
+                self.clear_search_highlight()
             case _:
                 return False
         return True
@@ -899,3 +958,37 @@ class NotebookPane(Vertical):
         event.stop()
         self.focus_cell(event.step)
 
+
+def _find_match(regex, sources: list[str], index: int, offset: int | None, forward: bool) -> tuple[int, int] | None:
+    """(cell index, start) of the nearest match after or before cell `index`, wrapping around.
+
+    With `offset` (a cursor in that cell) the rest of the cell is searched first;
+    without it the search starts in the next cell and ends in this one.
+    """
+    count = len(sources)
+    if offset is not None:
+        if forward:
+            match = regex.search(sources[index], offset + 1)
+            if match is not None:
+                return index, match.start()
+        else:
+            before = [m.start() for m in regex.finditer(sources[index]) if m.start() < offset]
+            if before:
+                return index, before[-1]
+    for k in range(1, count + 1):
+        j = (index + k) % count if forward else (index - k) % count
+        if forward:
+            match = regex.search(sources[j])
+            if match is not None:
+                return j, match.start()
+        else:
+            starts = [m.start() for m in regex.finditer(sources[j])]
+            if starts:
+                return j, starts[-1]
+    return None
+
+
+def _location_in(text: str, offset: int) -> tuple[int, int]:
+    """(row, column) of a character offset in `text`."""
+    row = text.count("\n", 0, offset)
+    return row, offset - (text.rfind("\n", 0, offset) + 1)
