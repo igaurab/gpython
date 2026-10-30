@@ -38,6 +38,40 @@ widgets per cell (merge the header into the editor gutter), a virtualised cell l
 Verify in a REAL terminal (kitty/ghostty/iTerm2), not only headless: typing latency, scrolling a
 150-cell marimo notebook, theme switching with the picker, splits with 3+ windows.
 
+### Perf round 3 (profiled 2026-10-30, NOT started; do this in a fresh session)
+
+Measured with `uv run python3 -X importtime -c "import gpython.app"` and
+`uv run python3 scripts/bench.py --profile mount|moves|keys` (quiet machine, nothing else running):
+
+1. Import before the first frame: 337 ms total. Eager imports that only some features need:
+   `jupyter_client` 78 ms (kernel.py top level), `markdown_it` via `textual.widgets.Markdown`
+   41 ms (markdown.py), `textual_image` + `PIL` 22 ms (outputs.py; its import also probes the
+   terminal). Make them lazy: import inside `Kernel.start()`, inside `MarkdownView` when first
+   composed, inside `OutputArea._add_image`. Check `textual_image` still works when imported
+   after the app started (its comment says "must be imported before the app starts": test an
+   image output in a real terminal; if it breaks, import it in `on_load` instead).
+2. Start the kernels after the first frame: `GPython.on_load` boots them before compose; move
+   to `call_after_refresh` in `on_mount` so the first paint is not delayed by kernel start
+   (~100 ms CPU in `_boot_kernel`/`Kernel.start` during mount in the profile).
+3. Mount: 12 `Screen._refresh_layout` calls during start-up at ~27 ms each (one per mount batch
+   in `NotebookPane._mount_rest`, MOUNT_BATCH=10). Try larger batches after the first frame
+   (e.g. 25) or `with self.app.batch_update():` around each batch; measure `loaded_60`.
+   CSS `stylesheet.apply` is 0.24 s for 322 widgets: fewer widgets per cell would help (the
+   header Static could become part of the TextArea gutter, a bigger change).
+4. Real-terminal latency floor: Textual coalesces paints at `TEXTUAL_FPS` (default 60 →
+   up to 16 ms between a key and its paint). Set `os.environ.setdefault("TEXTUAL_FPS", "120")`
+   in `gpython/__init__.py:main()` BEFORE importing textual (constants read the env at import).
+   Measure with a pty harness: write a key, time until output bytes arrive (see the pty smoke
+   script idea in the 2026-10-30 session: `pty.fork` + `uv run --project ... gpython file.py`).
+5. Cell moves: ~17 ms CPU per *scrolling* move, all inside Textual: `reflow_visible` (3.5 ms),
+   the compositor rebuilding its full map on the next `widget.size` lookup (4 ms, one
+   `_arrange_root` over all cells), one full-screen `_render_chops` (8 ms). Tried and rejected:
+   `refresh(layout=True)` instead of a scroll (slower). Untried: a virtualised cell list (mount
+   only cells near the viewport; big change), fewer widgets per cell.
+6. Keystrokes are done: 3–6 ms CPU each (`tests/test_repaint.py` guards the partial repaints).
+
+Rules: never bench while the test suite runs; run each bench twice; keep the table above updated.
+
 ## 2. Acceptance in a real terminal
 
 - `./gpython ~/leetcode/notebooks/0001-two-sum.py`: run all (f5), problem statement renders as
