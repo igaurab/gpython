@@ -158,7 +158,20 @@ def _markdown_class() -> type:
                 yield big
 
     class BigMarkdown(Markdown):
+        """Also shows links in headings as their text alone: Rich adds " (url)" after each link."""
+
         elements = {**Markdown.elements, "heading_open": BigHeading}
+
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            in_heading = False
+            for token in self.parsed:
+                if token.type == "heading_open":
+                    in_heading = True
+                elif token.type == "heading_close":
+                    in_heading = False
+                elif in_heading and token.children:
+                    token.children = [child for child in token.children if child.type not in ("link_open", "link_close")]
 
     return BigMarkdown
 

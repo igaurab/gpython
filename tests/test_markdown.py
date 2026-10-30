@@ -139,3 +139,22 @@ async def test_marimo_view_shows_display_code_rendered():
         assert plain.shown == source
         await view.update("mo.md(f'{x}')")
         assert view.shown == "mo.md(f'{x}')"
+
+
+@sync
+async def test_links_in_headings_show_only_their_text():
+    app = MdApp("## [15. 3Sum (Medium)](https://leetcode.com/problems/3sum/)\n\n#### [Small](https://example.com/small)")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        drawn = headings_text(app.query_one(MarkdownView))
+        assert "https" not in drawn
+        assert "Small" in drawn
+
+
+@sync
+async def test_links_in_paragraphs_keep_their_url():
+    app = MdApp("See [3Sum](https://leetcode.com/problems/3sum/) here.")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        drawn = headings_text(app.query_one(MarkdownView))
+        assert "3Sum (https://leetcode.com/problems/3sum/)" in drawn

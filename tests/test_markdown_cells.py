@@ -398,6 +398,10 @@ def test_m_on_hidden_marimo_display_cell_keeps_it_rendered(tmp_path):
         await pilot.press("m")
         await app.workers.wait_for_complete()
         await pilot.pause()
+        assert problem.kind == "code"
+        await pilot.press("m")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
         assert problem.kind == "markdown" and problem.rendered
         assert view_text(problem) == PROBLEM_SHOWN
         await pilot.press("ctrl+s")
@@ -405,3 +409,54 @@ def test_m_on_hidden_marimo_display_cell_keeps_it_rendered(tmp_path):
 
     path = ui_text(tmp_path, test, hidden)
     assert path.read_text() == WRAPPED
+
+
+HIDDEN_DISPLAY = WRAPPED.replace('    mo.md(r"""\n', "").replace('    """)\n    return\n\n\n@app.cell\n', "    return\n\n\n@app.cell\n")
+
+
+def _warnings(app) -> list[str]:
+    return [n.message for n in app._notifications if n.severity == "warning"]
+
+
+async def _press_kind(app, pilot, how: str) -> None:
+    if how == "m":
+        await pilot.press("m")
+    else:
+        await app._ex_kind("markdown")
+    await app.workers.wait_for_complete()
+    await pilot.pause()
+
+
+@pytest.mark.parametrize("how", ["m", "ex"])
+def test_converting_a_display_cell_to_markdown_asks_twice(tmp_path, how):
+    async def test(app, pilot):
+        problem, plain = app.cells()[1], app.cells()[2]
+        problem.focus()
+        await pilot.pause()
+        await _press_kind(app, pilot, how)
+        assert problem.kind == "code" and problem.code_hidden
+        assert any("already renders as text" in w and "m again" in w for w in _warnings(app))
+        await _press_kind(app, pilot, how)
+        assert problem.kind == "markdown"
+        plain.focus()
+        await pilot.pause()
+        before = len(_warnings(app))
+        await _press_kind(app, pilot, how)
+        assert plain.kind == "markdown"
+        assert len(_warnings(app)) == before
+
+    ui_text(tmp_path, test, HIDDEN_DISPLAY)
+
+
+def test_display_cell_warning_expires(tmp_path, monkeypatch):
+    async def test(app, pilot):
+        problem = app.cells()[1]
+        problem.focus()
+        await pilot.pause()
+        await _press_kind(app, pilot, "m")
+        monkeypatch.setattr(app.pane, "MARKDOWN_CONFIRM_SECONDS", 0.0)
+        await asyncio.sleep(0.01)
+        await _press_kind(app, pilot, "m")
+        assert problem.kind == "code"
+
+    ui_text(tmp_path, test, HIDDEN_DISPLAY)

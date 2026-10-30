@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import time
 from pathlib import Path
 
 from rich.text import Text
@@ -66,6 +67,7 @@ class NotebookPane(Vertical):
         self._kind_before_y: str | None = None
         self.search_pattern = ""
         self.search_highlight = False
+        self._markdown_warned: tuple[str, float] | None = None
         self.load_error: str | None = None
         self._read_file()
 
@@ -703,6 +705,8 @@ class NotebookPane(Vertical):
         """
         if kind == cell.kind or kind not in ("code", "markdown"):
             return
+        if record and kind == "markdown" and not self._confirmed_to_markdown(cell):
+            return
         if record:
             self._push_undo(("kind", cell.cid, cell.kind))
         self.mark_dirty()
@@ -719,6 +723,27 @@ class NotebookPane(Vertical):
             return
         await self.kernel.delete(defs)
         self._rerun_or_mark_stale(downstream)
+
+    MARKDOWN_CONFIRM_SECONDS = 3.0
+
+    def _confirmed_to_markdown(self, cell: Cell) -> bool:
+        """False, with a warning, the first time a display-only marimo cell is turned into markdown.
+
+        Such a cell (hidden code like `mo.vstack([mo.md(...), mo.Html(...)])`) already shows as
+        text, and as markdown its code would be saved inside `mo.md(...)`. A second request on the
+        same cell within MARKDOWN_CONFIRM_SECONDS goes ahead.
+        """
+        from .markdown import marimo_markdown
+
+        if not cell.code_hidden or marimo_markdown(cell.source) is None:
+            return True
+        now = time.monotonic()
+        warned, self._markdown_warned = self._markdown_warned, None
+        if warned is not None and warned[0] == cell.cid and now - warned[1] <= self.MARKDOWN_CONFIRM_SECONDS:
+            return True
+        self._markdown_warned = (cell.cid, now)
+        self.notify("This cell already renders as text; press m again to convert it to markdown anyway", severity="warning")
+        return False
 
     def save(self, then=None) -> None:
         """Save; ask for a name when untitled. `then` runs after a successful save."""
