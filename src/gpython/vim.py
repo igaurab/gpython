@@ -1,11 +1,12 @@
 """A TextArea with vim-style modal editing and kernel-backed Tab completion.
 
 Supported in normal mode: h j k l w b e 0 ^ $ gg G, counts, i a I A o O,
-x X s S dw d$ dj D cc cw c$ C yy yw p P gJ u ctrl+r, ":" for ex commands.
-Cell-level keys are posted as messages for the app: j/k past the first/last
-line and J/K move to a neighbouring cell (EdgeReached), dd deletes the cell
-(DeleteCell), "/" asks for a jump (SearchRequested), escape with nothing
-pending leaves the editor (LeaveEditor).
+x X s S dd dw d$ dj D cc cw c$ C yy yw p P gJ u ctrl+r, ":" for ex commands.
+dd deletes lines, as in vim; cells are deleted in cell mode (esc esc, then dd),
+where u brings them back. Cell-level keys are posted as messages for the app:
+j/k past the first/last line and J/K move to a neighbouring cell (EdgeReached),
+"/" asks for a jump (SearchRequested), escape with nothing pending leaves the
+editor (LeaveEditor).
 """
 
 from __future__ import annotations
@@ -132,13 +133,6 @@ class VimTextArea(TextArea):
             super().__init__()
             self.editor = editor
 
-    class DeleteCell(Message):
-        """dd in normal mode: delete `count` cells starting at this one."""
-
-        def __init__(self, editor: VimTextArea, count: int = 1) -> None:
-            super().__init__()
-            self.editor = editor
-            self.count = count
 
     class TabSwitch(Message):
         """gt / gT: go to tab `tab` (1-based) when given, else `step` tabs forward."""
@@ -343,9 +337,6 @@ class VimTextArea(TextArea):
         n = int(self.count or 1)
         pending, self.pending, self.count = self.pending, "", ""
 
-        if pending == "d" and key == "d":  # dd works on cells, not lines
-            self.post_message(self.DeleteCell(self, n))
-            return True
         if pending in ("d", "c", "y"):
             self._operator(pending, key, n)
             return True

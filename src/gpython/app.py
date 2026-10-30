@@ -40,6 +40,15 @@ _MODE_STYLES = {
     "cell": "bold black on cyan",
     "files": "bold black on magenta",
 }
+# The header's mode chip: what the mode is and what its most-confused keys do there.
+_MODE_HINTS = {
+    "normal": "dd line · esc → cell",
+    "insert": "esc → normal",
+    "cell": "dd cell · u undo · enter → edit",
+    "files": "enter open · t tab · q hide",
+    "edit": "esc → cell",  # vim off
+}
+_MODE_HINT_WIDTH = max(map(len, _MODE_HINTS.values()))
 EXPLORER_WIDTH = 34
 
 # ctrl+w <key>: vim's window commands.
@@ -198,6 +207,8 @@ class GPython(App):
         self._status: Static | None = None
         self._kernel_chip: Static | None = None
         self._chip_label: str | None = None
+        self._mode_chip: Static | None = None
+        self._mode_chip_mode: str | None = None
         self._status_key: tuple | None = None
         self._cell_clipboard: CellSnapshot | None = None
         self._prompt_mode = "normal"  # ui mode when a ':' or '/' prompt was opened
@@ -224,6 +235,8 @@ class GPython(App):
         header = self.query_one(Header)
         self._kernel_chip = KernelChip(id="kernel")
         await header.mount(self._kernel_chip, after=header.query_one(HeaderIcon))
+        self._mode_chip = Static(id="mode-chip")
+        await header.mount(self._mode_chip)
         for pane in self._initial_panes:
             await self.workspace.add(pane, "tab")
         self.workspace.switch(0)
@@ -361,6 +374,15 @@ class GPython(App):
             version, _, env = pane.kernel_label.partition(" · ")
             # width: auto, so a layout
             self._kernel_chip.update(Text.assemble((version, "dim"), (f" · {env}" if env else "", "bold"), (" ▾", "dim")))
+        chip_mode = mode if show_mode else "edit"
+        if self._mode_chip is not None and chip_mode != self._mode_chip_mode:
+            self._mode_chip_mode = chip_mode
+            style = _MODE_STYLES.get(chip_mode, _MODE_STYLES["insert"])
+            # Fixed width (label and hint padded): a mode change repaints the chip, no layout.
+            self._mode_chip.update(
+                Text.assemble((f" {chip_mode.upper():<6} ", style), (f" {_MODE_HINTS[chip_mode]:<{_MODE_HINT_WIDTH}} ", "dim")),
+                layout=False,
+            )
         # The file name lives in the header subtitle; the bottom bar shows the vim mode
         # chip, run mode, kernel state, theme and key hints.
         self._status.update(

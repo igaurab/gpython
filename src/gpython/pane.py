@@ -825,7 +825,3 @@ class NotebookPane(Vertical):
         event.stop()
         self.focus_cell(event.step)
 
-    @on(VimTextArea.DeleteCell)
-    async def _delete_cell(self, event: VimTextArea.DeleteCell) -> None:
-        event.stop()
-        await self.delete_cell(event.count)

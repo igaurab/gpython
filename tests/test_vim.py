@@ -17,9 +17,6 @@ class EditorApp(App):
     def on_vim_text_area_edge_reached(self, event: VimTextArea.EdgeReached) -> None:
         self.messages.append(("edge", event.step))
 
-    def on_vim_text_area_delete_cell(self, event: VimTextArea.DeleteCell) -> None:
-        self.messages.append(("delete", event.count))
-
     def on_vim_text_area_search_requested(self, event: VimTextArea.SearchRequested) -> None:
         self.messages.append(("search",))
 
@@ -67,14 +64,12 @@ def test_motions():
 def test_delete_and_change():
     assert run("foo bar", "d", "w")[0] == "bar"
     assert run("foo bar", "x")[0] == "oo bar"
-    # dd deletes the cell (the app handles DeleteCell); the text stays as it is.
-    messages: list = []
-    assert run("one\ntwo\nthree", "j", "d", "d", messages=messages)[0] == "one\ntwo\nthree"
-    assert messages == [("delete", 1)]
-    messages.clear()
-    assert run("one\ntwo\nthree", "2", "d", "d", messages=messages)[0] == "one\ntwo\nthree"
-    assert messages == [("delete", 2)]
-    assert run("one\ntwo\nthree", "d", "j")[0] == "three"  # linewise motions still delete lines
+    # dd deletes lines, like vim (cells are deleted in cell mode); u brings them back.
+    assert run("one\ntwo\nthree", "j", "d", "d")[0] == "one\nthree"
+    assert run("one\ntwo\nthree", "2", "d", "d")[0] == "three"
+    assert run("one\ntwo\nthree", "G", "d", "d")[0] == "one\ntwo"
+    assert run("one\ntwo\nthree", "j", "d", "d", "u")[0] == "one\ntwo\nthree"
+    assert run("one\ntwo\nthree", "d", "j")[0] == "three"
     assert run("one\ntwo", "0", "D")[0] == "\ntwo"
     assert run("foo bar", "D")[0] == ""
     text, mode, _ = run("foo bar", "c", "w", "x", "escape")

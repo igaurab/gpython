@@ -234,6 +234,13 @@ EnvPicker {
     content-align: center middle;
 }
 
+#mode-chip {
+    dock: right;
+    width: auto;
+    height: 100%;
+    content-align: center middle;
+}
+
 #kernel:hover {
     background: $accent 30%;
 }

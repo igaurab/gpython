@@ -55,7 +55,7 @@ Vim normal mode (in the editor):
 | `J` / `K` | Next / previous cell (`3J` jumps three) |
 | `j` / `k` | Down / up a line; past the edge moves to the next cell |
 | `gg` / `G` / `3G` | First / last / third line of this cell |
-| `dd` | Delete this cell (`3dd` three cells; `0D` clears just the line) |
+| `dd` | Delete line, like vim (`3dd` three lines; `u` undoes). To delete the cell: `esc`, then `dd` |
 | `gJ` | Join lines (vim's `J`) |
 | `/` | Jump: `/3` third cell (as numbered in the headers), `/text` next cell containing text |
 | `gt` / `gT` / `2gt` | Next / previous / second tab |
@@ -71,7 +71,7 @@ Cell mode:
 | `gg` / `G` / `3G` | Select first / last / third cell |
 | `enter` / `i` | Edit the cell (normal / insert mode); on markdown, show its source |
 | `a` / `b` | Insert a cell above / below |
-| `dd` | Delete cell |
+| `dd` | Delete cell (`3dd` three; `u` brings them back) |
 | `u` (or `z`) | Undo the last cell action: delete, move, insert, markdown/code switch |
 | `yy` / `x` / `p` / `P` | Copy / cut / paste below / paste above |
 | `J` / `K` | Move the cell down / up |

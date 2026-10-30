@@ -147,18 +147,30 @@ def test_delete_undo_copy_cut_paste(tmp_path):
     ui(tmp_path, test)
 
 
-def test_vim_dd_deletes_the_cell_and_z_restores(tmp_path):
+def test_vim_dd_deletes_a_line_cell_mode_dd_deletes_the_cell(tmp_path):
     async def test(app, pilot):
         second = app.cells()[1]
+        second.editor.text = "b = 2\nb2 = 3"
         second.editor.focus()
         await pilot.press("d", "d")
         await app.workers.wait_for_complete()
+        assert len(app.cells()) == 3 and second.editor.text == "b2 = 3"
+        assert app.focused is second.editor and app.ui_mode == "normal"
+        chip = lambda: str(app.query_one("#mode-chip").render())
+        assert "NORMAL" in chip() and "dd line" in chip()
+        await pilot.press("u")
+        assert second.editor.text == "b = 2\nb2 = 3"
+        # esc → cell mode: dd deletes the cell, u brings it back.
+        await pilot.press("escape")
+        await pilot.pause()
+        assert "CELL" in chip() and "dd cell" in chip()
+        await pilot.press("d", "d")
+        await app.workers.wait_for_complete()
         assert sources(app) == ["a = 1", "print('c')"]
-        assert app.focused is app.cells()[1].editor and app.ui_mode == "normal"
-        await pilot.press("escape", "z")
-        assert sources(app) == SOURCES
-        # 2dd from the first cell deletes two cells.
-        app.cells()[0].editor.focus()
+        await pilot.press("u")
+        assert sources(app) == ["a = 1", "b = 2\nb2 = 3", "print('c')"]
+        # 2dd in cell mode deletes two cells.
+        app.cells()[0].focus()
         await pilot.press("2", "d", "d")
         assert sources(app) == ["print('c')"]
 
@@ -285,11 +297,11 @@ def test_jumps_labels_and_vars_panel(tmp_path):
         await pilot.press("ctrl+n")
         assert labels(app) == ["c1", "c2", "c3", "c4"]
         assert app.cells()[1].label == "c2" and second.label == "c3"
-        await pilot.press("escape", "d", "d")
+        await pilot.press("escape", "escape", "d", "d")  # insert → normal → cell mode
         assert labels(app) == ["c1", "c2", "c3"]
 
         # Delete the second cell: /2 now means the former third one.
-        second.editor.focus()
+        second.focus()
         await pilot.press("d", "d")
         assert third.label == "c2"
         first.editor.focus()
