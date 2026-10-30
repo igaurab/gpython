@@ -20,6 +20,61 @@ if TYPE_CHECKING:
 PLACEHOLDER = "*empty markdown cell – press enter to edit*"
 
 
+def html_to_markdown(text):
+    """Rough markdown for marimo's `mo.Html`. Self-contained: kernel.py sends its source to the kernel."""
+    import html, re
+
+    t = re.sub(r"<pre[^>]*>(.*?)</pre>", lambda m: "\n```\n" + re.sub(r"<[^>]+>", "", m.group(1)).strip("\n") + "\n```\n", text, flags=re.S | re.I)
+    t = re.sub(r"<code[^>]*>(.*?)</code>", r"`\1`", t, flags=re.S | re.I)
+    t = re.sub(r"<(strong|b)(\s[^>]*)?>(.*?)</\1>", r"**\3**", t, flags=re.S | re.I)
+    t = re.sub(r"<(em|i)(\s[^>]*)?>(.*?)</\1>", r"*\3*", t, flags=re.S | re.I)
+    t = re.sub(r"<sup>(.*?)</sup>", r"^\1", t, flags=re.S | re.I)
+    t = re.sub(r"\s*<li[^>]*>", "\n- ", t, flags=re.I)
+    t = re.sub(r"<br\s*/?>|</?p[^>]*>", "\n\n", t, flags=re.I)
+    t = re.sub(r"<[^>]+>", "", t)
+    t = html.unescape(t).replace("\xa0", " ")
+    t = re.sub(r"[ \t]+\n", "\n", t)
+    return re.sub(r"\n{3,}", "\n\n", t).strip()
+
+
+def marimo_markdown(source: str) -> str | None:
+    """What a display-only marimo cell shows, without running it.
+
+    The cell must be one expression built from `mo.md`, `mo.Html`, `mo.vstack`
+    and `mo.hstack` over string literals (how hide_code cells like a problem
+    statement are written). Anything else is None: it needs the kernel.
+    """
+    import ast
+
+    try:
+        body = ast.parse(source).body
+    except SyntaxError:
+        return None
+    if len(body) != 1 or not isinstance(body[0], ast.Expr):
+        return None
+
+    def md(node: ast.expr) -> str:
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "mo"
+            and len(node.args) == 1
+        ):
+            raise ValueError
+        name, arg = node.func.attr, node.args[0]
+        if name in ("md", "Html") and not node.keywords and isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+            return arg.value if name == "md" else html_to_markdown(arg.value)
+        if name in ("vstack", "hstack") and isinstance(arg, (ast.List, ast.Tuple)):
+            return ("\n\n" if name == "vstack" else "  ").join(md(item) for item in arg.elts)
+        raise ValueError
+
+    try:
+        return md(body[0].value)
+    except ValueError:
+        return None
+
+
 class MarkdownView(Widget):
     """Renders `text` as markdown. Use `await view.update(text)` to change it."""
 

@@ -813,8 +813,8 @@ class NotebookPane(Vertical):
             case "m":
                 await self.set_cell_kind(cell, "markdown")
             case "h":
-                cell.set_code_hidden(not cell.code_hidden)
-                self.mark_dirty()
+                if cell.toggle_hidden():
+                    self.mark_dirty()
             case "c":
                 cell.toggle_collapsed()
             case "C" | "shift+c":

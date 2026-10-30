@@ -878,8 +878,8 @@ class GPython(App):
             (("delete", "del"), "Delete current cell", lambda arg="": self.action_delete_cell()),
             (("md", "markdown"), "Cell → Markdown", lambda arg="": self._ex_kind("markdown")),
             (("code",), "Cell → Code", lambda arg="": self._ex_kind("code")),
-            (("hide",), "Hide this cell's code (h in cell mode; saved as marimo hide_code)", lambda arg="": self._ex_hide(True)),
-            (("show",), "Show this cell's code", lambda arg="": self._ex_hide(False)),
+            (("hide",), "Hide this cell's code, or fold a markdown cell (h in cell mode; code: saved as marimo hide_code)", lambda arg="": self._ex_hide(True)),
+            (("show",), "Show this cell's code, or unfold a markdown cell", lambda arg="": self._ex_hide(False)),
             (("interrupt",), "Interrupt running code", lambda arg="": self.pane.kernel.interrupt()),
             (("theme",), "Set theme (:theme name) or show the current one", self._ex_theme),
             (("env", "kernel", "envs"), "Python environment for this kernel: pick (f6), or :env name|path switches", lambda arg="": envpicker.ex_env(self.pane, arg)),
@@ -895,8 +895,11 @@ class GPython(App):
 
     def _ex_hide(self, hidden: bool) -> None:
         if cell := self.current_cell():
-            cell.set_code_hidden(hidden)
-            self.pane.mark_dirty()
+            if cell.kind == "markdown":
+                cell.set_folded(hidden)
+            else:
+                cell.set_code_hidden(hidden)
+                self.pane.mark_dirty()
             if hidden and self.focused is cell.editor:
                 cell.focus(scroll_visible=False)
 

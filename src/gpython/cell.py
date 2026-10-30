@@ -16,7 +16,7 @@ from textual.widgets import Static
 
 from . import notebook
 from .graph import Graph
-from .markdown import MarkdownView
+from .markdown import MarkdownView, marimo_markdown
 from .outputs import OutputArea
 from .vim import VimTextArea, _is_escape
 
@@ -113,6 +113,7 @@ class Cell(Vertical):
         self.spec = spec
         self.editing = kind == "code"
         self.code_hidden = bool(spec is not None and spec.hide_code and kind == "code")
+        self.folded = False
         self.echo_suppressed = False
         if kind == "markdown":
             self.add_class("-markdown")
@@ -158,6 +159,9 @@ class Cell(Vertical):
             self.replay(outputs_from_ipynb(self.spec.outputs))
             if self.spec.execution_count:
                 self.exec_count = self.spec.execution_count
+        elif self.code_hidden and (preview := marimo_markdown(self.source)) is not None:
+            # A hidden marimo cell that only shows text: show it now, not after a run.
+            self.output_box.add("display_data", {"data": {"text/markdown": preview}})
         self._render_header()
         self.paint_bar()
 
@@ -253,11 +257,29 @@ class Cell(Vertical):
         self._header_key = None
         self._render_header()
 
+    def set_folded(self, folded: bool) -> None:
+        """Markdown cells: show only the header line (`h` in cell mode toggles)."""
+        if self.kind != "markdown" or folded == self.folded:
+            return
+        self.folded = folded
+        if self._view is not None:
+            self._view.display = not folded and not self.editing
+        self._render_header()
+
+    def toggle_hidden(self) -> bool:
+        """`h`: hide/show a code cell's code, or fold/unfold a markdown cell. True when the file changes."""
+        if self.kind == "markdown":
+            self.set_folded(not self.folded)
+            return False
+        self.set_code_hidden(not self.code_hidden)
+        return True
+
     async def set_kind(self, kind: str) -> None:
         """Switch the widgets to `kind`. No kernel work: NotebookPane.set_cell_kind does that."""
         if kind == self.kind:
             return
         self.kind = kind
+        self.folded = False
         self.set_class(kind == "markdown", "-markdown")
         self.ran_source = None
         self.last_defs = set()
@@ -282,10 +304,12 @@ class Cell(Vertical):
         """Show the editor (markdown: hide the rendered view; hidden code: show it). The caller focuses it."""
         self.editing = True
         self.code_hidden = False
+        self.folded = False
         if self._editor is not None:
             self._editor.display = True
         if self._view is not None:
             self._view.display = False
+        self._render_header()
 
     async def show_rendered(self) -> None:
         """Markdown cells: render the editor's text and show it instead of the editor."""
@@ -300,7 +324,7 @@ class Cell(Vertical):
             await self._view.update(self.source)
         if not self.editing:
             self._editor.display = False
-            self._view.display = True
+            self._view.display = not self.folded
 
     async def _render_if_left(self) -> None:
         if self.kind == "markdown" and self.editing and self.is_mounted and self.screen.focused is not self._editor:
@@ -408,14 +432,14 @@ class Cell(Vertical):
         if self._header is None:
             return
         elapsed = int(time.perf_counter() - self._run_start) if self.status == "running" else 0
-        key = (self.kind, self.status, self.info, self.label, self.exec_count, self.duration, elapsed, self.selected, self.code_hidden)
+        key = (self.kind, self.status, self.info, self.label, self.exec_count, self.duration, elapsed, self.selected, self.code_hidden, self.folded)
         if key == self._header_key:
             return
         self._header_key = key
         if self.kind == "markdown":
             palette = getattr(self.app, "palette", None)
             dim = palette.comment if palette is not None else "dim"
-            self._header.update(self._selected_style(Text.assemble(("¶ ", dim), (self.label, "bold"), ("  MARKDOWN", dim))), layout=False)
+            self._header.update(self._selected_style(Text.assemble(("¶ ", dim), (self.label, "bold"), ("  MARKDOWN", dim), ("  · folded (h shows)" if self.folded else "", "dim italic"))), layout=False)
             return
         icon, style = STATUS_ICONS[self.status]
         palette = getattr(self.app, "palette", None)

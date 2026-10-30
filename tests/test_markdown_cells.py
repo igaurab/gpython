@@ -255,3 +255,45 @@ def test_save_keeps_the_loaded_spec_fields(tmp_path):
     path = ui(tmp_path, test)
     specs, _ = notebook.load_cells(path)
     assert specs[0] == CellSpec("x = 2") and specs[1] == CELLS[1]
+
+
+def test_h_folds_a_markdown_cell(tmp_path):
+    async def test(app, pilot):
+        _, md, _ = app.cells()
+        md.focus()
+        assert not app.dirty
+        await pilot.press("h")
+        assert md.folded and md.query_one(MarkdownView).display is False
+        assert "folded" in str(md.query_one(".cell-header").render())
+        assert not app.dirty  # folding is a view setting, not a file change
+        await pilot.press("h")
+        assert not md.folded and md.query_one(MarkdownView).display is True
+
+        # Editing unfolds; rendering again keeps it unfolded.
+        await pilot.press("h", "enter")
+        assert not md.folded and app.focused is md.editor
+        await pilot.press("escape", "escape")
+        await pilot.pause()
+        assert md.rendered and md.query_one(MarkdownView).display is True
+
+    ui(tmp_path, test)
+
+
+def test_hidden_marimo_text_cell_shows_its_text_before_running(tmp_path):
+    cells = [
+        CellSpec("import marimo as mo", hide_code=True),
+        CellSpec("mo.vstack([mo.md('## 15. 3Sum\\n\\nGiven nums'), mo.Html('<p>Return <b>triplets</b></p>')])", hide_code=True),
+        CellSpec("print(1)"),
+    ]
+
+    async def test(app, pilot):
+        _, problem, plain = app.cells()
+        assert problem.kind == "code" and problem.code_hidden and problem.exec_count == 0
+        markdown = problem.output_box.query_one(Markdown)
+        assert "3Sum" in markdown._markdown and "Return **triplets**" in markdown._markdown
+        assert "\\n" not in markdown._markdown
+        assert not problem.outputs_snapshot()  # a preview, not an output that gets saved
+        assert not plain.output_box.has_output
+
+    path = ui(tmp_path, test, cells)
+    assert "@app.cell(hide_code=True)" in path.read_text()

@@ -7,6 +7,7 @@ long-running cells, and survives crashes in user code.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import os
 import queue
@@ -16,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from . import envs
+from .markdown import html_to_markdown
 
 if TYPE_CHECKING:
     from jupyter_client.manager import AsyncKernelManager
@@ -56,24 +58,11 @@ def _gp_marimo_shim():
         return
     except ImportError:
         pass
-    import html, re, sys, types
+    import sys, types
 
     def _md_of(item):
         f = getattr(item, "_repr_markdown_", None)
         return f() if callable(f) else str(item)
-
-    def _html_to_md(text):
-        t = re.sub(r"<pre[^>]*>(.*?)</pre>", lambda m: "\n```\n" + re.sub(r"<[^>]+>", "", m.group(1)).strip("\n") + "\n```\n", text, flags=re.S | re.I)
-        t = re.sub(r"<code[^>]*>(.*?)</code>", r"`\1`", t, flags=re.S | re.I)
-        t = re.sub(r"<(strong|b)(\s[^>]*)?>(.*?)</\1>", r"**\3**", t, flags=re.S | re.I)
-        t = re.sub(r"<(em|i)(\s[^>]*)?>(.*?)</\1>", r"*\3*", t, flags=re.S | re.I)
-        t = re.sub(r"<sup>(.*?)</sup>", r"^\1", t, flags=re.S | re.I)
-        t = re.sub(r"\s*<li[^>]*>", "\n- ", t, flags=re.I)
-        t = re.sub(r"<br\s*/?>|</?p[^>]*>", "\n\n", t, flags=re.I)
-        t = re.sub(r"<[^>]+>", "", t)
-        t = html.unescape(t).replace("\xa0", " ")
-        t = re.sub(r"[ \t]+\n", "\n", t)
-        return re.sub(r"\n{3,}", "\n\n", t).strip()
 
     class _Md:
         def __init__(self, text):
@@ -89,7 +78,7 @@ def _gp_marimo_shim():
         def _repr_html_(self):
             return self.text
         def _repr_markdown_(self):
-            return _html_to_md(self.text)
+            return _gp_html_to_md(self.text)
         def __repr__(self):
             return self._repr_markdown_()
 
@@ -169,6 +158,8 @@ def _gp_uv_magics():
 
 _gp_uv_magics()
 """
+# The shim's mo.Html: the same conversion as the static preview of a marimo cell.
+_HELPERS += inspect.getsource(html_to_markdown).replace("def html_to_markdown", "def _gp_html_to_md", 1)
 
 
 class Kernel:

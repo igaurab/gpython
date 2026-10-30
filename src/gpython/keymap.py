@@ -67,7 +67,7 @@ KEYMAP: list[tuple[str, str, str]] = [
     ("cell", "p / P", "Paste cell below / above"),
     ("cell", "J / K", "Move cell down / up"),
     ("cell", "m / y", "Make cell markdown / code"),
-    ("cell", "h", "Hide / show the cell's code (marimo hide_code; :hide, :show)"),
+    ("cell", "h", "Hide / show the cell's code (marimo hide_code), or fold a markdown cell (:hide, :show)"),
     ("cell", "c", "Collapse / expand output"),
     ("cell", "C", "Clear output"),
     ("cell", "l", "Toggle line numbers"),
