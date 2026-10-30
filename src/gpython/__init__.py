@@ -41,7 +41,8 @@ def main() -> None:
 
     from .app import GPython
 
-    kwargs = {"vim": opts["vim"]}
+    # Only pass what was given on the command line, so saved config applies otherwise.
+    kwargs = {} if opts["vim"] else {"vim": False}
     if opts["theme"] is not None:
         if "theme" in inspect.signature(GPython).parameters:
             kwargs["theme"] = opts["theme"]
