@@ -147,6 +147,9 @@ class NotebookPane(Vertical):
             await self.kernel.switch(env)
         except Exception as error:
             self.notify(f"Could not start a kernel in {env.python}: {error}", severity="error", timeout=10)
+            if not self.kernel.ready.is_set():  # the fallback to the old env failed too
+                self.set_kernel_state("kernel failed to start (f6 picks another env)")
+                return
         else:
             if self.path is not None:
                 config.save({f"env:{self.path.resolve()}": str(env.python)})

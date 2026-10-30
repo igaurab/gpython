@@ -133,6 +133,24 @@ def test_uv_env_kernel_switch_and_magics(tmp_path):
     asyncio.run(main())
 
 
+def test_switch_while_a_cell_runs():
+    async def main():
+        k = Kernel()
+        await k.start()
+        try:
+            running = asyncio.create_task(k.execute("import time; time.sleep(30)"))
+            await asyncio.sleep(0.5)
+            await asyncio.wait_for(k.switch(envs.builtin()), 30)
+            assert await asyncio.wait_for(running, 5) is False
+            out = []
+            assert await k.execute("print('ok')", lambda kind, c: out.append(c.get("text", "")))
+            assert "ok" in "".join(out)
+        finally:
+            await k.shutdown()
+
+    asyncio.run(main())
+
+
 def test_failed_switch_falls_back_to_the_old_kernel(tmp_path):
     async def main():
         k = Kernel()

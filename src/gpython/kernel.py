@@ -208,6 +208,12 @@ class Kernel:
         """Replace the kernel process with one running in `env`. All variables are lost."""
         self.ready.clear()
         old_env = self.env
+        # Kill the process first and keep the channels open: a running cell then sees the
+        # kernel die and returns; closing the channels under it would cancel it instead.
+        if await self.manager.is_alive():
+            await self.manager.shutdown_kernel(now=True)
+        async with self._lock:
+            pass
         await self.shutdown()
         self.env, self.client = env, None
         self.manager = self._manager()
