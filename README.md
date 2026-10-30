@@ -3,6 +3,9 @@
 A reactive Python notebook in the terminal, inspired by marimo.
 Run a cell and every cell that uses its variables re-runs automatically.
 
+<img width="1372" height="1034" alt="image" src="https://github.com/user-attachments/assets/c93ed22f-cf15-4a26-9322-c62c940febf5" />
+
+
 ```sh
 ./gpython                    # empty untitled notebook
 ./gpython script.py          # a plain script is split into cells automatically
