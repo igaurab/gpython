@@ -75,6 +75,7 @@ Cell mode:
 | `yy` / `x` / `p` / `P` | Copy / cut / paste below / paste above |
 | `J` / `K` | Move the cell down / up |
 | `m` / `y` | Markdown / code cell |
+| `h` | Hide / show the cell's code (marimo `hide_code`) |
 | `o` / `O` | Collapse output / clear output |
 | `l` | Toggle line numbers |
 | `gt` / `gT` | Next / previous tab |
@@ -202,14 +203,15 @@ directory match the notebook, like running it as a script.
 
 **marimo notebooks** (`import marimo as mo` … `@app.cell` functions) open as
 cells and save back byte-identical when nothing changed: cell names, the
-`hide_code=True` decorator argument and `mo.md(...)` cells are kept. In the
+`hide_code=True` decorator argument (such cells open with their code hidden;
+`h` in cell mode shows it) and `mo.md(...)` cells are kept. In the
 kernel a small `marimo` shim provides `mo.md`, `mo.Html`, `mo.hstack`,
 `mo.vstack` and `mo.ui` placeholders so such notebooks run. Not kept: other
 decorator arguments and comments after a cell's `return`.
 
-**Jupyter notebooks** (`.ipynb`) open with their code and markdown cells and
-save back as `.ipynb` (cell ids and metadata preserved, outputs are not
-stored).
+**Jupyter notebooks** (`.ipynb`) open with their code and markdown cells,
+their stored outputs and execution counts, and save back as `.ipynb` with the
+current outputs (notebook metadata preserved).
 
 ## Layout
 

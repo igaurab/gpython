@@ -8,8 +8,8 @@ Plain scripts are split automatically at top-level statements; module-level
 string statements (docstrings) become markdown cells. They are saved back
 without markers so the file stays an ordinary script.
 
-`.ipynb` files load code and markdown cells (outputs are dropped) and save as
-nbformat 4 with empty outputs, keeping the notebook metadata that was loaded.
+`.ipynb` files load code and markdown cells with their stored outputs and
+execution counts and save as nbformat 4, keeping the notebook metadata that was loaded.
 
 marimo files (`import marimo` + `app = marimo.App(...)`) load one cell per
 `@app.cell` function (body without the trailing `return`), `@app.class_definition`
@@ -24,7 +24,7 @@ import io
 import json
 import textwrap
 import tokenize
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
@@ -45,6 +45,9 @@ class CellSpec:
     name: str | None = None  # function name when it is not `_`
     hide_code: bool = False
     decorator: Decorator = "cell"
+    # .ipynb only: stored outputs (nbformat output dicts) and the execution count.
+    outputs: list = field(default_factory=list)
+    execution_count: int | None = None
 
 
 def _spec(cell: CellSpec | str) -> CellSpec:
@@ -216,8 +219,21 @@ def parse_ipynb(text: str, path: Path | None = None) -> list[CellSpec]:
         if isinstance(source, list):
             source = "".join(source)
         kind: Kind = "markdown" if cell.get("cell_type") in ("markdown", "raw") else "code"
-        cells.append(CellSpec(source.strip("\n"), kind))
+        outputs = [_join_output_text(o) for o in cell.get("outputs", []) if isinstance(o, dict)] if kind == "code" else []
+        count = cell.get("execution_count") if kind == "code" else None
+        cells.append(CellSpec(source.strip("\n"), kind, outputs=outputs, execution_count=count if isinstance(count, int) else None))
     return cells or [CellSpec("")]
+
+
+def _join_output_text(output: dict) -> dict:
+    """nbformat allows multi-line strings as lists of lines; keep plain strings."""
+    out = dict(output)
+    if isinstance(out.get("text"), list):
+        out["text"] = "".join(out["text"])
+    data = out.get("data")
+    if isinstance(data, dict):
+        out["data"] = {k: "".join(v) if isinstance(v, list) else v for k, v in data.items()}
+    return out
 
 
 def dump_ipynb(cells: list[CellSpec], path: Path | None = None) -> str:
@@ -232,9 +248,9 @@ def dump_ipynb(cells: list[CellSpec], path: Path | None = None) -> str:
             out.append(
                 {
                     "cell_type": "code",
-                    "execution_count": None,
+                    "execution_count": cell.execution_count,
                     "metadata": {},
-                    "outputs": [],
+                    "outputs": list(cell.outputs),
                     "source": lines(cell.source),
                 }
             )

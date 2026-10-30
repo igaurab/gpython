@@ -18,7 +18,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import DataTable, Static
 
 from . import notebook
-from .cell import Cell, CellSnapshot, ends_with_string
+from .cell import Cell, CellSnapshot, ends_with_string, outputs_to_ipynb
 from .graph import Graph, build
 from .kernel import Kernel
 from .vim import VimTextArea
@@ -166,7 +166,7 @@ class NotebookPane(Vertical):
             cells = self.cells()
             if not cells:
                 return
-            target = cells[0] if cells[0].rendered else cells[0].editor
+            target = cells[0] if cells[0].editor_hidden else cells[0].editor
         target.focus(scroll_visible=False)
 
     def _on_descendant_focus(self, event: events.DescendantFocus) -> None:
@@ -318,13 +318,18 @@ class NotebookPane(Vertical):
             table.add_row(*row)
 
     def write_file(self) -> None:
-        cells = [
-            dataclasses.replace(c.spec, source=c.source, kind=c.kind) if c.spec is not None else notebook.CellSpec(c.source, c.kind)
-            for c in self.cells()
-        ] + self._pending_sources
+        cells = [self._spec_of(c) for c in self.cells()] + self._pending_sources
         notebook.save(self.path, cells, self.markers)
         self.mark_dirty(False)
         self.notify(f"Saved {self.path}")
+
+    def _spec_of(self, cell: Cell) -> notebook.CellSpec:
+        """The CellSpec to save for `cell`: its loaded spec (format extras) with the current state."""
+        outputs = outputs_to_ipynb(cell.outputs_snapshot(), cell.exec_count or None) if cell.kind == "code" else []
+        count = (cell.exec_count or None) if cell.kind == "code" else None
+        if cell.spec is not None:
+            return dataclasses.replace(cell.spec, source=cell.source, kind=cell.kind, hide_code=cell.code_hidden, outputs=outputs, execution_count=count)
+        return notebook.CellSpec(cell.source, cell.kind, hide_code=cell.code_hidden, outputs=outputs, execution_count=count)
 
     def _after_loaded(self, callback) -> None:
         """Call `callback` now if every cell is mounted, else once they are."""
@@ -344,7 +349,7 @@ class NotebookPane(Vertical):
         `mode` "normal"/"insert" also switches the vim mode; "keep" leaves it.
         `row` puts the cursor at the start of that line (-1 = last line).
         """
-        if mode == "cell" or cell.rendered:  # rendered markdown: select it; enter edits
+        if mode == "cell" or cell.editor_hidden:  # rendered markdown / hidden code: select it; enter edits
             cell.focus(scroll_visible=False)
         else:
             editor = cell.editor
@@ -576,7 +581,7 @@ class NotebookPane(Vertical):
         if abs(step) > 1:  # J/K with a count stop at the first/last cell
             index = max(0, min(len(cells) - 1, index))
         if 0 <= index < len(cells) and cells[index] is not current:
-            if isinstance(self.app.focused, Cell) or cells[index].rendered:
+            if isinstance(self.app.focused, Cell) or cells[index].editor_hidden:
                 self.select(cells[index], "cell")
                 return
             editor = cells[index].editor
@@ -669,7 +674,7 @@ class NotebookPane(Vertical):
     def on_click(self, event) -> None:
         """Clicking the empty space below the last cell focuses the nearest cell."""
         if event.widget is self._cells_box and (cells := self.cells()):
-            if cells[-1].rendered:
+            if cells[-1].editor_hidden:
                 cells[-1].focus()
             else:
                 cells[-1].editor.focus()
@@ -761,6 +766,9 @@ class NotebookPane(Vertical):
                 self.move_cell(-1)
             case "m":
                 await self.set_cell_kind(cell, "markdown")
+            case "h":
+                cell.set_code_hidden(not cell.code_hidden)
+                self.mark_dirty()
             case "o":
                 cell.toggle_collapsed()
             case "O" | "shift+o":

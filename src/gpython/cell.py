@@ -54,6 +54,37 @@ def ends_with_string(source: str) -> bool:
     return isinstance(last, ast.Expr) and isinstance(last.value, ast.Constant) and isinstance(last.value.value, str)
 
 
+def outputs_from_ipynb(outputs: list[dict]) -> list[tuple[str, dict]]:
+    """nbformat output dicts -> the (kind, content) messages the kernel would have sent."""
+    messages: list[tuple[str, dict]] = []
+    for out in outputs:
+        kind = out.get("output_type")
+        if kind == "stream":
+            messages.append(("stream", {"name": out.get("name", "stdout"), "text": out.get("text", "")}))
+        elif kind in ("execute_result", "display_data"):
+            messages.append((kind, {"data": dict(out.get("data", {})), "metadata": dict(out.get("metadata", {}))}))
+        elif kind == "error":
+            messages.append(("error", {"ename": out.get("ename", ""), "evalue": out.get("evalue", ""), "traceback": list(out.get("traceback", []))}))
+    return messages
+
+
+def outputs_to_ipynb(snapshot: list[tuple[str, object]], execution_count: int | None) -> list[dict]:
+    """The reverse of outputs_from_ipynb, from Cell.outputs_snapshot()."""
+    outputs: list[dict] = []
+    for kind, content in snapshot:
+        if kind == "stream":
+            outputs.append({"output_type": "stream", "name": content["name"], "text": content["text"]})
+        elif kind == "_error":  # a dependency-graph error: keep it readable in Jupyter
+            outputs.append({"output_type": "stream", "name": "stderr", "text": str(content)})
+        elif kind == "execute_result":
+            outputs.append({"output_type": kind, "data": content.get("data", {}), "metadata": content.get("metadata", {}), "execution_count": execution_count})
+        elif kind == "display_data":
+            outputs.append({"output_type": kind, "data": content.get("data", {}), "metadata": content.get("metadata", {})})
+        elif kind == "error":
+            outputs.append({"output_type": "error", "ename": content.get("ename", ""), "evalue": content.get("evalue", ""), "traceback": list(content.get("traceback", []))})
+    return outputs
+
+
 @dataclass
 class CellSnapshot:
     """Everything needed to bring a deleted (or copied) cell back."""
@@ -85,6 +116,7 @@ class Cell(Vertical):
         self.kind = kind
         self.spec = spec  # the CellSpec this cell was loaded from: save keeps its extra fields
         self.editing = kind == "code"  # markdown cells start rendered
+        self.code_hidden = bool(spec is not None and spec.hide_code and kind == "code")  # marimo hide_code
         self.echo_suppressed = False  # hide the execute_result of a cell ending in a bare string
         if kind == "markdown":
             self.add_class("-markdown")
@@ -124,6 +156,12 @@ class Cell(Vertical):
         yield self._outputs
 
     def on_mount(self) -> None:
+        if self.code_hidden and self._editor is not None:
+            self._editor.display = False
+        if self.spec is not None and self.spec.outputs and self.kind == "code":
+            self.replay(outputs_from_ipynb(self.spec.outputs))  # stored .ipynb outputs, read-only until run
+            if self.spec.execution_count:
+                self.exec_count = self.spec.execution_count
         self._render_header()
         self.paint_bar()
 
@@ -206,6 +244,21 @@ class Cell(Vertical):
         """A markdown cell showing its rendered view (the editor is hidden)."""
         return self.kind == "markdown" and not self.editing
 
+    @property
+    def editor_hidden(self) -> bool:
+        """No editor on screen: rendered markdown or a code cell with hidden code (select the cell instead)."""
+        return self.rendered or (self.code_hidden and self.kind == "code")
+
+    def set_code_hidden(self, hidden: bool) -> None:
+        """marimo's hide_code: show only the header and the output; `h` in cell mode toggles."""
+        if self.kind != "code" or hidden == self.code_hidden:
+            return
+        self.code_hidden = hidden
+        if self._editor is not None:
+            self._editor.display = not hidden
+        self._header_key = None
+        self._render_header()
+
     async def set_kind(self, kind: str) -> None:
         """Switch the widgets to `kind`. No kernel work: NotebookPane.set_cell_kind does that."""
         if kind == self.kind:
@@ -232,8 +285,9 @@ class Cell(Vertical):
             await self.show_rendered()
 
     def start_editing(self) -> None:
-        """Show the editor (markdown: hide the rendered view). The caller focuses it."""
+        """Show the editor (markdown: hide the rendered view; hidden code: show it). The caller focuses it."""
         self.editing = True
+        self.code_hidden = False
         if self._editor is not None:
             self._editor.display = True
         if self._view is not None:
@@ -363,7 +417,7 @@ class Cell(Vertical):
         if self._header is None:
             return
         elapsed = int(time.perf_counter() - self._run_start) if self.status == "running" else 0
-        key = (self.kind, self.status, self.info, self.label, self.exec_count, self.duration, elapsed, self.selected)
+        key = (self.kind, self.status, self.info, self.label, self.exec_count, self.duration, elapsed, self.selected, self.code_hidden)
         if key == self._header_key:
             return
         self._header_key = key
@@ -387,6 +441,8 @@ class Cell(Vertical):
             if self.duration is not None and self.duration >= 0.1:
                 parts.append((f" {self.duration:.2f}s", "dim"))
         parts.append(("  " + self.info, "dim"))
+        if self.code_hidden:
+            parts.append(("  · code hidden (h shows)", "dim italic"))
         self._header.update(self._selected_style(Text.assemble(*parts)), layout=False)
 
     def _selected_style(self, text: Text) -> Text:
@@ -447,7 +503,7 @@ class Cell(Vertical):
 
     def on_click(self, event) -> None:
         """Clicking the header (or rendered markdown) selects the cell; anywhere else focuses its editor."""
-        if event.widget is self._header or self.rendered:  # double click edits (EditRequested)
+        if event.widget is self._header or self.editor_hidden:  # double click edits (EditRequested)
             self.focus(scroll_visible=False)
         elif not isinstance(event.widget, VimTextArea):
             self.editor.focus()

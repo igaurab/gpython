@@ -789,6 +789,8 @@ class GPython(App):
             (("delete", "del"), "Delete current cell", lambda arg="": self.action_delete_cell()),
             (("md", "markdown"), "Cell → Markdown", lambda arg="": self._ex_kind("markdown")),
             (("code",), "Cell → Code", lambda arg="": self._ex_kind("code")),
+            (("hide",), "Hide this cell's code (h in cell mode; saved as marimo hide_code)", lambda arg="": self._ex_hide(True)),
+            (("show",), "Show this cell's code", lambda arg="": self._ex_hide(False)),
             (("interrupt",), "Interrupt running code", lambda arg="": self.pane.kernel.interrupt()),
             (("theme",), "Set theme (:theme name) or show the current one", self._ex_theme),
             (("help", "h"), "Keys and commands", lambda arg="": self.action_help()),
@@ -797,6 +799,13 @@ class GPython(App):
     async def _ex_kind(self, kind: str) -> None:
         if cell := self.current_cell():
             await self.set_cell_kind(cell, kind)
+
+    def _ex_hide(self, hidden: bool) -> None:
+        if cell := self.current_cell():
+            cell.set_code_hidden(hidden)
+            self.pane.mark_dirty()
+            if hidden and self.focused is cell.editor:
+                cell.focus(scroll_visible=False)
 
     def _ex_set(self, arg: str = "") -> None:
         option = arg.strip()

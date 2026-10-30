@@ -92,13 +92,14 @@ def test_ipynb_roundtrip(tmp_path):
     path = tmp_path / "nb.ipynb"
     path.write_text(json.dumps(nb))
     cells, markers = load_cells(path)
-    assert cells == [CellSpec("# Hello\nworld", "markdown"), CellSpec("x = 1\nx")]
+    assert cells == [CellSpec("# Hello\nworld", "markdown"), CellSpec("x = 1\nx", outputs=[{"output_type": "stream", "text": "x"}], execution_count=3)]
     assert markers is True
 
     save(path, cells + [CellSpec("y = 2")])
     saved = json.loads(path.read_text())
     assert saved["metadata"]["custom"] is True  # metadata preserved
     assert [c["cell_type"] for c in saved["cells"]] == ["markdown", "code", "code"]
-    assert saved["cells"][1]["outputs"] == [] and saved["cells"][1]["execution_count"] is None
+    assert saved["cells"][1]["outputs"] == [{"output_type": "stream", "text": "x"}] and saved["cells"][1]["execution_count"] == 3
+    assert saved["cells"][2]["outputs"] == [] and saved["cells"][2]["execution_count"] is None
     assert saved["cells"][1]["source"] == ["x = 1\n", "x"]
     assert parse_ipynb(dump_ipynb(cells)) == cells

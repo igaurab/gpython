@@ -1,7 +1,7 @@
 # gpython – open items (updated 2026-10-30)
 
 State: plans 01–07 implemented (07 = file explorer, splits, tabs; see `docs/plans/07-windows.md`),
-200 tests green (`uv run python3 -m pytest -q`, ~100 s). Read `docs/plans/README.md` first.
+204 tests green (`uv run python3 -m pytest -q`, ~110 s). Read `docs/plans/README.md` first.
 
 ## 1. Performance (round 2 done 2026-10-30; what is left is Textual-internal)
 
@@ -63,5 +63,6 @@ after `return`), the `--theme` / `--no-vim` flags, the key table (generated from
   separator yet.
 - `:split` with no file opens an untitled notebook (vim shows the same buffer twice; we
   cannot, one kernel per window).
-- `hide_code=True` marimo cells show their code; a collapsed-code mode could honour the flag.
-- `.ipynb` outputs are dropped on load; consider showing stored outputs read-only.
+- Done 2026-10-30: marimo `hide_code=True` cells open with the code hidden (`h` in cell mode,
+  `:hide` / `:show`; saved back as `hide_code`); `.ipynb` stored outputs and execution counts load,
+  display and save (`CellSpec.outputs`, `cell.outputs_from_ipynb` / `outputs_to_ipynb`).
