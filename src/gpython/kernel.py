@@ -7,7 +7,6 @@ long-running cells, and survives crashes in user code.
 from __future__ import annotations
 
 import asyncio
-import inspect
 import json
 import os
 import queue
@@ -17,7 +16,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from . import envs
-from .markdown import html_to_markdown
 
 if TYPE_CHECKING:
     from jupyter_client.manager import AsyncKernelManager
@@ -158,8 +156,16 @@ def _gp_uv_magics():
 
 _gp_uv_magics()
 """
-# The shim's mo.Html: the same conversion as the static preview of a marimo cell.
-_HELPERS += inspect.getsource(html_to_markdown).replace("def html_to_markdown", "def _gp_html_to_md", 1)
+
+
+
+def _helpers() -> str:
+    """_HELPERS plus the shim's mo.Html conversion: the same one the static preview of a marimo cell uses."""
+    import inspect
+
+    from .markdown import html_to_markdown
+
+    return _HELPERS + inspect.getsource(html_to_markdown).replace("def html_to_markdown", "def _gp_html_to_md", 1)
 
 
 class Kernel:
@@ -225,7 +231,7 @@ class Kernel:
 
     async def _prepare(self) -> None:
         await self.client.wait_for_ready(timeout=60)
-        await self._execute(_HELPERS, None, store_history=False)
+        await self._execute(_helpers(), None, store_history=False)
         await self.set_file(self.file)
         self.ready.set()
 
