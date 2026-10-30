@@ -1,0 +1,155 @@
+# Plan 03 – Jupyter/marimo keybindings and cell UX
+
+Read `docs/plans/README.md` first. Plans 01 and 02 are done (outputs.py, themes.py, config.py,
+`-focused` cell class, `app.loaded`, possibly `statusbar.py`).
+
+## Goal
+
+The notebook should feel like Jupyter (command mode + edit mode, run keys) with vim inside the
+editor. Three modes, always visible in the header/status bar:
+
+- **INSERT** – typing in a cell (vim insert mode).
+- **NORMAL** – vim normal mode inside the cell editor (existing).
+- **CELL** – Jupyter-style command mode: the *cell* is selected, keys act on cells.
+  Entered with `escape` from NORMAL (or by clicking a cell header). `enter`/`i` go back to the editor.
+
+## Key map (final; put this table in `README.md` too)
+
+Run keys (work in every mode; `priority=True` on the App):
+
+| Key | Action | Notes |
+|---|---|---|
+| `shift+enter` | run cell **and select next** (create an empty cell below if it was the last) | Jupyter semantics |
+| `ctrl+enter`, `ctrl+shift+enter`, `ctrl+e` | run cell, stay | `ctrl+e` is the fallback for terminals without the kitty protocol |
+| `alt+enter` | run cell and **insert** a new cell below (INSERT mode) | |
+| `ctrl+shift+r` → palette "Run all" stays; `f5` | run all | |
+| `f4` | run stale | existing |
+| `ctrl+k` | interrupt | existing |
+
+Editing keys (every mode): `ctrl+n` new cell below (INSERT), `ctrl+shift+n` new cell above, `ctrl+d`
+delete cell (with undo), `ctrl+s` save, `alt+up`/`alt+down` and `ctrl+up`/`ctrl+down` move focus,
+`alt+shift+up`/`alt+shift+down` **move the cell** up/down, `ctrl+t` theme, `f1` help, `f2` variables,
+`f3` lazy toggle, `ctrl+p` palette, `ctrl+q` quit (asks if unsaved).
+
+CELL mode keys (handled by `Cell` when it has focus itself, i.e. `Cell.can_focus = True` and the
+editor is **not** focused):
+
+| Key | Action |
+|---|---|
+| `j`/`down`, `k`/`up` | select next/previous cell (scroll into view, `animate=False`) |
+| `g g`, `G` | first / last cell |
+| `enter`, `i` | edit: focus editor in NORMAL mode (`i` → INSERT directly) |
+| `a` / `b` | insert cell above / below and edit it (INSERT) |
+| `d d` | delete cell (same as `ctrl+d`) |
+| `z` | undo last cell deletion (restores at its old index with source, kind, outputs) |
+| `y y` / `x` / `p` / `P` | copy / cut / paste below / paste above cell (app-level cell clipboard, separate from the vim register) |
+| `shift+j` / `shift+k` | move cell down / up |
+| `m` / `y` | change cell to markdown / code — **plan 04 implements the switch; here only call `self.app.set_cell_kind(cell, "markdown"/"code")` which this plan stubs to `notify("markdown cells arrive in plan 04")`** |
+| `o` | toggle output collapse (collapsed shows 3 lines + "… N more lines" in dim) |
+| `shift+o` | clear this cell's output |
+| `l` | toggle line numbers for all editors (persist in config as `line_numbers`) |
+| `/` | focus the variables panel filter? **no** – out of scope; ignore |
+| `?` | help screen |
+| `:` | ex prompt (same as in NORMAL) |
+
+Implement counts for `j`/`k` (`3j`) and the two-key sequences (`gg`, `dd`, `yy`) with a `pending` attribute
+like `vim.py` does. Unknown keys do nothing (consume printable keys so they never leak into the editor).
+
+Escape chain: INSERT —esc→ NORMAL —esc→ CELL —esc→ (stay in CELL, clear pending). This means
+`VimTextArea` must, in normal mode on `escape` with nothing pending, post a new message
+`VimTextArea.LeaveEditor` which `Cell` handles by `self.focus()` (cell gets focus, editor blurs).
+When `--no-vim` (`VimTextArea.enabled is False`), `escape` in the editor goes straight to CELL mode.
+
+Visuals:
+- `Cell.-selected` (CELL mode) border `thick $accent` and header mode chip `CELL` (reverse style);
+  `-focused` (editor focused) keeps the current look. Only one cell is ever `-selected`.
+- Header line: `● c3 [4] 0.42s  NORMAL  defines x · uses y` → `[n]` is the **execution counter**
+  (`GPython.exec_counter` incremented per cell run, like Jupyter `In [n]`), and the duration appears when
+  a run took ≥ 0.1 s (`time.perf_counter()` around `kernel.execute`). While running show `●  running…`
+  with elapsed seconds updated once per second via `set_interval(1, …)` (stop it when done).
+- Status bar (create `statusbar.py` if plan 01 kept `Footer`; otherwise extend it): left `MODE`,
+  middle file name + `•` when dirty, right `kernel: ready|busy|starting|dead`, `reactive|lazy`, theme
+  name. Keep `Footer` only if plan 01 kept it; never both a Footer and a status bar showing the same keys.
+
+## Dirty tracking and quitting
+
+- `GPython.dirty: bool`; set on any `VimTextArea.Changed`, cell add/delete/move/kind change; cleared on
+  save. Show `•` in the status bar and window sub-title.
+- `action_quit` (ctrl+q) and `:q`: if dirty, push `Prompt("Unsaved changes. Quit without saving? (y/n) ")`
+  and quit only on `y`. `:q!` quits unconditionally; `:wq` saves first (untitled → ask for a name, existing
+  behaviour).
+- `:w` on a plain script (`markers is False`) keeps it a plain script (existing).
+
+## Undo delete & clipboard
+
+- `GPython._deleted: list[CellSnapshot]` (max 50) where `CellSnapshot = (index, source, kind, mode,
+  outputs_snapshot)`; `outputs_snapshot` can be the list of `(kind, content)` messages the cell received
+  so `OutputArea.replay(snapshot)` restores them. Restore mounts a new `Cell` at `min(index, len(cells))`,
+  replays outputs, marks status `stale` if it had run, re-runs nothing automatically (user presses run).
+- Cell clipboard `GPython._cell_clipboard: CellSnapshot | None` for `yy`/`x`/`p`/`P`.
+- Cut (`x`) behaves as delete (dependents re-run) plus copy.
+
+## Ex commands (extend `_run_ex`)
+
+`:w [file]`, `:q`, `:q!`, `:wq`/`:x`, `:run` (all), `:runabove`, `:runbelow` (relative to current cell,
+dependency order within the subset via `graph.sort`), `:restart`, `:clear` (all outputs), `:theme [name]`,
+`:set vim` / `:set novim` (toggle `VimTextArea.enabled` for all editors + persist `vim` in config),
+`:set lazy` / `:set nolazy`, `:set nu` / `:set nonu` (line numbers), `:help`, `:md` / `:code` (stub → plan 04),
+`:N` (integer → select cell N, 1-based). Unknown → error notify.
+
+## Help screen
+
+`src/gpython/help.py`: `HelpScreen(ModalScreen)` with a scrollable `Static`/`Markdown` built from one
+source of truth: a `KEYMAP: list[tuple[str, str, str]]` (mode, key, description) defined in
+`src/gpython/keymap.py`. `app.py` BINDINGS, the Cell command-mode handler and the README table are all
+generated from/consistent with `KEYMAP` (at minimum, a test asserts every App `Binding.key` appears in
+`KEYMAP`). `escape`/`q`/`f1`/`?` close it.
+
+## Mouse
+
+- Clicking a cell's header selects the cell (CELL mode); clicking the editor focuses it (existing).
+- Clicking the `[n]`/status icon area is the same as the header.
+
+## Implementation notes
+
+- `Cell.can_focus = True`; in `Cell.on_focus` → `add_class("-selected")`, `post_message(ModeChanged("cell"))`
+  to the status bar; `on_blur` → remove it. `GPython.current_cell()` must return the cell when the
+  Cell itself is focused (it already walks up from `self.focused`).
+- `action_run_cell(advance: str = "stay")` with `advance in {"stay", "next", "insert"}`; bind the three
+  run variants to it with arguments: `Binding("shift+enter", "run_cell('next')", ...)`.
+  After `run_cells` is **scheduled** (not awaited), move selection: for `next`, select the next cell in
+  CELL mode if the current mode was CELL, else focus its editor in NORMAL mode; create an empty cell if
+  none exists. For `insert`, mount a new cell below and focus it in INSERT mode.
+- Moving a cell: `container.move_child(cell, before=prev)` / `after=next`; then `invalidate_cells()`,
+  `refresh_info()`, keep the selection on the moved cell, `scroll_visible(animate=False)`, `dirty=True`.
+- `run_above/below`: ids = cells before/after the current (inclusive for below), `run_cells(ids, downstream=False)`.
+- Keep `tests/test_vim.py` passing: `escape` in NORMAL with nothing pending now posts `LeaveEditor`; the
+  test app there has no `Cell`, so the message is simply unhandled – fine.
+- Persist `vim` and `line_numbers` via `config.save` on change; read them in `GPython.__init__`
+  (constructor args win over config).
+
+## Tests (`tests/test_commands.py`, new; keep `tests/test_app.py` green)
+
+Use a 3-cell notebook without waiting for the kernel where possible (most of these are pure UI):
+
+1. `escape` from INSERT → NORMAL → CELL: `app.focused is cell`, class `-selected` present on exactly one cell.
+2. CELL `j`/`k`/`gg`/`G`/`3j` move the selection; `enter` focuses the editor in NORMAL; `i` in INSERT.
+3. `a`/`b` insert above/below and the new cell is in INSERT mode; `ctrl+shift+n` inserts above.
+4. `dd` deletes, `z` restores at the same index with the same source; `yy`+`p` duplicates below; `x`+`P` moves.
+5. `shift+j`/`shift+k` and `alt+shift+down/up` reorder; `[c.source for c in app.cells()]` reflects it.
+6. `o` toggles `-collapsed` class on the cell's `OutputArea`; `shift+o` clears outputs.
+7. `shift+enter` on the last cell creates a new cell and selects it; `alt+enter` inserts and enters INSERT;
+   `ctrl+shift+enter` runs in place (kernel test: output appears, focus unchanged).
+8. Dirty: typing sets `app.dirty`; `ctrl+s` clears it; `:q` with dirty shows the Prompt and `n` keeps the app
+   running; `:q!` exits.
+9. `:3` selects the third cell; `:runbelow` runs only cells at/after the current one (kernel test).
+10. `f1` opens `HelpScreen`; `escape` closes it. Every App binding key is listed in `KEYMAP`.
+11. `:set nu`/`:set nonu` toggles `show_line_numbers` on all editors and writes `line_numbers` to the config
+    (XDG_CONFIG_HOME = tmp_path).
+
+Run `uv run python3 scripts/bench.py` – no metric regresses > 10 %; paste the table.
+
+## Report
+
+Files changed, tests summary, bench table, README key table updated, requests for peer-owned files
+(none expected).

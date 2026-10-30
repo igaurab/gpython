@@ -74,6 +74,7 @@ def test_reactive_run_edit_delete_save(tmp_path):
             await pilot.press("escape")
             assert cells[2].editor.mode == "normal"
             assert "NORMAL" in str(app.query_one("#status").render())
+            assert app.sub_title.endswith("-- NORMAL --")
 
     asyncio.run(main())
 

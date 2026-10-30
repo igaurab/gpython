@@ -241,15 +241,17 @@ class GPython(App):
         """One status line for the whole app: vim mode, file, run mode, kernel."""
         if kernel_state is not None:
             self.kernel_state = kernel_state
-        self.sub_title = str(self.path) if self.path else "untitled"
+        name = str(self.path) if self.path else "untitled"
         if not VimTextArea.enabled:
             mode = ("", "")
         elif VimTextArea.mode == "insert":
             mode = (" INSERT ", "bold black on green")
         else:
             mode = (" NORMAL ", "bold black on yellow")
+        # Header (top) and status line (bottom) both show the mode.
+        self.sub_title = f"{name}  ·  -- {mode[0].strip()} --" if mode[0] else name
         self.query_one("#status", Static).update(
-            Text.assemble(mode, f"  {self.sub_title}  ·  {'lazy' if self.lazy else 'reactive'}  ·  {self.kernel_state}")
+            Text.assemble(mode, f"  {name}  ·  {'lazy' if self.lazy else 'reactive'}  ·  {self.kernel_state}")
         )
 
     def cells(self) -> list[Cell]:
