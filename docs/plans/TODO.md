@@ -6,16 +6,20 @@ State: plans 01–07 implemented (07 = file explorer, splits, tabs; see `docs/pl
 ## 1. Performance (rounds 2 and 3 done 2026-10-30; what is left is Textual-internal)
 
 `uv run python3 scripts/bench.py`, headless, 60 cells, quiet machine (never while the test
-suite runs: every number doubles). "before" = main cad579e.
+suite runs: every number doubles). "before" = main cad579e. A run takes ~2.5 s since
+2026-10-30, when the pilot's idle-poll tick was cut from 20 ms to 2 ms (`use_fast_idle_tick`
+in the script): the poll's wakeups used to land inside the measured spans, so the keys and
+moves rows got smaller without the app changing. Compare only against the "2 ms tick" column.
 
-| metric | before | now |
-|---|---|---|
-| keys_30_net (CPU for 30 keystrokes minus harness floor) | 0.519 s | 0.14–0.19 s |
-| keys_30_proc (process time, no profiler) | 0.209 s | 0.09–0.18 s |
-| moves_30_proc (30 cell moves, process time) | 0.666 s | 0.50–0.52 s |
-| mount_60 / loaded_60 | 0.200 / 0.452 s | 0.21 / 0.40–0.43 s |
-| stream_2000 | 0.107 s | 0.11 s |
-| run_trivial | 0.037 s | 0.030 s |
+| metric | before | 20 ms tick | 2 ms tick |
+|---|---|---|---|
+| keys_30_net (CPU for 30 keystrokes minus harness floor) | 0.519 s | 0.14–0.19 s | 0.09–0.11 s |
+| keys_30_proc (process time, no profiler) | 0.209 s | 0.09–0.18 s | 0.06 s |
+| moves_30_proc (30 cell moves, process time) | 0.666 s | 0.50–0.52 s | 0.40–0.43 s |
+| mount_60 / loaded_60 | 0.200 / 0.452 s | 0.21 / 0.40–0.43 s | 0.07–0.09 / 0.31–0.40 s |
+| first_paint | – | 0.08–0.09 s | 0.07–0.09 s |
+| stream_2000 | 0.107 s | 0.11 s | 0.03 s |
+| run_trivial | 0.037 s | 0.030 s | 0.045 s |
 
 What changed (see `docs/plans/07-windows.md` "Gotchas" and the memory note on Textual pitfalls):
 - `VimTextArea.selection` reactive no longer repaints the whole editor on every cursor move;

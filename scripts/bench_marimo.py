@@ -19,10 +19,23 @@ import tempfile
 import time
 from pathlib import Path
 
+import textual._wait
+
 t0 = time.perf_counter()
 import gpython.app as gapp
 
 IMPORT_APP = time.perf_counter() - t0
+
+
+def use_fast_idle_tick(seconds: float = 0.002) -> None:
+    """Textual's pilot polls for idleness in 20 ms sleeps; ~180 such waits made a run take
+    10 s of which 8 s was sleeping. A 2 ms tick makes a run ~2.5 s. Start-up metrics are
+    unchanged; the keys/moves rows shrink because the poll's wakeups ran inside the
+    measured spans, so compare against baselines taken with the same tick."""
+    textual._wait.SLEEP_GRANULARITY = seconds
+
+
+use_fast_idle_tick()
 
 HTML = (
     "<p>Given an integer array <code>nums</code>, return all the triplets <code>[nums[i], nums[j], nums[k]]</code> "

@@ -242,7 +242,7 @@ EnvPicker {
 #status {
     dock: bottom;
     height: 1;
-    background: $panel;
+    background: $background;
     color: $text-muted;
 }
 
