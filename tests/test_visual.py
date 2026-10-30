@@ -29,6 +29,7 @@ def press(text: str, *keys: str) -> dict:
                 "mode": editor.mode,
                 "selected": editor.selected_text,
                 "messages": list(app.messages),
+                "clipboard": app.clipboard,
             }
 
     return asyncio.run(main())
@@ -247,3 +248,11 @@ def test_visual_repaints_match_full_render(tmp_path):
                 await same_as_full(editor, pilot)
 
     asyncio.run(asyncio.wait_for(main(), 120))
+
+
+def test_yanks_go_to_the_system_clipboard_deletes_do_not():
+    assert press(TEXT, "y", "y")["clipboard"] == "one two\n"
+    assert press(TEXT, "w", "v", "G", "y")["clipboard"] == "two\nthree four\nf"
+    assert press(TEXT, "V", "j", "y")["clipboard"] == "one two\nthree four\n"
+    assert press(TEXT, "y", "w")["clipboard"] == "one "
+    assert press(TEXT, "d", "d")["clipboard"] == ""

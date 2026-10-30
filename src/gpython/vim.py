@@ -454,6 +454,7 @@ class VimTextArea(TextArea):
                 self._chars_operator("c", (row, col), (row, min(col + n, len(line))))
             case "Y":
                 self._yank_lines(row, min(self.document.line_count - 1, row + n - 1))
+                self._copy_register()
             case "S":
                 self._operator("c", "c", n)
             case "D":
@@ -880,6 +881,7 @@ class VimTextArea(TextArea):
         last = self.document.line_count - 1
         self._yank_lines(row, end_row)
         if op == "y":
+            self._copy_register()
             return
         if op == "c":
             indent = re.match(r"\s*", self.document.get_line(row)).group()
@@ -902,6 +904,8 @@ class VimTextArea(TextArea):
         if text:
             VimTextArea.register, VimTextArea.register_linewise = text, False
         if op == "y":
+            if text:
+                self._copy_register()
             self.move_cursor(a)
             self._clamp()
             return
@@ -912,6 +916,14 @@ class VimTextArea(TextArea):
             self.set_mode("insert")
         else:
             self._clamp()
+
+    def _copy_register(self) -> None:
+        """A yank also goes to the system clipboard (OSC 52), so it pastes in other programs."""
+        text = VimTextArea.register + ("\n" if VimTextArea.register_linewise else "")
+        try:
+            self.app.copy_to_clipboard(text)
+        except Exception:
+            pass
 
     def _yank_lines(self, first: int, last: int) -> None:
         text = self.get_text_range((first, 0), (last, len(self.document.get_line(last))))
