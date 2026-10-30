@@ -131,6 +131,13 @@ class VimTextArea(TextArea):
             self.editor = editor
 
 
+    class FindFiles(Message):
+        """space f f (leader key, like telescope's): the app opens the file finder."""
+
+        def __init__(self, editor: VimTextArea) -> None:
+            super().__init__()
+            self.editor = editor
+
     class TabSwitch(Message):
         """gt / gT: go to tab `tab` (1-based) when given, else `step` tabs forward."""
 
@@ -340,11 +347,17 @@ class VimTextArea(TextArea):
             elif key == "T":
                 self.post_message(self.TabSwitch(self, None, -n))
             return True
+        if pending in (" ", " f"):  # space is the leader: space f f finds files
+            if pending == " " and key == "f":
+                self.pending = " f"
+            elif pending == " f" and key == "f":
+                self.post_message(self.FindFiles(self))
+            return True
 
         row, col = self.cursor_location
         line = self.document.get_line(row)
         match key:
-            case "d" | "c" | "y" | "g":
+            case "d" | "c" | "y" | "g" | " ":
                 self.pending, self.count = key, str(n) if n > 1 else ""
             case "i":
                 self.set_mode("insert")

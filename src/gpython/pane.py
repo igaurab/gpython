@@ -769,6 +769,12 @@ class NotebookPane(Vertical):
             if key == "d":
                 await self.delete_cell(n)
             return True
+        if pending in (" ", " f"):  # space is the leader: space f f finds files
+            if pending == " " and key == "f":
+                self._cmd_pending = " f"
+            elif pending == " f" and key == "f":
+                app.action_find_files()
+            return True
         if pending == "y":
             kind_before, self._kind_before_y = self._kind_before_y, None
             if key == "y":
@@ -779,7 +785,7 @@ class NotebookPane(Vertical):
                 self.copy_cell()
                 return True
         match key:
-            case "g" | "d" | "y":
+            case "g" | "d" | "y" | " ":
                 if key == "y":
                     self._kind_before_y = cell.kind
                     await self.set_cell_kind(cell, "code")

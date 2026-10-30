@@ -823,6 +823,10 @@ class GPython(App):
     def _ex(self) -> None:
         self._open_ex()
 
+    @on(VimTextArea.FindFiles)
+    def _find_files(self) -> None:
+        self.action_find_files()
+
     @on(VimTextArea.TabSwitch)
     def _tab_switch(self, event: VimTextArea.TabSwitch) -> None:
         self.tab_switch(event.tab, event.step)
@@ -894,6 +898,7 @@ class GPython(App):
             (("venv",), "New venv with python -m venv, then switch to it (:venv folder [python])", lambda arg="": envpicker.ex_venv(self.pane, arg)),
             (("uv",), "uv for this kernel: :uv add pkg · :uv pip install pkg · :uv venv [folder] [python]", lambda arg="": envpicker.ex_uv(self.pane, arg)),
             (("pip",), "Install into this kernel's env (:pip numpy; uses uv when available; :pip list, uninstall)", lambda arg="": envpicker.ex_pip(self.pane, arg)),
+            (("find", "fin", "Telescope"), "Find files by fuzzy name (space f f; :find text starts the search)", lambda arg="": self.action_find_files(arg)),
             (("help", "h"), "Keys and commands", lambda arg="": self.action_help()),
         ]
 
@@ -1015,6 +1020,16 @@ class GPython(App):
         """Theme picker with live preview; the config is written only on confirm."""
         if not isinstance(self.screen, ThemePicker):
             self.push_screen(ThemePicker(), self._theme_picked)
+
+    def action_find_files(self, query: str = "") -> None:
+        """space f f: the fuzzy file finder (imported on first use, like telescope)."""
+        from .finder import open_finder  # noqa: PLC0415
+
+        open_finder(self, query)
+
+    def check_action(self, action: str, parameters: tuple) -> bool | None:
+        # A popup that moves with ctrl+n / ctrl+k (the file finder) turns those app keys off.
+        return action not in getattr(self.screen, "APP_ACTIONS_OFF", ())
 
     def action_pick_env(self) -> None:
         """Env picker: switch the kernel's environment, create a venv, install packages."""
