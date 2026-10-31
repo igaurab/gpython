@@ -77,7 +77,7 @@ Everywhere:
 | `ctrl+h` / `ctrl+l` | Focus the window to the left / right; `ctrl+h` from the leftmost window opens or focuses the explorer, `ctrl+l` from the explorer goes back (not in insert mode, where `ctrl+h` is backspace) |
 | `ctrl+w` … | Window commands: `s` split, `v` vsplit, `h j k l` move, `q` close, `o` only, `T` to tab |
 | `f1` | Help |
-| `f2` | Toggle variables panel (hidden at start) |
+| `ctrl+o` | Toggle the outline panel: each cell with what it defines, live types after a run, dependency edges; `enter` jumps (not in insert mode, where it is vim's one-shot command; `:outline`) |
 | `f3` | Toggle run mode, saved: lazy (default, cells that use the variables are only marked stale) / reactive (they re-run) |
 | `ctrl+p` | Command palette: run all, restart kernel, … |
 | `ctrl+q` / `:q` | Quit (asks when there are unsaved changes; `:q!` does not) |
@@ -209,6 +209,26 @@ and other extensions behind `.`. Keys inside it:
 | `.` | Show hidden and non-notebook files |
 | `R` | Reload |
 | `q`, `escape`, `ctrl+b` | Hide the explorer |
+
+**Outline** (`ctrl+o`, `:outline`, `:tags`). The explorer's twin on the right:
+one node per cell (`c2  defines np, xs`, a markdown cell shows its heading),
+expandable to the names it defines: imports, variables, functions with their
+signature, classes. Once a cell has run, variables show the kernel's type and
+value (`xs  list  [1, 2, 3]`). The cursor follows you: the current cell, or
+the function or class whose lines hold the editor cursor, like tagbar. A
+footer shows the cell's edges in the dependency graph (`← uses c1, c2   →
+used by c4`). `ctrl+w l` from the rightmost window focuses it, then:
+
+| key | action |
+|---|---|
+| `j` / `k` | Move through the cells and their definitions |
+| `enter` | Jump: a cell selects it, a definition opens the cell's editor on that line |
+| `h` / `l` | Collapse / expand a cell |
+| `q` | Hide the outline and go back to the notebook |
+| `escape`, `ctrl+w h` | Back to the notebook, the outline stays |
+
+It replaces the old f2 variables table. In insert mode `ctrl+o` keeps vim's
+meaning (one normal-mode command); use `:outline` there.
 
 `ctrl+b` toggles the explorer from anywhere. The explorer stays open after a
 file is opened; `ctrl+h` or `ctrl+w h` from the leftmost window (or `ctrl+w w`)

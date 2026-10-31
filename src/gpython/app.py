@@ -19,7 +19,7 @@ from textual.color import Color
 from textual.containers import Horizontal
 from textual.reactive import Reactive
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Header, Input, Label, Static
+from textual.widgets import Header, Input, Label, Static, Tree
 from textual.widgets._header import HeaderIcon
 
 from . import bigtext, config, images
@@ -53,6 +53,7 @@ _MODE_STYLES = {
     "normal": "bold black on yellow",
     "cell": "bold black on cyan",
     "files": "bold black on magenta",
+    "outline": "bold black on magenta",
     "visual": "bold black on bright_magenta",
     "v-line": "bold black on bright_magenta",
     "replace": "bold black on red",
@@ -162,7 +163,7 @@ class GPython(App):
         Binding("ctrl+h,backspace", "focus_left", "Window left", show=False, priority=True),
         Binding("ctrl+l", "focus_right", "Window right", show=False, priority=True),
         Binding("f1", "help", "Help"),
-        Binding("f2", "toggle_vars", "Variables"),
+        Binding("ctrl+o", "toggle_outline", "Outline", show=False, priority=True),
         Binding("f3", "toggle_lazy", "Lazy"),
         Binding("f4", "run_stale", "Run stale"),
         Binding("f5", "run_all", "Run all"),
@@ -349,6 +350,8 @@ class GPython(App):
             return "cell"
         if isinstance(focused, Explorer):
             return "files"
+        if isinstance(focused, Tree):
+            return "outline"
         if not VimTextArea.enabled or VimTextArea.mode == "insert":
             return "insert"
         if VimTextArea.mode == "replace":
@@ -421,16 +424,16 @@ class GPython(App):
         if key == self._status_key:
             return
         self._status_key = key
-        show_mode = VimTextArea.enabled or mode in ("cell", "files")
+        show_mode = VimTextArea.enabled or mode in ("cell", "files", "outline")
         self.sub_title = name
         if self._kernel_chip is not None and pane.kernel_label != self._chip_label:
             self._chip_label = pane.kernel_label
             version, _, env = pane.kernel_label.partition(" · ")
             self._kernel_chip.update(Text.assemble((version, "dim"), (f" · {env}" if env else "", "bold"), (" ▾", "dim")))
-        chip_mode = mode if mode in ("cell", "files") or VimTextArea.enabled else "edit"
+        chip_mode = mode if mode in ("cell", "files", "outline") or VimTextArea.enabled else "edit"
         if self._mode_chip is not None and chip_mode != self._mode_chip_mode:
             self._mode_chip_mode = chip_mode
-            if chip_mode in ("cell", "files", "edit"):
+            if chip_mode in ("cell", "files", "outline", "edit"):
                 text = Text(f" {chip_mode.upper()} ", style=_MODE_STYLES.get(chip_mode, _MODE_STYLES["insert"]))
             else:
                 text = Text.assemble((" EDIT ", _MODE_STYLES["insert"]), (f" {chip_mode.upper()}", _CHIP_VIM_STYLES[chip_mode]))
@@ -585,9 +588,14 @@ class GPython(App):
         current = self.pane
         explorer_open = self.explorer_visible
         in_explorer = isinstance(self.focused, Explorer)
+        in_outline = not in_explorer and isinstance(self.focused, Tree)
         panes = self.workspace.tab_panes()
         if where in ("left", "right", "up", "down"):
             direction = {"left": "h", "right": "l", "up": "k", "down": "j"}[where]
+            if in_outline:
+                if direction == "h":
+                    current.focus_pane()
+                return
             if in_explorer:
                 if direction == "l" and panes:
                     rects = self.workspace.tab.rects
@@ -598,6 +606,9 @@ class GPython(App):
             target = self.workspace.neighbour(current, direction)
             if target is None and direction == "h" and explorer_open:
                 self.explorer.focus()
+                return
+            if target is None and direction == "l" and current.outline_visible:
+                current.focus_outline()
                 return
         elif where in ("next", "prev"):
             ring: list = ([self.explorer] if explorer_open else []) + panes
@@ -931,8 +942,8 @@ class GPython(App):
             commands = [(names[0], desc) for names, desc, _ in self.ex_commands()]
             self.push_screen(HelpScreen(commands))
 
-    def action_toggle_vars(self) -> None:
-        self.pane.toggle_vars()
+    def action_toggle_outline(self) -> None:
+        self.pane.toggle_outline()
 
     def action_toggle_lazy(self) -> None:
         self.set_lazy(not self.lazy)
@@ -1045,7 +1056,7 @@ class GPython(App):
             (("clear",), "Clear all outputs", lambda arg="": self.pane.clear_outputs()),
             (("set",), "Options: vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall", self._ex_set),
             (("time", "timing"), "Show / hide each cell's run time in its header (t in cell mode; saved)", lambda arg="": self.set_timing(not Cell.show_timing)),
-            (("variables", "vars"), "Toggle variables panel", lambda arg="": self.action_toggle_vars()),
+            (("outline", "tags", "variables", "vars"), "Outline panel: each cell with what it defines, live types after a run, its edges; enter jumps (ctrl+o)", lambda arg="": self.action_toggle_outline()),
             (("lazy",), "Toggle run mode: lazy (dependents only marked stale) / reactive (they re-run); saved (f3)", lambda arg="": self.action_toggle_lazy()),
             (("new",), "New cell below", lambda arg="": self.action_add_cell()),
             (("delete", "del"), "Delete current cell", lambda arg="": self.action_delete_cell()),
@@ -1196,11 +1207,13 @@ class GPython(App):
             return False
         if action in ("focus_left", "focus_right"):
             return self._window_keys_apply(action == "focus_left")
+        if action == "toggle_outline":
+            return self._window_keys_apply(True)
         return True
 
     def _window_keys_apply(self, needs_backspace: bool) -> bool:
-        """ctrl+h and ctrl+l move between windows only on the notebook screen, never in a text
-        field; ctrl+h arrives as backspace, which insert mode keeps for deleting."""
+        """ctrl+h, ctrl+l and ctrl+o act only on the notebook screen, never in a text field;
+        ctrl+h arrives as backspace and ctrl+o is vim's one-shot command, so insert mode keeps both."""
         if not isinstance(self.screen, NotebookScreen) or isinstance(self.focused, Input):
             return False
         return not (needs_backspace and self.ui_mode in ("insert", "replace"))

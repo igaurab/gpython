@@ -3,7 +3,7 @@
 import asyncio
 
 import pytest
-from textual.widgets import DataTable, Input
+from textual.widgets import Input
 
 from gpython import config
 from gpython.app import GPython, Prompt
@@ -298,10 +298,13 @@ def test_dirty_and_quit(tmp_path):
 
 def test_jumps_labels_and_vars_panel(tmp_path):
     async def test(app, pilot):
-        assert app.query_one("#vars", DataTable).display is False
-        await pilot.press("f2")
-        assert app.query_one("#vars", DataTable).display is True
-        await pilot.press("f2")
+        assert not app.pane.outline_visible
+        await pilot.press("ctrl+o")
+        await pilot.pause()
+        assert app.pane.outline_visible
+        await pilot.press("ctrl+o")
+        await pilot.pause()
+        assert not app.pane.outline_visible
 
         first, second, third = app.cells()
         await pilot.press("/", "3", "enter")
