@@ -378,5 +378,7 @@ via jupyter_client · `notebook.py` file formats (`# %%`, scripts, marimo,
 uv run pytest -q
 ```
 
-Releases: bump `version` in `pyproject.toml`, commit, then push a `vX.Y.Z` tag;
-GitHub Actions builds and uploads to PyPI through trusted publishing.
+Releases: add the version's section to `CHANGELOG.md`, bump `version` in
+`pyproject.toml`, run `uv lock`, commit, then push a `vX.Y.Z` tag. GitHub Actions
+builds, uploads to PyPI through trusted publishing, and creates the GitHub release
+with the wheel and sdist attached and that changelog section as its notes.
