@@ -13,6 +13,10 @@ every frame `sync` (called from `GPython.post_display_hook`) compares where each
 does the same over blank lines inside another widget's text (images in markdown cells, see
 `mdimages.py`). Terminals without the protocol keep textual_image's widget (Sixel, half cells
 or Unicode blocks).
+
+An animated placement (a GIF) has one terminal image per frame, sent the first time that
+frame is due; `tick`, run by a timer while any animated placement is live, places the frame
+due now and removes the previous one, two short sequences per frame change.
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ import base64
 import io
 import os
 import sys
+import time
 from functools import cache
 from itertools import count
 from random import randint
@@ -43,8 +48,12 @@ MAX_COLS = 400
 
 _ids = count(randint(1, 2**24 - 2**16))
 _live: set[Placement] = set()
+_animated: set[Placement] = set()
+_ticker = None
 _any_sent = False
 enabled_override: bool | None = None
+TICK_SECONDS = 1 / 25
+clock = time.monotonic
 
 
 def supported() -> bool:
@@ -156,14 +165,30 @@ def forget_all(app: App) -> None:
 
 
 class Placement:
-    """A PNG the terminal keeps under `image_id`, shown over the cells `_on_screen` reports."""
+    """A PNG the terminal keeps under `image_id`, shown over the cells `_on_screen` reports.
 
-    def __init__(self, png: bytes, pixels: tuple[int, int] | None = None) -> None:
+    `frames` are (png, seconds) per frame of an animation; a still picture is its one frame.
+    """
+
+    def __init__(self, png: bytes, pixels: tuple[int, int] | None = None, frames: tuple[tuple[bytes, float], ...] = ()) -> None:
         self.png = png
         self.pixels = pixels or png_size(png)
-        self.image_id = next(_ids)
-        self._sent = False
+        self.frames = frames if len(frames) > 1 else ((png, 0.0),)
+        self.frame_ids = [next(_ids) for _ in self.frames]
+        self.frame = 0
+        self._sent: set[int] = set()
         self._placed: tuple[Region, Region] | None = None
+        if len(self.frames) > 1:
+            self._ends = []
+            total = 0.0
+            for _, seconds in self.frames:
+                total += seconds
+                self._ends.append(total)
+            _animated.add(self)
+
+    @property
+    def image_id(self) -> int:
+        return self.frame_ids[self.frame]
 
     def _on_screen(self, screen: Screen) -> tuple[Region, Region] | None:
         """(all cells, visible cells) of this image on `screen`, or None when it is not showing."""
@@ -177,21 +202,44 @@ class Placement:
         self._placed = wanted
         if wanted is None:
             return unplace(self.image_id)
+        return self._show(self.frame, wanted)
+
+    def _show(self, frame: int, where: tuple[Region, Region]) -> str:
         out = ""
-        if not self._sent:
+        if frame not in self._sent:
             global _any_sent
-            self._sent = _any_sent = True
-            out = transmit(self.image_id, self.png)
-        return out + place(self.image_id, self.pixels, *wanted)
+            _any_sent = True
+            self._sent.add(frame)
+            out = transmit(self.frame_ids[frame], self.frames[frame][0])
+        return out + place(self.frame_ids[frame], self.pixels, *where)
+
+    def frame_at(self, now: float) -> int:
+        """The frame due at `now` seconds (the animation loops, in step with every other one)."""
+        moment = now % self._ends[-1]
+        for index, end in enumerate(self._ends):
+            if moment < end:
+                return index
+        return 0
+
+    def advance(self, now: float) -> str:
+        """On screen and animated: the sequences that swap in the frame due at `now`, if it changed."""
+        if self._placed is None or len(self.frames) < 2:
+            return ""
+        frame = self.frame_at(now)
+        if frame == self.frame:
+            return ""
+        previous = self.image_id
+        self.frame = frame
+        return self._show(frame, self._placed) + unplace(previous)
 
     def release(self) -> str:
-        """Stop syncing; the sequence that frees the terminal's copy ("" when it was never sent)."""
+        """Stop syncing; the sequence that frees the terminal's copies ("" when none was sent)."""
         _live.discard(self)
-        if not self._sent:
-            return ""
-        self._sent = False
+        _animated.discard(self)
+        out = "".join(forget(self.frame_ids[frame]) for frame in sorted(self._sent))
+        self._sent = set()
         self._placed = None
-        return forget(self.image_id)
+        return out
 
 
 def _widget_on_screen(widget: Widget, screen: Screen) -> tuple[Region, Region] | None:
@@ -250,11 +298,13 @@ class KittyImage(Placement, Widget):
 class InlinePlacement(Placement):
     """An image over `rows` blank lines of `widget`'s content, starting at line `line`, column `x`."""
 
-    def __init__(self, widget: Widget, png: bytes, pixels: tuple[int, int], line: int, x: int, cols: int, rows: int) -> None:
-        super().__init__(png, pixels)
+    def __init__(self, widget: Widget, png: bytes, pixels: tuple[int, int], line: int, x: int, cols: int, rows: int, frames: tuple[tuple[bytes, float], ...] = ()) -> None:
+        super().__init__(png, pixels, frames)
         self.widget = widget
         self.line, self.x, self.cols, self.rows = line, x, cols, rows
         _live.add(self)
+        if len(self.frames) > 1:
+            animate(widget.app)
 
     def _on_screen(self, screen: Screen) -> tuple[Region, Region] | None:
         found = _widget_on_screen(self.widget, screen)
@@ -272,6 +322,27 @@ def sync(app: App) -> None:
         return
     screen = app.screen
     data = "".join(image.update_placement(screen) for image in tuple(_live))
+    if data:
+        _write(app, data)
+
+
+def animate(app: App) -> None:
+    """Run the animation ticker (once) while animated placements are live."""
+    global _ticker
+    if _ticker is None:
+        _ticker = app.set_interval(TICK_SECONDS, lambda: tick(app))
+
+
+def tick(app: App) -> None:
+    """Swap every on-screen animation to the frame due now; stop when none is live."""
+    global _ticker
+    if not _animated:
+        if _ticker is not None:
+            _ticker.stop()
+            _ticker = None
+        return
+    now = clock()
+    data = "".join(placement.advance(now) for placement in tuple(_animated))
     if data:
         _write(app, data)
 

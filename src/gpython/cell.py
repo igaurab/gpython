@@ -283,7 +283,9 @@ class Cell(Vertical):
 
     @property
     def images(self) -> list[bytes]:
-        return self._outputs.images if self._outputs is not None else []
+        """The cell's pictures: those in its markdown, then its output images."""
+        shown = self._view.pictures if self._view is not None else []
+        return shown + (self._outputs.images if self._outputs is not None else [])
 
     def set_label(self, n: int) -> None:
         """Show the 1-based display position (c1, c2, ...) in the header."""
