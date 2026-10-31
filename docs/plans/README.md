@@ -19,6 +19,7 @@ asking questions**. Read this file first, then the plan you were assigned.
 | 05 | `05-peer-file-formats.md` | **Owned by the peer session** (notebook/graph/kernel): CellSpec, `.ipynb`, `--theme` flag. Reference only. | – |
 | 06 | `06-marimo-format.md` | marimo notebooks: load/save round-trip, kernel shim | 05 |
 | 07 | `07-windows.md` | File explorer, splits, tabs; `NotebookPane` owns the kernel and cells | 04 |
+| 08 | `08-missing-packages.md` | `ModuleNotFoundError` → install the package into the kernel's env (uv) and run the cell again, like marimo | 07 |
 
 Plans run **sequentially** in the order above because they all edit `app.py`.
 

@@ -202,6 +202,7 @@ class Cell(Vertical):
         self.label = self.cid
         self.ran_source: str | None = None
         self.last_defs: set[str] = set()
+        self.missing: str | None = None
         self.status = "idle"
         self.run_status = "idle"
         self.inputs_stale = False
@@ -462,6 +463,20 @@ class Cell(Vertical):
         self._log_clear_pending = False
         self.output_box.show_error(message)
         self._update_note()
+
+    def show_hint(self, text: str) -> None:
+        """A line under the outputs (an install offer, say); it is not saved with them."""
+        self.output_box.add_hint(text)
+        if self._note is not None:
+            self._update_note()
+
+    @property
+    def last_error(self) -> dict | None:
+        """The content of the last error the current outputs hold, if any."""
+        for kind, content, _ in reversed(self._log):
+            if kind == "error":
+                return content
+        return None
 
     def add_output(self, kind: str, content: dict) -> None:
         if kind == "execute_result" and self.echo_suppressed:

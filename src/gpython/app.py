@@ -43,6 +43,11 @@ LAZY_MESSAGE = (
 REACTIVE_MESSAGE = (
     "Reactive: a run also re-runs every cell that uses its variables, like marimo. f3 switches back to lazy."
 )
+AUTOINSTALL_MESSAGE = (
+    "A cell that fails with ModuleNotFoundError gets its package installed into the kernel's env "
+    "(uv pip install) and runs again. :set noautoinstall asks first instead."
+)
+ASK_INSTALL_MESSAGE = "A missing module opens the install prompt first (enter installs, esc skips). :set autoinstall makes it automatic."
 _MODE_STYLES = {
     "insert": "bold black on green",
     "normal": "bold black on yellow",
@@ -212,6 +217,7 @@ class GPython(App):
         self._initial_panes = [NotebookPane(p) for p in notebooks] or [NotebookPane(None)]
 
         self.lazy = settings.get("run_mode") != "reactive"
+        self.autoinstall = settings.get("autoinstall") is True
         self._first_frame_done = False
         self._first_frame_callbacks: list = []
         self.workspace = Workspace()
@@ -926,6 +932,14 @@ class GPython(App):
     def action_toggle_lazy(self) -> None:
         self.set_lazy(not self.lazy)
 
+    def set_autoinstall(self, on: bool) -> None:
+        """On: a cell that fails with ModuleNotFoundError gets its package installed (uv pip install
+        into the kernel's env) and runs again without a question. Off (the default): the install
+        prompt opens first, prefilled. Saved."""
+        self.autoinstall = on
+        config.save({"autoinstall": on})
+        self.notify(AUTOINSTALL_MESSAGE if on else ASK_INSTALL_MESSAGE, title="Missing modules")
+
     def set_lazy(self, on: bool) -> None:
         """Lazy (the default): a run runs that cell and the stale cells it uses; cells that use its
         variables are only marked stale, you run them yourself (r 6, f4). Reactive: they re-run too. Saved."""
@@ -1024,7 +1038,7 @@ class GPython(App):
             (("stale", "runstale"), "Run stale cells", lambda arg="": self.action_run_stale()),
             (("restart",), "Restart kernel", lambda arg="": self.action_restart_kernel()),
             (("clear",), "Clear all outputs", lambda arg="": self.pane.clear_outputs()),
-            (("set",), "Options: vim novim lazy nolazy nu nonu time notime", self._ex_set),
+            (("set",), "Options: vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall", self._ex_set),
             (("time", "timing"), "Show / hide each cell's run time in its header (t in cell mode; saved)", lambda arg="": self.set_timing(not Cell.show_timing)),
             (("variables", "vars"), "Toggle variables panel", lambda arg="": self.action_toggle_vars()),
             (("lazy",), "Toggle run mode: lazy (dependents only marked stale) / reactive (they re-run); saved (f3)", lambda arg="": self.action_toggle_lazy()),
@@ -1039,7 +1053,7 @@ class GPython(App):
             (("env", "kernel", "envs"), "Python environment for this kernel: pick (f6), or :env name|path switches", lambda arg="": envpicker.ex_env(self.pane, arg)),
             (("venv",), "New venv with python -m venv, then switch to it (:venv folder [python])", lambda arg="": envpicker.ex_venv(self.pane, arg)),
             (("uv",), "uv for this kernel: :uv add pkg · :uv pip install pkg · :uv venv [folder] [python]", lambda arg="": envpicker.ex_uv(self.pane, arg)),
-            (("pip",), "Install into this kernel's env (:pip numpy; uses uv when available; :pip list, uninstall)", lambda arg="": envpicker.ex_pip(self.pane, arg)),
+            (("pip",), "Install into this kernel's env (:pip numpy; :pip alone offers what the current cell is missing; uses uv when available; :pip list, uninstall)", lambda arg="": envpicker.ex_pip(self.pane, arg)),
             (("find", "fin", "Telescope"), "Find files by fuzzy name (space f f; :find text starts the search)", lambda arg="": self.action_find_files(arg)),
             (("help", "h"), "Keys and commands", lambda arg="": self.action_help()),
         ]
@@ -1068,8 +1082,10 @@ class GPython(App):
             self.set_line_numbers(not option.startswith("no"))
         elif option in ("time", "timing", "notime", "notiming"):
             self.set_timing(not option.startswith("no"))
+        elif option in ("autoinstall", "noautoinstall"):
+            self.set_autoinstall(option == "autoinstall")
         else:
-            self.notify(f"Unknown option: {option or '(none)'}  (vim novim lazy nolazy nu nonu time notime)", severity="error")
+            self.notify(f"Unknown option: {option or '(none)'}  (vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall)", severity="error")
 
     async def _ex_write(self, arg: str = "") -> None:
         if arg:
