@@ -1043,7 +1043,7 @@ class GPython(App):
             (("stale", "runstale"), "Run stale cells", lambda arg="": self.action_run_stale()),
             (("restart",), "Restart kernel", lambda arg="": self.action_restart_kernel()),
             (("clear",), "Clear all outputs", lambda arg="": self.pane.clear_outputs()),
-            (("img", "image"), "View this cell's image full screen (v in cell mode; :img 2 the second); :img save [N] [file] saves it (without N: all of them) as PNG next to the notebook; :img open [N] opens it in the browser", self._ex_image),
+            (("img", "image"), "View this cell's image full screen (v in cell mode; :img 2 the second); :img save [N] [file] saves this cell's image(s) as PNG next to the notebook, :img open [N] opens them in the browser; :img save all / :img open all take every cell's", self._ex_image),
             (("set",), "Options: vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall", self._ex_set),
             (("time", "timing"), "Show / hide each cell's run time in its header (t in cell mode; saved)", lambda arg="": self.set_timing(not Cell.show_timing)),
             (("variables", "vars"), "Toggle variables panel", lambda arg="": self.action_toggle_vars()),
@@ -1081,9 +1081,12 @@ class GPython(App):
         return self.pane.path.parent if self.pane.path else Path.cwd()
 
     def _ex_image(self, arg: str = "") -> None:
-        """:img [N] · :img save [N] [file] · :img open [N]; without N, save and open take every image."""
+        """:img [N] · :img save [N] [file] · :img open [N] on this cell's images; `all` instead of N: every cell's."""
         words = arg.split()
         action = words.pop(0) if words and words[0] in ("save", "open", "browser") else "view"
+        if words and words[0] == "all" and action != "view":
+            self._ex_image_all(action)
+            return
         number = int(words.pop(0)) if words and words[0].isdigit() else None
         cell = self.current_cell()
         pngs = cell.images if cell else []
@@ -1110,6 +1113,23 @@ class GPython(App):
             else:
                 for i, name in zip(chosen, names):
                     imageview.open_in_browser(pngs[i], name)
+        except OSError as error:
+            self.notify(str(error), severity="error")
+
+    def _ex_image_all(self, action: str) -> None:
+        """Save or open every image of every cell, named <notebook>-<cell>[-N].png."""
+        found = [(cell, png, i, len(cell.images)) for cell in self.pane.cells() for i, png in enumerate(cell.images)]
+        if not found:
+            self.notify("No image in this notebook", severity="warning")
+            return
+        names = [imageview.stem_for(self._image_stem(cell), i, count) for cell, _, i, count in found]
+        try:
+            if action == "save":
+                saved = [imageview.save_png(png, imageview.unused_path(self._image_folder(), name)) for (_, png, _, _), name in zip(found, names)]
+                self.notify(f"Saved {len(saved)} image{'s' if len(saved) > 1 else ''} in {self._image_folder()}")
+            else:
+                for (_, png, _, _), name in zip(found, names):
+                    imageview.open_in_browser(png, name)
         except OSError as error:
             self.notify(str(error), severity="error")
 

@@ -207,3 +207,23 @@ def test_card_buttons_view_and_download(tmp_path, monkeypatch):
         assert not isinstance(app.screen, Prompt)
 
     ui(tmp_path, test)
+
+
+def test_img_all_covers_every_cell(tmp_path, monkeypatch):
+    opened: list[str] = []
+    monkeypatch.setattr(imageview.webbrowser, "open", lambda url: opened.append(url) or True)
+
+    async def test(app, pilot):
+        mime = {"image/png": base64.b64encode(SECOND).decode()}
+        app.cells()[1].add_output("display_data", {"data": mime, "metadata": {}})
+        await pilot.pause()
+        app._ex_image("save all")
+        assert (tmp_path / "nb-c1.png").read_bytes() == PNG and (tmp_path / "nb-c2.png").read_bytes() == SECOND
+        app._ex_image("open all")
+        assert len(opened) == 2 and "nb-c1" in opened[0] and "nb-c2" in opened[1]
+        app.cells()[1].focus()
+        await pilot.pause()
+        app._ex_image("save " + str(tmp_path / "only-c2.png"))
+        assert (tmp_path / "only-c2.png").read_bytes() == SECOND
+
+    ui(tmp_path, test)

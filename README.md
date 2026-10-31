@@ -169,7 +169,9 @@ with View (opens it in the browser) and Download (saves it as PNG) buttons. `v`
 in cell mode views the figure full screen with zoom and pan; `:img save [file]`
 saves it as PNG next to the notebook and `:img open` opens it in the browser.
 With several images in one cell, `:img 2` views the second, `:img save 2 plot.png`
-saves it, and `:img save` / `:img open` without a number take all of them.
+saves it, and `:img save` / `:img open` without a number take all of the cell's.
+`:img save all` saves every image in the notebook (`nb-c3.png`, `nb-c5-1.png`, …)
+and `:img open all` opens them all.
 
 ## Markdown cells
 
