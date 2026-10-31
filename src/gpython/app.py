@@ -9,6 +9,7 @@ bindings are forwarded to the active pane.
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 
 from rich.text import Text
@@ -243,6 +244,22 @@ class GPython(App):
     def post_display_hook(self) -> None:
         images.sync(self)
 
+    def _record_terminal_output(self) -> None:
+        """GPYTHON_TTY_LOG=file keeps every byte sent to the terminal; `cat file` replays the session."""
+        path = os.environ.get("GPYTHON_TTY_LOG")
+        driver = self._driver
+        if not path or driver is None:
+            return
+        log = open(path, "ab")
+        write = driver.write
+
+        def record(data: str) -> None:
+            log.write(data.encode("utf-8", "replace"))
+            log.flush()
+            write(data)
+
+        driver.write = record
+
     def after_first_frame(self, callback) -> None:
         if self._first_frame_done:
             self.call_after_refresh(callback)
@@ -267,6 +284,7 @@ class GPython(App):
         yield self._status
 
     async def on_mount(self) -> None:
+        self._record_terminal_output()
         VimTextArea.mode = "normal"
         header = self.query_one(Header)
         self._mode_chip = Static(id="mode-chip")
