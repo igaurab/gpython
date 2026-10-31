@@ -45,7 +45,17 @@ def cell_nodes(outline: Outline) -> list:
 
 
 def labels(nodes) -> list[str]:
-    return [str(node.label) for node in nodes]
+    return [str(node.label).removeprefix("● ") for node in nodes]
+
+
+def marked(outline: Outline) -> list[str]:
+    """The labels carrying the ● current marker, anywhere in the tree."""
+    found = []
+    for cell_node in cell_nodes(outline):
+        for node in (cell_node, *cell_node.children):
+            if str(node.label).startswith("● "):
+                found.append(str(node.label))
+    return found
 
 
 def node_for(outline: Outline, cid: str, name: str | None = None):
@@ -93,6 +103,7 @@ def test_f2_mounts_the_outline_lazily_and_lists_cells_and_symbols(tmp_path):
         nodes = cell_nodes(outline)
         assert [n.data for n in nodes] == [("cell", c.cid) for c in app.cells()]
         assert outline.tree_view.cursor_node is node_for(outline, app.pane.current_cell().cid)
+        assert marked(outline) == ["● " + str(node_for(outline, app.pane.current_cell().cid).label).removeprefix("● ")]
         assert labels(nodes) == ["c1  Analysis", "c2  defines np, xs", "c3  defines Thing, scale", "c4  uses scale, xs"]
         assert labels(nodes[1].children) == ["np  import", "xs"]
         assert labels(nodes[2].children) == ["scale(x: float) -> float", "class Thing"]
@@ -130,6 +141,7 @@ def test_outline_follows_the_current_cell_and_shows_its_edges(tmp_path):
         c3.editor.move_cursor((1, 4))
         await pilot.pause()
         assert outline.tree_view.cursor_node is node_for(outline, c3.cid, "scale")
+        assert marked(outline) == ["● scale(x: float) -> float"]
         c3.editor.move_cursor((5, 0))
         await pilot.pause()
         assert outline.tree_view.cursor_node is node_for(outline, c3.cid, "Thing")
@@ -139,6 +151,7 @@ def test_outline_follows_the_current_cell_and_shows_its_edges(tmp_path):
         await pilot.press("escape")
         await pilot.pause()
         assert app.focused is c3 and outline.tree_view.cursor_node is node_for(outline, c3.cid)
+        assert marked(outline) == ["● c3  defines Thing, scale"]
 
     ui(tmp_path, test)
 
@@ -216,6 +229,7 @@ def test_variables_show_their_live_type_and_value_after_a_run(tmp_path):
         await pilot.press("f5")
         await settle(app, pilot)
         assert labels(node_for(outline, c2.cid).children) == ["np  module", "xs  list  [1, 2, 3]"]
+        assert len(marked(outline)) == 1
         assert str(node_for(outline, c3.cid, "scale").label) == "scale(x: float) -> float"
         await app.pane.restart_kernel()
         await pilot.pause()
