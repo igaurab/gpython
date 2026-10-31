@@ -33,7 +33,7 @@ def kitty(monkeypatch, tmp_path):
     monkeypatch.setattr(images, "_write", lambda app, data: None)
 
 
-def ui(tmp_path, test, with_image=True):
+def ui(tmp_path, test, with_image=True, pngs=(PNG,)):
     path = tmp_path / "nb.py"
     path.write_text("# %%\nx = 1\n\n# %%\ny = 2\n")
 
@@ -42,9 +42,9 @@ def ui(tmp_path, test, with_image=True):
         async with app.run_test(size=(120, 40)) as pilot:
             await app.loaded.wait()
             await pilot.pause()
-            if with_image:
-                data = {"image/png": base64.b64encode(PNG).decode(), "text/plain": "<Figure>"}
-                app.cells()[0].add_output("display_data", {"data": data, "metadata": {}})
+            for data in pngs if with_image else ():
+                mime = {"image/png": base64.b64encode(data).decode(), "text/plain": "<Figure>"}
+                app.cells()[0].add_output("display_data", {"data": mime, "metadata": {}})
                 await pilot.pause()
             app.cells()[0].focus()
             await pilot.pause()
@@ -144,5 +144,66 @@ def test_img_command_saves_and_views(tmp_path, monkeypatch):
         app._ex_image("")
         await pilot.pause()
         viewer(app)
+
+    ui(tmp_path, test)
+
+
+SECOND = png(300, 200)
+
+
+def test_img_with_several_images_numbers_them(tmp_path, monkeypatch):
+    opened: list[str] = []
+    monkeypatch.setattr(imageview.webbrowser, "open", lambda url: opened.append(url) or True)
+
+    async def test(app, pilot):
+        app._ex_image("2")
+        await pilot.pause()
+        view = viewer(app)
+        assert view.index == 1 and view.png == SECOND and view.current_stem == "nb-c1-2"
+        await pilot.press("p")
+        await pilot.pause()
+        assert view.index == 0 and view.png == PNG
+        await pilot.press("q")
+        await pilot.pause()
+        app._ex_image("save")
+        assert (tmp_path / "nb-c1-1.png").read_bytes() == PNG and (tmp_path / "nb-c1-2.png").read_bytes() == SECOND
+        app._ex_image("save 2 " + str(tmp_path / "second.png"))
+        assert (tmp_path / "second.png").read_bytes() == SECOND
+        app._ex_image("save 3")
+        assert not (tmp_path / "nb-c1-3.png").exists()
+        app._ex_image("open")
+        assert len(opened) == 2
+        app._ex_image("open 1")
+        assert len(opened) == 3 and "nb-c1-1" in opened[-1]
+
+    ui(tmp_path, test, pngs=(PNG, SECOND))
+
+
+def test_card_buttons_view_and_download(tmp_path, monkeypatch):
+    from textual.widgets import Button
+
+    from gpython.app import Prompt
+    from gpython.imageview import ImageCard
+
+    monkeypatch.setattr(images, "enabled_override", False)
+    opened: list[str] = []
+    monkeypatch.setattr(imageview.webbrowser, "open", lambda url: opened.append(url) or True)
+
+    async def test(app, pilot):
+        card = app.cells()[0].query_one(ImageCard)
+        card.query_one(".view", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        assert len(opened) == 1 and "nb-c1" in opened[0]
+        card.query_one(".download", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        assert isinstance(app.screen, Prompt)
+        assert app.screen.query_one(Input).value == str(tmp_path / "nb-c1.png")
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+        assert (tmp_path / "nb-c1.png").read_bytes() == PNG
+        assert not isinstance(app.screen, Prompt)
 
     ui(tmp_path, test)

@@ -143,14 +143,21 @@ def test_gpython_syncs_placements_after_each_frame():
     assert GPython.post_display_hook is not App.post_display_hook
 
 
-def test_without_kitty_graphics_the_fallback_widget_is_used(monkeypatch):
+def test_without_graphics_a_card_with_view_and_download_is_shown(monkeypatch):
+    from textual.widgets import Button
+
+    from gpython.imageview import ImageCard
+
     monkeypatch.setattr(images, "enabled_override", False)
 
     async def test(app, pilot):
         out = app.query_one(OutputArea)
-        out.add("display_data", {"data": {"image/png": base64.b64encode(png(100, 50)).decode()}})
+        data = png(100, 50)
+        out.add("display_data", {"data": {"image/png": base64.b64encode(data).decode()}})
         await pilot.pause()
-        assert not isinstance(out._blocks[0], KittyImage)
-        assert out._blocks[0].has_class("output-image")
+        card = out._blocks[0]
+        assert isinstance(card, ImageCard) and card.gp_png == data and out.images == [data]
+        assert [b.label.plain for b in card.query(Button)] == ["View", "Download"]
+        assert "100×50" in str(card.query_one("Static").render())
 
     run(test)

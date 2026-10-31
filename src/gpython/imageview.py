@@ -5,6 +5,9 @@ Opened with `v` in cell mode or `:img`. The picture is the same widget the outpu
 widget's size in cells and panning scrolls the container. `s` shows a one-line input for the
 file name at the bottom; `o` writes the PNG to a temporary folder and opens it in the browser.
 `:img save [file]` and `:img open` do the same without opening the screen.
+
+Where the terminal cannot draw pictures at all, the output area shows an `ImageCard` instead:
+the image's size with View (the browser) and Download (save as PNG) buttons.
 """
 
 from __future__ import annotations
@@ -17,9 +20,10 @@ from pathlib import Path
 from rich.text import Text
 from textual import events, on
 from textual.app import ComposeResult
-from textual.containers import ScrollableContainer
+from textual.containers import Horizontal, ScrollableContainer
+from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Input, Static
+from textual.widgets import Button, Input, Static
 
 from . import bigtext, images
 
@@ -27,6 +31,11 @@ ZOOM_STEP = 1.25
 MIN_SCALE, MAX_SCALE = 0.05, 20.0
 PAN_COLS, PAN_ROWS = 4, 2
 KEYS = "+ - zoom · 0 fit · 1 actual size · h j k l pan · n p next / previous · s save · o browser · q close"
+
+
+def stem_for(stem: str, index: int, count: int) -> str:
+    """`stem` for a cell's only image, `stem-2` for the second of several."""
+    return stem if count == 1 else f"{stem}-{index + 1}"
 
 
 def image_widget(png: bytes):
@@ -68,6 +77,42 @@ def open_in_browser(png: bytes, stem: str) -> Path:
     return path
 
 
+class ImageCard(Horizontal):
+    """Shown instead of a picture where the terminal cannot draw one: the size, View and Download."""
+
+    DEFAULT_CSS = """
+    ImageCard { height: 1; width: auto; }
+    ImageCard Static { width: auto; padding: 0 1 0 0; }
+    ImageCard Button { height: 1; min-width: 0; border: none; padding: 0 1; margin: 0 1 0 0; }
+    """
+
+    class View(Message):
+        def __init__(self, card: ImageCard) -> None:
+            super().__init__()
+            self.card = card
+
+    class Download(Message):
+        def __init__(self, card: ImageCard) -> None:
+            super().__init__()
+            self.card = card
+
+    def __init__(self, png: bytes, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.gp_png = png
+        self.pixels = images.png_size(png)
+
+    def compose(self) -> ComposeResult:
+        width, height = self.pixels
+        yield Static(f"image {width}×{height} px")
+        yield Button("View", classes="view", compact=True)
+        yield Button("Download", classes="download", compact=True)
+
+    @on(Button.Pressed)
+    def _pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(self.View(self) if event.button.has_class("view") else self.Download(self))
+
+
 class ImageViewer(ModalScreen[None]):
     """`pngs` are a cell's images; `stem` and `folder` name the file `s` offers to save."""
 
@@ -86,6 +131,10 @@ class ImageViewer(ModalScreen[None]):
     @property
     def pixels(self) -> tuple[int, int]:
         return images.png_size(self.png)
+
+    @property
+    def current_stem(self) -> str:
+        return stem_for(self.stem, self.index, len(self.pngs))
 
     def compose(self) -> ComposeResult:
         yield ScrollableContainer(id="image-view")
@@ -148,7 +197,7 @@ class ImageViewer(ModalScreen[None]):
 
     def _ask_name(self) -> None:
         field = self.query_one("#image-save", Input)
-        field.value = str(unused_path(self.folder, self.stem))
+        field.value = str(unused_path(self.folder, self.current_stem))
         field.display = True
         field.focus()
         field.cursor_position = len(field.value)
@@ -172,7 +221,7 @@ class ImageViewer(ModalScreen[None]):
 
     def _open(self) -> None:
         try:
-            open_in_browser(self.png, self.stem)
+            open_in_browser(self.png, self.current_stem)
         except OSError as error:
             self.notify(str(error), severity="error")
 

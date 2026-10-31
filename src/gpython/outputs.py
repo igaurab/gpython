@@ -6,7 +6,8 @@ drawn at most 30 times a second by one timer (`_flush`).
 
 Results and displays pick the richest MIME type we can show (`MIME_PRIORITY`):
 images, markdown, JSON, HTML (as plain text) and LaTeX (as source). Images are kitty
-graphics placements (`images.py`) where the terminal has them, textual_image's widget elsewhere.
+graphics placements (`images.py`) where the terminal has them, textual_image's Sixel widget
+where it has Sixel, and otherwise a card with View and Download buttons (`imageview.py`).
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from textual.widget import Widget
 from textual.widgets import Static
 from textual_image.widget import Image
 
-from . import images
+from . import images, imageview
 from .dom import forget_removed
 from .markdown import MarkdownView
 
@@ -259,10 +260,12 @@ class OutputArea(Vertical):
         png = base64.b64decode(b64)
         if images.supported():
             widget = images.KittyImage(png, classes="output-image")
-        else:
+        elif images.sixel_supported():
             from PIL import Image as PILImage
 
             widget = Image(PILImage.open(io.BytesIO(png)), classes="output-image")
+        else:
+            widget = imageview.ImageCard(png, classes="output-image")
         widget.gp_png = png
         self._mount_block(widget)
 

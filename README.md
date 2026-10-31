@@ -164,9 +164,12 @@ Matplotlib figures and other `image/png` outputs are drawn as pictures in
 terminals with the kitty graphics protocol (Kitty, Ghostty, Rex, WezTerm,
 Konsole), scaled to the cell's width and at most 30 rows. Elsewhere they fall
 back to Sixel or coloured half cells. `GPYTHON_KITTY_IMAGES=0` forces the
-fallback. `v` in cell mode views the figure full screen with zoom and pan;
-`:img save [file]` saves it as PNG next to the notebook and `:img open` opens
-it in the browser.
+fallback. Where nothing can draw a picture, the output shows the image's size
+with View (opens it in the browser) and Download (saves it as PNG) buttons. `v`
+in cell mode views the figure full screen with zoom and pan; `:img save [file]`
+saves it as PNG next to the notebook and `:img open` opens it in the browser.
+With several images in one cell, `:img 2` views the second, `:img save 2 plot.png`
+saves it, and `:img save` / `:img open` without a number take all of them.
 
 ## Markdown cells
 

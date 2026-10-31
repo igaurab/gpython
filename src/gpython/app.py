@@ -1043,7 +1043,7 @@ class GPython(App):
             (("stale", "runstale"), "Run stale cells", lambda arg="": self.action_run_stale()),
             (("restart",), "Restart kernel", lambda arg="": self.action_restart_kernel()),
             (("clear",), "Clear all outputs", lambda arg="": self.pane.clear_outputs()),
-            (("img", "image"), "View this cell's image full screen (v in cell mode); :img save [file] saves it as PNG next to the notebook, :img open opens it in the browser", self._ex_image),
+            (("img", "image"), "View this cell's image full screen (v in cell mode; :img 2 the second); :img save [N] [file] saves it (without N: all of them) as PNG next to the notebook; :img open [N] opens it in the browser", self._ex_image),
             (("set",), "Options: vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall", self._ex_set),
             (("time", "timing"), "Show / hide each cell's run time in its header (t in cell mode; saved)", lambda arg="": self.set_timing(not Cell.show_timing)),
             (("variables", "vars"), "Toggle variables panel", lambda arg="": self.action_toggle_vars()),
@@ -1064,14 +1064,14 @@ class GPython(App):
             (("help", "h"), "Keys and commands", lambda arg="": self.action_help()),
         ]
 
-    def view_image(self, cell: Cell | None = None) -> bool:
+    def view_image(self, cell: Cell | None = None, index: int = 0) -> bool:
         """Open the image viewer on `cell` (default: the current one). False when it has no image."""
         cell = cell or self.current_cell()
         pngs = cell.images if cell else []
         if not pngs:
             self.notify("No image in this cell", severity="warning")
             return False
-        self.push_screen(imageview.ImageViewer(pngs, 0, self._image_stem(cell), self._image_folder()))
+        self.push_screen(imageview.ImageViewer(pngs, index, self._image_stem(cell), self._image_folder()))
         return True
 
     def _image_stem(self, cell: Cell) -> str:
@@ -1081,24 +1081,62 @@ class GPython(App):
         return self.pane.path.parent if self.pane.path else Path.cwd()
 
     def _ex_image(self, arg: str = "") -> None:
-        words = arg.split(None, 1)
-        if not words:
-            self.view_image()
-            return
+        """:img [N] · :img save [N] [file] · :img open [N]; without N, save and open take every image."""
+        words = arg.split()
+        action = words.pop(0) if words and words[0] in ("save", "open", "browser") else "view"
+        number = int(words.pop(0)) if words and words[0].isdigit() else None
         cell = self.current_cell()
         pngs = cell.images if cell else []
         if not pngs:
             self.notify("No image in this cell", severity="warning")
             return
+        if number is not None and not 1 <= number <= len(pngs):
+            self.notify(f"This cell has {len(pngs)} image{'s' if len(pngs) > 1 else ''}", severity="warning")
+            return
+        if action == "view":
+            self.view_image(cell, (number or 1) - 1)
+            return
         stem = self._image_stem(cell)
+        chosen = [number - 1] if number else range(len(pngs))
+        names = [imageview.stem_for(stem, i, len(pngs)) for i in chosen]
         try:
-            if words[0] == "save":
-                target = Path(words[1]) if len(words) > 1 else imageview.unused_path(self._image_folder(), stem)
-                self.notify(f"Saved {imageview.save_png(pngs[0], target)}")
-            elif words[0] in ("open", "browser"):
-                imageview.open_in_browser(pngs[0], stem)
+            if action == "save":
+                if words and len(names) > 1:
+                    self.notify("Give the image number with a file name: :img save 2 plot.png", severity="warning")
+                    return
+                targets = [Path(words[0])] if words else [imageview.unused_path(self._image_folder(), n) for n in names]
+                saved = [imageview.save_png(pngs[i], target) for i, target in zip(chosen, targets)]
+                self.notify("Saved " + ", ".join(str(path) for path in saved))
             else:
-                self.notify(":img · :img save [file] · :img open", severity="warning")
+                for i, name in zip(chosen, names):
+                    imageview.open_in_browser(pngs[i], name)
+        except OSError as error:
+            self.notify(str(error), severity="error")
+
+    @on(imageview.ImageCard.View)
+    def _card_view(self, event: imageview.ImageCard.View) -> None:
+        cell = event.card.query_ancestor(Cell)
+        try:
+            imageview.open_in_browser(event.card.gp_png, self._card_stem(event.card, cell))
+        except OSError as error:
+            self.notify(str(error), severity="error")
+
+    @on(imageview.ImageCard.Download)
+    def _card_download(self, event: imageview.ImageCard.Download) -> None:
+        cell = event.card.query_ancestor(Cell)
+        default = imageview.unused_path(self._image_folder(), self._card_stem(event.card, cell))
+        png = event.card.gp_png
+        self.push_screen(Prompt("Save image as: ", value=str(default)), lambda text: self._save_image(png, text))
+
+    def _card_stem(self, card: imageview.ImageCard, cell: Cell) -> str:
+        pngs = cell.images
+        return imageview.stem_for(self._image_stem(cell), pngs.index(card.gp_png), len(pngs))
+
+    def _save_image(self, png: bytes, text: str | None) -> None:
+        if not text:
+            return
+        try:
+            self.notify(f"Saved {imageview.save_png(png, Path(text))}")
         except OSError as error:
             self.notify(str(error), severity="error")
 

@@ -130,7 +130,7 @@ Cell TextArea {
     margin: 1 0;
 }
 
-.cell-output KittyImage {
+.cell-output KittyImage, .cell-output ImageCard {
     margin: 1 0;
 }
 
