@@ -20,7 +20,7 @@ from textual.geometry import Region
 from textual.widgets import DataTable, Static
 
 from . import config, envs, notebook
-from .cell import Cell, CellSnapshot, ends_with_string, outputs_to_ipynb, time_summary
+from .cell import Cell, CellSnapshot, ends_with_string, outputs_to_ipynb, time_brief, time_summary
 from .dom import forget_removed
 from .graph import Graph, build
 from .kernel import Kernel
@@ -545,7 +545,7 @@ class NotebookPane(Vertical):
         return True
 
     async def time_cell(self, runs: int) -> None:
-        """r t [n], :timeit [n]: run the current code cell n times and print its mean, median, min and max run time under it."""
+        """r t [n], :timeit [n]: run the current code cell n times and print a table of its run times under it."""
         cell = self.current_cell()
         if cell is None or cell.kind != "code":
             self.notify("Only a code cell can be timed", severity="warning")
@@ -558,9 +558,8 @@ class NotebookPane(Vertical):
             durations.append(cell.duration)
         if not durations:
             return
-        summary = time_summary(durations)
-        cell.add_output("stream", {"name": "stdout", "text": f"⏱ {summary}\n"})
-        self.notify(f"{cell.label}: {summary}", timeout=8)
+        cell.add_output("stream", {"name": "stdout", "text": f"⏱ {time_summary(durations)}\n"})
+        self.notify(f"{cell.label}: {time_brief(durations)}", timeout=8)
 
     def run_all(self) -> None:
         self.run_worker(self.run_cells([c.cid for c in self.cells()], downstream=True), group="run")

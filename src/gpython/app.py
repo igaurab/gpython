@@ -22,7 +22,7 @@ from textual.screen import ModalScreen, Screen
 from textual.widgets import Header, Input, Label, Static
 from textual.widgets._header import HeaderIcon
 
-from . import bigtext, config
+from . import bigtext, config, images
 from .cell import Cell, CellSnapshot, ends_with_string
 from .explorer import Explorer
 from .help import HelpScreen
@@ -231,6 +231,9 @@ class GPython(App):
     def get_default_screen(self) -> Screen:
         return NotebookScreen(id="_default")
 
+
+    def post_display_hook(self) -> None:
+        images.sync(self)
 
     def after_first_frame(self, callback) -> None:
         if self._first_frame_done:
@@ -1015,7 +1018,7 @@ class GPython(App):
             (("Ex", "Explore", "explorer", "tree", "Lex", "Vex"), "Toggle the file explorer (ctrl+b)", lambda arg="": self._ex_explore(arg)),
             (("noh", "nohlsearch"), "Stop highlighting search matches (n shows them again)", lambda arg="": self.pane.clear_search_highlight()),
             (("run", "runall"), "Run all cells; :run 6 runs cell c6 (stale cells it uses first)", self._ex_run),
-            (("timeit", "profile"), "Time this cell: run it n times and print mean · median · min · max (:timeit 5; r t 5)", self._ex_timeit),
+            (("timeit", "profile"), "Time this cell: run it n times and print mean, median, std, variance, p50 / p90 / p99, min, max (:timeit 5; r t 5)", self._ex_timeit),
             (("runabove",), "Run the cells above the current one", lambda arg="": self.pane.run_relative(False)),
             (("runbelow",), "Run the current cell and the cells below", lambda arg="": self.pane.run_relative(True, inclusive=True)),
             (("stale", "runstale"), "Run stale cells", lambda arg="": self.action_run_stale()),
