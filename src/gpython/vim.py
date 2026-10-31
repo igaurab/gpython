@@ -39,6 +39,13 @@ _BIG_WORD = re.compile(r"\S+")
 _PAIRS = {"(": "()", ")": "()", "b": "()", "[": "[]", "]": "[]", "{": "{}", "}": "{}", "B": "{}", "<": "<>", ">": "<>"}
 _QUOTES = "\"'`"
 _FIND_KEYS = ("f", "F", "t", "T")
+_MARK_KEYS = ("`", "'")
+_CHAR_KEYS = (*_FIND_KEYS, *_MARK_KEYS, "m", '"', "q", "@")
+_OPERATORS = ("gu", "gU", "g~", "d", "c", "y", ">", "<", "=")
+_DEDENT_KEYWORDS = ("elif ", "elif(", "else", "except", "finally", "case ")
+_BLOCK_ENDERS = ("return", "break", "continue", "pass", "raise")
+_INCLUSIVE = ("e", "E", "ge", "gE", "%")
+_NUMBER = re.compile(r"-?\d+")
 _VISUAL_NAMES = {"v": "visual", "V": "v-line"}
 _ESCAPE_KEYS = {"escape", "ctrl+left_square_bracket", "ctrl+left_square_brace"}
 _IDENT = re.compile(r"[\w.]$")
@@ -86,6 +93,92 @@ def _highlight_query(language: str):
 def _is_escape(event: events.Key) -> bool:
     """escape, or ctrl+[ (the same byte in old terminals, its own key in new ones)."""
     return bool(_ESCAPE_KEYS & {event.key, *event.aliases})
+
+
+def _bracket_depth_change(code: str) -> int:
+    """How many brackets `code` leaves open (negative: closes), ignoring strings and comments."""
+    depth = 0
+    quote = ""
+    i = 0
+    while i < len(code):
+        char = code[i]
+        if quote:
+            if char == "\\":
+                i += 1
+            elif code.startswith(quote, i):
+                i += len(quote) - 1
+                quote = ""
+        elif char == "#":
+            break
+        elif char in "\"'":
+            quote = code[i : i + 3] if code.startswith(char * 3, i) else char
+            i += len(quote) - 1
+        elif char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+        i += 1
+    return depth
+
+
+def _ends_block_header(code: str) -> bool:
+    before_comment = code.split("#", 1)[0].rstrip()
+    return before_comment.endswith(":") and _bracket_depth_change(before_comment) <= 0
+
+
+def reindent(lines: list[str]) -> list[str]:
+    """= on Python: every line gets a 4-space level. Nesting follows the original shape (deeper
+    is one level in, shallower pops back to the level that had that indentation); a line ending
+    with ':' opens a level, else/elif/except/finally sit one level out from the body before them,
+    return/break/continue/pass/raise close a level for the next line, and the lines inside open
+    brackets hang one level under the line that opened them."""
+    out: list[str] = []
+    stack = [0]
+    level = prev_level = 0
+    depth = 0
+    opener_level = 0
+    opens_level = closes_level = False
+    for raw in lines:
+        stripped = raw.strip()
+        if not stripped:
+            out.append("")
+            continue
+        if depth > 0:
+            level = opener_level if stripped[0] in ")]}" else opener_level + 1
+            out.append(INDENT * level + stripped)
+            depth = max(0, depth + _bracket_depth_change(stripped))
+            if depth == 0:
+                level = opener_level
+                opens_level, closes_level = _ends_block_header(stripped), False
+                prev_level = level
+            continue
+        original = len(raw.expandtabs(4)) - len(raw.expandtabs(4).lstrip())
+        if original > stack[-1]:
+            stack.append(original)
+        else:
+            while len(stack) > 1 and stack[-1] > original:
+                stack.pop()
+        level = len(stack) - 1
+        if opens_level and level <= prev_level:
+            level = prev_level + 1
+            del stack[level:]
+            stack.append(original)
+        elif stripped.startswith(_DEDENT_KEYWORDS) and level >= prev_level and level > 0 and not opens_level:
+            level -= 1
+            del stack[level + 1 :]
+        elif closes_level and level == prev_level and level > 0:
+            level -= 1
+            del stack[level + 1 :]
+        out.append(INDENT * level + stripped)
+        prev_level = level
+        depth = max(0, _bracket_depth_change(stripped))
+        if depth > 0:
+            opener_level = level
+            opens_level = closes_level = False
+        else:
+            opens_level = _ends_block_header(stripped)
+            closes_level = stripped.split(" ", 1)[0].rstrip("(;") in _BLOCK_ENDERS
+    return out
 
 
 def indent_after(line: str) -> str:
@@ -148,6 +241,9 @@ class VimTextArea(TextArea):
     line_numbers = True
     mode = "normal"
     register = ""
+    registers: dict[str, tuple[str, bool]] = {}
+    macros: dict[str, list[tuple[str, str | None]]] = {}
+    last_macro = ""
     register_linewise = False
     visual = ""
     search: re.Pattern | None = None
@@ -233,6 +329,21 @@ class VimTextArea(TextArea):
         self._anchor: Location = (0, 0)
         self._last_visual: tuple[str, Location, Location] | None = None
         self._last_find: tuple[str, str] | None = None
+        self._op_count = 1
+        self._marks: dict[str, Location] = {}
+        self._use_register = ""
+        self._keys: list[tuple[str, str | None]] = []
+        self._in_command = False
+        self._cmd_start = 0
+        self._cmd_count: int | None = None
+        self._edited = False
+        self._no_dot = False
+        self._last_change: tuple[int | None, list[tuple[str, str | None]]] | None = None
+        self._replaying = False
+        self._insert_repeat = 1
+        self._macro_name: str | None = None
+        self._one_shot = False
+        self._replaced: list[str | None] = []
         self._popup: CompletionPopup | None = None
         self._popup_start: Location = (0, 0)
         self._auto_timer = None
@@ -338,6 +449,7 @@ class VimTextArea(TextArea):
         self.refresh_lines(first, last - first + 1)
 
     def edit(self, edit: Edit) -> EditResult:
+        self._edited = True
         rows_before = self.document.line_count
         gutter_before = self.gutter_width
         old_highlights = dict(self._highlights)
@@ -433,10 +545,133 @@ class VimTextArea(TextArea):
 
     def _apply_mode(self) -> None:
         mode = self.mode if self.enabled else "insert"
-        theme = self._theme_names[0] if mode == "insert" else self._theme_names[1]
+        theme = self._theme_names[0] if mode in ("insert", "replace") else self._theme_names[1]
         if self.theme != theme:
             self.theme = theme
-        self.cursor_blink = mode == "insert"
+        self.cursor_blink = mode in ("insert", "replace")
+
+    def _record(self, key: str, char: str | None) -> None:
+        """Every key goes to the macro being recorded and to the keys of the current command (for `.`)."""
+        if self._macro_name is not None:
+            VimTextArea.macros[self._macro_name].append((key, char))
+        if not self._replaying:
+            self._keys.append((key, char))
+
+    def _feed(self, key: str, char: str | None) -> None:
+        """Handle one key as if typed: replays macros and the last change."""
+        if not self.enabled:
+            return
+        if key in _ESCAPE_KEYS:
+            key, char = "escape", None
+        if self.mode == "insert":
+            self._insert_key(key, char)
+        elif self.mode == "replace":
+            self._replace_key(key, char)
+        else:
+            name = char if char and len(char) == 1 and char.isprintable() else key
+            if self.visual:
+                self._visual(name)
+            else:
+                self._normal(name)
+
+    def _replay(self, keys: list[tuple[str, str | None]], times: int = 1) -> None:
+        was_replaying, self._replaying = self._replaying, True
+        try:
+            for _ in range(times):
+                for key, char in keys:
+                    self._feed(key, char)
+        finally:
+            self._replaying = was_replaying
+
+    def _insert_key(self, key: str, char: str | None) -> None:
+        """The insert-mode keys a replay needs: text, enter, backspace, tab and escape."""
+        if key == "escape":
+            self._end_insert()
+        elif key == "enter":
+            if self.language == "python":
+                self._newline()
+            else:
+                self.insert("\n")
+        elif key == "backspace":
+            if not self._dedent_on_backspace():
+                self.action_delete_left()
+        elif key == "tab":
+            self.insert(INDENT)
+        elif char and len(char) == 1 and char.isprintable():
+            self.insert(char)
+
+    def _end_insert(self) -> None:
+        """Escape from insert or replace mode: back to normal mode, repeating a counted insert (3ix)."""
+        if self.mode == "insert" and not self.cursor_at_start_of_line:
+            self.action_cursor_left()
+        elif self.mode == "replace":
+            self._replaced = []
+            if not self.cursor_at_start_of_line:
+                self.action_cursor_left()
+        self.set_mode("normal")
+        repeat, self._insert_repeat = self._insert_repeat, 1
+        self._finish_command()
+        if repeat > 1 and self._last_change is not None:
+            self._replay(self._last_change[1], repeat - 1)
+
+    def _begin_command(self, had_count: bool, n: int) -> None:
+        if self._replaying:
+            return
+        self._in_command = True
+        self._cmd_start = len(self._keys) - 1
+        self._cmd_count = n if had_count else None
+        self._edited = False
+        self._no_dot = False
+
+    def _finish_command(self) -> None:
+        """A normal-mode command is complete: keep its keys for `.` when it changed the text."""
+        if self._replaying or not self._in_command:
+            return
+        self._in_command = False
+        if self._edited and not self._no_dot:
+            self._last_change = (self._cmd_count, self._keys[self._cmd_start :])
+        self._keys.clear()
+        if self._one_shot and self.mode == "normal":
+            self._one_shot = False
+            self.set_mode("insert")
+
+    def _repeat_change(self, had_count: bool, n: int) -> None:
+        """`.`: replay the last change; a count replaces the one it was made with."""
+        if self._last_change is None:
+            return
+        count, keys = self._last_change
+        count = n if had_count else count
+        prefix = [(digit, digit) for digit in str(count)] if count and count > 1 else []
+        self._replay(prefix + keys)
+        self._last_change = (count, keys)
+
+    def _replace_key(self, key: str, char: str | None) -> None:
+        """R: overtype; backspace restores what was typed over; escape leaves."""
+        if key == "escape":
+            self._end_insert()
+            return
+        row, col = self.cursor_location
+        if key == "backspace":
+            if not self._replaced or col == 0:
+                return
+            original = self._replaced.pop()
+            if original is None:
+                self.delete((row, col - 1), (row, col), maintain_selection_offset=False)
+            else:
+                self.replace(original, (row, col - 1), (row, col), maintain_selection_offset=False)
+            self.move_cursor((row, col - 1))
+        elif key == "enter":
+            self.insert("\n")
+            self._replaced = []
+        elif char and len(char) == 1 and char.isprintable():
+            line = self.document.get_line(row)
+            if col < len(line):
+                self._replaced.append(line[col])
+                self.replace(char, (row, col), (row, col + 1), maintain_selection_offset=False)
+            else:
+                self._replaced.append(None)
+                self.insert(char, (row, col), maintain_selection_offset=False)
+            self.move_cursor((row, col + 1))
 
 
     async def _on_key(self, event: events.Key) -> None:
@@ -444,12 +679,22 @@ class VimTextArea(TextArea):
             event.stop()
             event.prevent_default()
             return
+        if self.enabled:
+            self._record(event.key, event.character)
+        if self.mode == "replace" and self.enabled:
+            event.stop()
+            event.prevent_default()
+            self._replace_key("escape" if _is_escape(event) else event.key, event.character)
+            return
         if self.mode == "insert" or not self.enabled:
             if _is_escape(event) and self.enabled:
                 event.stop()
                 event.prevent_default()
-                if not self.cursor_at_start_of_line:
-                    self.action_cursor_left()
+                self._end_insert()
+            elif event.key == "ctrl+o" and self.enabled:
+                event.stop()
+                event.prevent_default()
+                self._one_shot = True
                 self.set_mode("normal")
             elif _is_escape(event):
                 event.stop()
@@ -487,9 +732,25 @@ class VimTextArea(TextArea):
             event.prevent_default()
 
     def _normal(self, key: str) -> bool:
-        """Handle one normal-mode key. Returns False if the key means nothing here."""
+        """Handle one normal-mode key; commands are tracked for `.`. Returns False if the key means nothing here."""
+        counting = key.isdigit() and (key != "0" or self.count) and not self._wants_char()
+        if not self.pending and not self._in_command and not counting and key != "escape":
+            self._begin_command(bool(self.count), int(self.count or 1))
+        handled = self._normal_key(key)
+        if self._in_command and not self.pending and self.mode == "normal" and not self.visual:
+            self._finish_command()
+        return handled
+
+    def _split_operator(self, pending: str) -> tuple[str, str] | None:
+        for op in _OPERATORS:
+            if pending.startswith(op):
+                return op, pending[len(op) :]
+        return None
+
+    def _normal_key(self, key: str) -> bool:
         if key == "escape":
             self.pending = self.count = ""
+            self._op_count = 1
             return True
         if key.isdigit() and (key != "0" or self.count) and not self._wants_char():
             self.count += key
@@ -498,34 +759,64 @@ class VimTextArea(TextArea):
         n = int(self.count or 1)
         pending, self.pending, self.count = self.pending, "", ""
 
-        if pending in ("d", "c", "y"):
-            if key in ("i", "a", "g", *_FIND_KEYS):
-                self.pending, self.count = pending + key, str(n) if n > 1 else ""
-            else:
-                self._operator(pending, key, n)
-            return True
-        if len(pending) == 2 and pending[0] in "dcy":
-            op, sub = pending
-            if sub in "ia":
-                self._object_operator(op, sub + key)
-            elif sub == "g":
+        if (split := self._split_operator(pending)) is not None:
+            op, suffix = split
+            n *= self._op_count
+            if suffix == "":
+                if key in ("i", "a", "g", *_FIND_KEYS, *_MARK_KEYS):
+                    self.pending, self._op_count = pending + key, n
+                elif key == op[-1] or key == op:
+                    row = self.cursor_location[0]
+                    self._apply_operator(op, (row, 0), (min(self.document.line_count - 1, row + n - 1), 0), True)
+                else:
+                    self._op_count = 1
+                    self._operator(op, key, n)
+                return True
+            self._op_count = 1
+            if suffix in "ia":
+                self._object_operator(op, suffix + key, n)
+            elif suffix == "g":
                 if key == "g":
                     self._operator(op, "gg", n)
+                elif key in ("e", "E"):
+                    self._operator(op, "g" + key, n)
+                elif len(op) == 2 and key == op[1]:
+                    row = self.cursor_location[0]
+                    self._apply_operator(op, (row, 0), (min(self.document.line_count - 1, row + n - 1), 0), True)
             elif len(key) == 1:
-                self._operator(op, (sub, key), n)
+                self._operator(op, (suffix, key), n)
             return True
-        if pending in _FIND_KEYS:
+        if pending in _FIND_KEYS or pending in _MARK_KEYS:
             if len(key) == 1 and self._move((pending, key), n) is not None:
                 self._clamp()
             return True
-        if pending in (">", "<"):
-            if key == pending:
-                row = self.cursor_location[0]
-                self._shift(row, min(self.document.line_count - 1, row + n - 1), 1, key == ">")
+        if pending == "m":
+            if len(key) == 1:
+                self._marks[key] = self.cursor_location
+            return True
+        if pending == '"':
+            if len(key) == 1:
+                self._use_register = key
+            return True
+        if pending == "q":
+            if len(key) == 1 and key.isalnum():
+                self._macro_name = key
+                VimTextArea.macros[key] = []
+            return True
+        if pending == "@":
+            name = VimTextArea.last_macro if key == "@" else key
+            if name in VimTextArea.macros:
+                VimTextArea.last_macro = name
+                self._replay(VimTextArea.macros[name], n)
             return True
         if pending == "g":
             if key == "g":
                 self._move("gg", n)
+            elif key in ("e", "E"):
+                self._move("g" + key, n)
+                self._clamp()
+            elif key in ("u", "U", "~"):
+                self.pending, self._op_count = "g" + key, n
             elif key == "v":
                 self._reselect()
             elif key == "J":
@@ -547,21 +838,39 @@ class VimTextArea(TextArea):
         row, col = self.cursor_location
         line = self.document.get_line(row)
         match key:
-            case "d" | "c" | "y" | "g" | " " | ">" | "<" | "f" | "F" | "t" | "T":
+            case "d" | "c" | "y" | ">" | "<" | "=":
+                self.pending, self._op_count = key, n
+            case "g" | " " | "f" | "F" | "t" | "T":
                 self.pending, self.count = key, str(n) if n > 1 else ""
+            case "m" | "`" | "'" | '"' | "@":
+                self.pending, self.count = key, str(n) if n > 1 else ""
+            case "q":
+                if self._macro_name is not None:
+                    VimTextArea.macros[self._macro_name].pop()
+                    VimTextArea.last_macro = self._macro_name
+                    self._macro_name = None
+                else:
+                    self.pending = key
+            case ".":
+                self._no_dot = True
+                self._repeat_change(had_count, n)
             case "v" | "V":
                 self._enter_visual(key, self.cursor_location)
             case "i":
+                self._insert_repeat = n
                 self.set_mode("insert")
             case "a":
                 if col < len(line):
                     self.move_cursor((row, col + 1))
+                self._insert_repeat = n
                 self.set_mode("insert")
             case "I":
                 self.move_cursor((row, len(line) - len(line.lstrip())))
+                self._insert_repeat = n
                 self.set_mode("insert")
             case "A":
                 self.move_cursor((row, len(line)))
+                self._insert_repeat = n
                 self.set_mode("insert")
             case "o" | "O":
                 indent = line[: len(line) - len(line.lstrip())]
@@ -571,7 +880,18 @@ class VimTextArea(TextArea):
                 else:
                     self.insert(indent + "\n", (row, 0), maintain_selection_offset=False)
                     self.move_cursor((row, len(indent)))
+                self._insert_repeat = n
                 self.set_mode("insert")
+            case "R":
+                self._replaced = []
+                self.set_mode("replace")
+            case "~":
+                if line:
+                    end = min(len(line), col + n)
+                    self._case_edit((row, col), (row, end), str.swapcase)
+                    self.move_cursor((row, min(end, len(line) - 1)))
+            case "ctrl+a" | "ctrl+x":
+                self._add_to_number(n if key == "ctrl+a" else -n)
             case "x":
                 if line:
                     self._chars_operator("d", (row, col), (row, min(col + n, len(line))))
@@ -584,7 +904,7 @@ class VimTextArea(TextArea):
                 self._yank_lines(row, min(self.document.line_count - 1, row + n - 1))
                 self._copy_register()
             case "S":
-                self._operator("c", "c", n)
+                self._apply_operator("c", (row, 0), (min(self.document.line_count - 1, row + n - 1), 0), True)
             case "D":
                 self._operator("d", "$", n)
             case "C":
@@ -605,8 +925,10 @@ class VimTextArea(TextArea):
                     self.move_cursor((row, word.start()))
                     self.post_message(self.SearchNext(self, n if key == "*" else -n, word.group()))
             case "u":
+                self._no_dot = True
                 self.undo()
             case "ctrl+r":
+                self._no_dot = True
                 self.redo()
             case "r":
                 self.post_message(self.RunByNumber(self))
@@ -624,8 +946,35 @@ class VimTextArea(TextArea):
         return True
 
     def _wants_char(self) -> bool:
-        """The pending key takes any character next (f F t T r), so a digit is not a count."""
-        return self.pending[-1:] in ("f", "F", "t", "T", "r") and self.pending != " f"
+        """The pending key takes any character next (f F t T r ` ' m \" q @), so a digit is not a count."""
+        return self.pending[-1:] in (*_CHAR_KEYS, "r") and self.pending != " f"
+
+    def _case_edit(self, start: Location, end: Location, change) -> None:
+        """~ g~ gu gU: replace the text between start and end with change(text); cursor at the start."""
+        text = self.get_text_range(start, end)
+        new = change(text)
+        if new != text:
+            self.history.checkpoint()
+            self.replace(new, start, end, maintain_selection_offset=False)
+            self.history.checkpoint()
+        self.move_cursor(start)
+
+    def _add_to_number(self, delta: int) -> None:
+        """ctrl+a / ctrl+x: add `delta` to the number under or after the cursor."""
+        row, col = self.cursor_location
+        line = self.document.get_line(row)
+        match = next((m for m in _NUMBER.finditer(line) if m.end() > col), None)
+        if match is None:
+            return
+        new = str(int(match.group()) + delta)
+        self.replace(new, (row, match.start()), (row, match.end()), maintain_selection_offset=False)
+        self.move_cursor((row, match.start() + len(new) - 1))
+
+    def _visible_rows(self) -> tuple[int, int]:
+        """The first and last document rows on screen (H and L)."""
+        top = self.scroll_offset.y
+        height = max(1, self.size.height)
+        return top, min(self.document.line_count - 1, top + height - 1)
 
     def _join(self, n: int) -> None:
         """gJ: join the next line onto this one (vim's J; J itself moves between cells)."""
@@ -667,7 +1016,9 @@ class VimTextArea(TextArea):
         return False
 
     def _clamp(self) -> None:
-        """In normal mode the cursor sits on a character, not after the last one."""
+        """In normal mode the cursor sits on a character, not after the last one (not during ctrl+o)."""
+        if self._one_shot:
+            return
         row, col = self.cursor_location
         length = len(self.document.get_line(row))
         if col >= length > 0:
@@ -683,7 +1034,7 @@ class VimTextArea(TextArea):
         line = self.document.get_line(row)
         last = self.document.line_count - 1
         match key:
-            case (str() as kind, str() as char):
+            case (str() as kind, str() as char) if kind in _FIND_KEYS:
                 target = self._find(kind, char, n)
                 if target is None:
                     return None
@@ -713,6 +1064,33 @@ class VimTextArea(TextArea):
             case "gg":
                 self.move_cursor((0, 0) if n == 1 else (min(last, n - 1), 0))
                 return True
+            case "ge" | "gE":
+                for _ in range(n):
+                    self.move_cursor(self._previous_word_end(_WORD if key == "ge" else _BIG_WORD))
+            case "|":
+                self.move_cursor((row, min(max(0, len(line) - 1), n - 1)))
+            case "_" | "+" | "-" | "enter":
+                target = row + (n - 1 if key == "_" else n if key in ("+", "enter") else -n)
+                target = max(0, min(last, target))
+                text = self.document.get_line(target)
+                self.move_cursor((target, len(text) - len(text.lstrip())))
+                return True
+            case "H" | "L" | "M":
+                top, bottom = self._visible_rows()
+                target = min(bottom, top + n - 1) if key == "H" else max(top, bottom - n + 1) if key == "L" else (top + bottom) // 2
+                text = self.document.get_line(target)
+                self.move_cursor((target, len(text) - len(text.lstrip())))
+                return True
+            case ("`" | "'", str() as name):
+                mark = self._marks.get(name)
+                if mark is None:
+                    return None
+                mark = self.clamp_visitable(mark)
+                if key[0] == "'":
+                    text = self.document.get_line(mark[0])
+                    self.move_cursor((mark[0], len(text) - len(text.lstrip())))
+                    return True
+                self.move_cursor(mark)
             case "h" | "left" | "backspace":
                 self.move_cursor((row, max(0, col - n)))
             case "l" | "right" | "space":
@@ -783,6 +1161,20 @@ class VimTextArea(TextArea):
                     return (row, m.end() - 1)
             row, col = row + 1, -1
         return self.document.end
+
+    def _previous_word_end(self, pattern: re.Pattern = _WORD) -> Location:
+        """ge / gE: the end of the previous word, possibly on an earlier line."""
+        row, col = self.cursor_location
+        while row >= 0:
+            line = self.document.get_line(row)
+            ends = [m.end() - 1 for m in pattern.finditer(line)]
+            for end in reversed(ends):
+                if (row, end) < self.cursor_location:
+                    return (row, end)
+            row, col = row - 1, 10**9
+            if row >= 0 and not self.document.get_line(row).strip():
+                return (row, 0)
+        return (0, 0)
 
 
     def _resolve(self, key):
@@ -862,9 +1254,9 @@ class VimTextArea(TextArea):
         last = self.document.line_count - 1
         row = self.cursor_location[0]
         for _ in range(n):
-            row += direction
-            while 0 <= row <= last and self._blank(row):
-                row += direction
+            if 0 <= row <= last and self._blank(row):
+                while 0 <= row <= last and self._blank(row):
+                    row += direction
             while 0 <= row <= last and not self._blank(row):
                 row += direction
             if row > last:
@@ -874,10 +1266,11 @@ class VimTextArea(TextArea):
         return (row, 0)
 
 
-    def _text_object(self, spec: str) -> tuple[Location, Location, bool] | None:
+    def _text_object(self, spec: str, n: int = 1) -> tuple[Location, Location, bool] | None:
         """iw aw iW aW ip ap i" a" i' a' i( a( ib i[ a[ i{ a{ iB i< a<: (start, end, linewise).
 
         `end` is exclusive; linewise objects span whole lines. None when there is no such object here.
+        A count on a bracket object takes the n-th enclosing pair (2i( is the pair around the pair).
         """
         if len(spec) != 2:
             return None
@@ -891,7 +1284,7 @@ class VimTextArea(TextArea):
         if kind in _QUOTES:
             return self._quote_object(row, col, line, kind, around)
         if kind in _PAIRS:
-            return self._bracket_object(_PAIRS[kind], around)
+            return self._bracket_object(_PAIRS[kind], around, n)
         return None
 
     def _word_object(self, row: int, col: int, line: str, around: bool, big: bool):
@@ -957,11 +1350,14 @@ class VimTextArea(TextArea):
             end += 1
         return (row, first), (row, end), False
 
-    def _bracket_object(self, pair: str, around: bool):
+    def _bracket_object(self, pair: str, around: bool, n: int = 1):
         row, col = self.cursor_location
         line = self.document.get_line(row)
         here = line[col] if col < len(line) else ""
         opener = (row, col) if here == pair[0] else self._scan_open(pair, (row, col - 1))
+        for _ in range(n - 1):
+            if opener is not None:
+                opener = self._scan_open(pair, (opener[0], opener[1] - 1)) if opener[1] else self._scan_open(pair, (opener[0] - 1, 10**9)) if opener[0] else None
         if opener is None:
             return None
         closer = self._scan_close(pair, (opener[0], opener[1] + 1))
@@ -978,11 +1374,11 @@ class VimTextArea(TextArea):
 
 
     def _operator(self, op: str, key, n: int) -> None:
-        start = row, _ = self.cursor_location
-        last = self.document.line_count - 1
-        if key == op:
-            self._lines_operator(op, row, min(last, row + n - 1))
-            return
+        """An operator (d c y > < g~ gu gU) applied over a motion, with vim's rules for the end:
+        e E % f t and ge include the character under the cursor; an exclusive motion that ends at
+        the start of a line stops at the end of the line before, or becomes linewise when it
+        also started at or before the first non-blank; w stops at the end of the last word."""
+        start = self.cursor_location
         key = self._resolve(key)
         linewise = None if key is None else self._move(key, n)
         if linewise is None:
@@ -990,8 +1386,7 @@ class VimTextArea(TextArea):
             return
         end = self.cursor_location
         if linewise:
-            self.move_cursor(min(start, end))
-            self._lines_operator(op, min(start[0], end[0]), max(start[0], end[0]))
+            self._apply_operator(op, start, end, True)
             return
         if op == "c" and key in ("w", "W"):
             self.move_cursor(start)
@@ -999,21 +1394,44 @@ class VimTextArea(TextArea):
             end = (end[0], end[1] + 1)
         elif key in ("w", "W") and end[0] > start[0]:
             end = max(start, (end[0] - 1, len(self.document.get_line(end[0] - 1))))
-        elif end >= start and (key in ("e", "E", "%") or (isinstance(key, tuple) and key[0] in "ft")):
+        elif end >= start and (key in _INCLUSIVE or (isinstance(key, tuple) and key[0] in "ft`")):
             end = (end[0], end[1] + 1)
-        self._chars_operator(op, start, end)
+        elif end[1] == 0 and end[0] > start[0] and not (isinstance(key, tuple) and key[0] in "ft`"):
+            first = self.document.get_line(start[0])
+            if start[1] <= len(first) - len(first.lstrip()):
+                self._apply_operator(op, start, (end[0] - 1, 0), True)
+                return
+            end = (end[0] - 1, len(self.document.get_line(end[0] - 1)))
+        self._apply_operator(op, start, end, False)
 
-    def _object_operator(self, op: str, spec: str) -> None:
-        """d/c/y on a text object such as iw, a(, ip."""
-        found = self._text_object(spec)
+    def _object_operator(self, op: str, spec: str, n: int = 1) -> None:
+        """An operator on a text object such as iw, a(, ip."""
+        found = self._text_object(spec, n)
         if found is None:
             return
         start, end, linewise = found
-        if linewise:
-            self.move_cursor(start)
-            self._lines_operator(op, start[0], end[0])
+        self._apply_operator(op, start, end, linewise)
+
+    def _apply_operator(self, op: str, start: Location, end: Location, linewise: bool) -> None:
+        """Run `op` over start..end (exclusive end; linewise: whole rows)."""
+        a, b = sorted([start, end])
+        top, bottom = a[0], b[0]
+        if op in ("d", "c", "y"):
+            if linewise:
+                self.move_cursor(a)
+                self._lines_operator(op, top, bottom)
+            else:
+                self._chars_operator(op, a, b)
+        elif op in (">", "<"):
+            self._shift(top, bottom, 1, op == ">")
+        elif op == "=":
+            self._reindent_rows(top, bottom)
         else:
-            self._chars_operator(op, start, end)
+            change = {"g~": str.swapcase, "gu": str.lower, "gU": str.upper}[op]
+            if linewise:
+                a, b = (top, 0), (bottom, len(self.document.get_line(bottom)))
+            self._case_edit(a, b, change)
+            self._clamp()
 
     def _lines_operator(self, op: str, row: int, end_row: int) -> None:
         """d/c/y on whole lines row..end_row (dd, cc, yy and the linewise motions)."""
@@ -1036,12 +1454,33 @@ class VimTextArea(TextArea):
             self.delete((0, 0), self.document.end, maintain_selection_offset=False)
         self._clamp()
 
+    def _store(self, text: str, linewise: bool) -> None:
+        """A yank or delete fills the unnamed register and the named one chosen with \"x (\"X appends, \"_ discards)."""
+        name, self._use_register = self._use_register, ""
+        if name == "_":
+            return
+        VimTextArea.register, VimTextArea.register_linewise = text, linewise
+        if name.isupper():
+            old, _ = VimTextArea.registers.get(name.lower(), ("", linewise))
+            VimTextArea.registers[name.lower()] = ((old + "\n" + text) if old and linewise else old + text, linewise)
+        elif name:
+            VimTextArea.registers[name] = (text, linewise)
+
+    def _fetch(self) -> tuple[str, bool]:
+        """The register a put uses: the one chosen with \"x, else the unnamed one."""
+        name, self._use_register = self._use_register, ""
+        if name:
+            return VimTextArea.registers.get(name.lower(), ("", False))
+        return VimTextArea.register, VimTextArea.register_linewise
+
     def _chars_operator(self, op: str, start: Location, end: Location) -> None:
         """d/c/y on the characters from `start` up to, not including, `end`."""
         a, b = sorted([start, end])
         text = self.get_text_range(a, b)
         if text:
-            VimTextArea.register, VimTextArea.register_linewise = text, False
+            self._store(text, False)
+        else:
+            self._use_register = ""
         if op == "y":
             if text:
                 self._copy_register()
@@ -1066,15 +1505,15 @@ class VimTextArea(TextArea):
 
     def _yank_lines(self, first: int, last: int) -> None:
         text = self.get_text_range((first, 0), (last, len(self.document.get_line(last))))
-        VimTextArea.register, VimTextArea.register_linewise = text, True
+        self._store(text, True)
 
     def _paste(self, after: bool, n: int) -> None:
-        text = VimTextArea.register
+        text, linewise = self._fetch()
         if not text:
             return
         row, col = self.cursor_location
         line = self.document.get_line(row)
-        if VimTextArea.register_linewise:
+        if linewise:
             block = "\n".join([text] * n)
             if after:
                 self.insert("\n" + block, (row, len(line)), maintain_selection_offset=False)
@@ -1087,6 +1526,17 @@ class VimTextArea(TextArea):
             result = self.insert(text * n, at, maintain_selection_offset=False)
             self.move_cursor(self._before(result.end_location))
             self._clamp()
+
+    def _reindent_rows(self, top: int, bottom: int) -> None:
+        """= on lines top..bottom: re-indent them so they fit the structure of the whole cell."""
+        lines = [self.document.get_line(row) for row in range(self.document.line_count)]
+        fixed = reindent(lines)
+        if fixed[top : bottom + 1] != lines[top : bottom + 1]:
+            self.history.checkpoint()
+            self.replace("\n".join(fixed[top : bottom + 1]), (top, 0), (bottom, len(lines[bottom])), maintain_selection_offset=False)
+            self.history.checkpoint()
+        first = self.document.get_line(top)
+        self.move_cursor((top, len(first) - len(first.lstrip())))
 
     def _shift(self, top: int, bottom: int, n: int, right: bool) -> None:
         """> and <: indent or dedent lines top..bottom by n levels as one edit; blank lines stay empty."""
@@ -1220,6 +1670,10 @@ class VimTextArea(TextArea):
             if len(key) == 1:
                 self._visual_edit(lambda text: "".join(char if char == "\n" else key for char in text))
             return True
+        if pending == '"':
+            if len(key) == 1:
+                self._use_register = key
+            return True
         match key:
             case "v" | "V":
                 if key == self.visual:
@@ -1244,6 +1698,10 @@ class VimTextArea(TextArea):
                 _, _, top, bottom = self._visual_range()
                 self._exit_visual()
                 self._shift(top, bottom, n, key == ">")
+            case "=":
+                _, _, top, bottom = self._visual_range()
+                self._exit_visual()
+                self._reindent_rows(top, bottom)
             case "J":
                 self._visual_join(spaces=True)
             case "~":
@@ -1252,7 +1710,7 @@ class VimTextArea(TextArea):
                 self._visual_edit(str.lower)
             case "U":
                 self._visual_edit(str.upper)
-            case "g" | "i" | "a" | "r" | "f" | "F" | "t" | "T":
+            case "g" | "i" | "a" | "r" | "f" | "F" | "t" | "T" | '"':
                 self.pending, self.count = key, str(n) if n > 1 else ""
             case ":" | "/" | "K":
                 pass
@@ -1297,7 +1755,7 @@ class VimTextArea(TextArea):
 
     def _visual_put(self, keep_register: bool, n: int) -> None:
         """p / P: replace the selection with the register (p puts the replaced text in the register)."""
-        text, text_lines = VimTextArea.register, VimTextArea.register_linewise
+        text, text_lines = self._fetch()
         start, end, top, bottom = self._visual_range()
         selection_lines = self.visual == "V"
         replaced = self.get_text_range(start, end)
@@ -1319,7 +1777,7 @@ class VimTextArea(TextArea):
         self.move_cursor(cursor)
         self._clamp()
         if not keep_register:
-            VimTextArea.register, VimTextArea.register_linewise = replaced, selection_lines
+            self._store(replaced, selection_lines)
 
     def _visual_join(self, spaces: bool) -> None:
         _, _, top, bottom = self._visual_range()

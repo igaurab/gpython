@@ -92,13 +92,27 @@ Vim normal mode (in the editor):
 | `gg` / `G` / `3G` | First / last / third line of this cell |
 | `dd` | Delete line, like vim (`3dd` three lines; `u` undoes). To delete the cell: `esc`, then `dd` |
 | `gJ` | Join lines (vim's `J`) |
+| `.` | Repeat the last change (`3.` with a count) |
+| `~` / `g~` / `gu` / `gU` | Toggle / lower / upper case: `~` one character, `gUiw` `g~w` `guu` an object, motion or line |
+| `R` | Replace mode: overtype until `escape` (`backspace` restores) |
+| `>>` / `<<` / `>j` / `>ip` | Indent / dedent the line, or the lines a motion or object covers |
+| `==` / `=ip` / `gg=G` / `V=` | Re-indent to Python's 4-space levels: nesting follows the shape of the lines, `:` opens a level, `else`/`except` and `return` close one |
+| `ma` / `` `a `` / `'a` | Set mark `a` / jump to its character / its line (`` d`a `` and `y'a` work) |
+| `"ayy` / `"ap` | Named registers: `"a` before a yank, delete or put (`"A` appends, `"_` discards) |
+| `qa … q` / `@a` / `@@` | Record a macro into `a`, replay it (`3@a`), repeat the last replay |
+| `ctrl+a` / `ctrl+x` | Add to / subtract from the number under or after the cursor (`5 ctrl+a`) |
+| `ctrl+o` (insert mode) | One normal-mode command, then back to insert mode |
 | `/` | Jump: `/3` third cell (as numbered in the headers), `/text` next match after the cursor (smart case, highlighted) |
 | `n` / `N` | Next / previous match of the last search, across cells (`3n` skips three) |
 | `*` / `#` | Search forward / backward for the word under the cursor |
 | `gt` / `gT` / `2gt` | Next / previous / second tab |
 | `:` | Ex command |
 
-Also `h j k l w b e 0 ^ $`, counts, `i a I A o O`, `x X s S dw d$ dj D cc cw C yy p P u ctrl+r`.
+Also `h j k l w b e ge W B E 0 ^ $ | _ + - H M L % { }`, counts (`3i` repeats the
+insert), `i a I A o O`, `x X s S dw d$ dj D cc cw C yy p P u ctrl+r`, `f F t T ; ,`,
+text objects `iw aw ip ap i" a" i( a( i[ i{ i<` (`d2i(` takes the enclosing pair),
+and visual mode `v V` with `o y d c p > < J ~ u U r`. Not there: `r` replaces nothing
+(it is the run prefix), blockwise `ctrl+v`, and `d/pattern`.
 
 Cell mode. Whether you are in cell mode or in the editor is one choice for the whole
 notebook: moving across a rendered markdown or hidden-code cell (which is always

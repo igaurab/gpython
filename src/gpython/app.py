@@ -55,9 +55,11 @@ _MODE_STYLES = {
     "files": "bold black on magenta",
     "visual": "bold black on bright_magenta",
     "v-line": "bold black on bright_magenta",
+    "replace": "bold black on red",
 }
 _CHIP_VIM_STYLES = {
     "insert": "bold green",
+    "replace": "bold red",
     "normal": "bold yellow",
     "visual": "bold bright_magenta",
     "v-line": "bold bright_magenta",
@@ -349,6 +351,8 @@ class GPython(App):
             return "files"
         if not VimTextArea.enabled or VimTextArea.mode == "insert":
             return "insert"
+        if VimTextArea.mode == "replace":
+            return "replace"
         return getattr(focused, "visual_mode", "") or "normal"
 
     def watch_theme(self, name: str) -> None:
@@ -1199,7 +1203,7 @@ class GPython(App):
         field; ctrl+h arrives as backspace, which insert mode keeps for deleting."""
         if not isinstance(self.screen, NotebookScreen) or isinstance(self.focused, Input):
             return False
-        return not (needs_backspace and self.ui_mode == "insert")
+        return not (needs_backspace and self.ui_mode in ("insert", "replace"))
 
     def action_pick_env(self) -> None:
         """Env picker: switch the kernel's environment, create a venv, install packages."""
