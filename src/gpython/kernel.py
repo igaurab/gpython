@@ -46,7 +46,8 @@ def _gp_setup(file):
     if file:
         globals()["__file__"] = file
         folder = os.path.dirname(file) or os.getcwd()
-        os.chdir(folder)
+        if os.path.isdir(folder):
+            os.chdir(folder)
         if folder not in sys.path:
             sys.path.insert(0, folder)
 
@@ -195,7 +196,7 @@ class Kernel:
     async def start(self) -> None:
         if self.manager is None:
             self.manager = self._manager()
-        cwd = str(self.file.parent) if self.file else os.getcwd()
+        cwd = str(self.file.parent) if self.file and self.file.parent.is_dir() else os.getcwd()
         await self.manager.start_kernel(
             cwd=cwd, env=envs.kernel_env(self.env), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
