@@ -26,7 +26,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
-from . import envs
+from . import envs, packages
 
 KIND_TAGS = {
     "uv": ("uv", "green"), "venv": ("venv", "cyan"), "conda": ("conda", "magenta"),
@@ -82,9 +82,9 @@ class EnvPicker(ModalScreen[tuple | None]):
         Binding("down", "move(1)", show=False, priority=True),
     ]
 
-    def __init__(self, current: envs.Env, start: Path, title: str = "", ask: tuple | None = None) -> None:
+    def __init__(self, current: envs.Env, start: Path, title: str = "", ask: tuple | None = None, prefill: str = "") -> None:
         super().__init__()
-        self.current, self.start, self.title_text = current, start, title
+        self.current, self.start, self.title_text, self.prefill = current, start, title, prefill
         self.root = envs.project_root(start)
         self.found: list[envs.Env] = _cache.get(start, [])
         self._ask: tuple | None = None
@@ -222,13 +222,17 @@ class EnvPicker(ModalScreen[tuple | None]):
             if tool == "uv":
                 lines.append("versions uv can fetch: 3.10 … 3.14 (downloaded on demand)")
         else:
-            field.value = ""
+            field.value = self.prefill
             field.placeholder = "package names, e.g. numpy pandas 'polars>=1'"
-            if what == "add":
+            if self.title_text:
+                self._title(self.title_text)
+            elif what == "add":
                 self._title(f"uv add → {_home(self.root / 'pyproject.toml')}, synced into {self.current.name}")
             else:
                 self._title(f"install into {self.current.name} ({_home(self.current.python)})")
             lines = ["enter installs · new imports work without restarting the kernel · esc back"]
+            if what == "install" and envs.uv() and (self.root / "pyproject.toml").exists():
+                lines.append(f"to add to {_home(self.root / 'pyproject.toml')} instead: esc, then :uv add {self.prefill}".rstrip())
             if self.current.kind == "builtin":
                 lines.insert(0, "note: this is gpython's own environment; a project venv (New uv env) keeps them apart")
         for line in lines:
@@ -331,26 +335,69 @@ async def create(pane, tool: str, folder: str, python: str | None = None) -> Non
     await pane.switch_env(env)
 
 
-async def install(pane, packages: list[str], project: bool = False) -> None:
-    """Install into the kernel's env; with project=True, `uv add` them to pyproject.toml too."""
+async def install(pane, names: list[str], project: bool = False) -> bool:
+    """Install into the kernel's env; with project=True, `uv add` them to pyproject.toml too.
+
+    Returns True when the packages are in place and the kernel sees them."""
     env = pane.kernel.env
-    names = " ".join(packages)
+    text = " ".join(names)
     state = pane.kernel_state
-    on_line = _progress(pane, f"{'uv add' if project else 'installing'} {names}")
+    on_line = _progress(pane, f"{'uv add' if project else 'installing'} {text}")
     try:
-        if project and not await envs.add(env, packages, _base(pane), on_line):
+        if project and not await envs.add(env, names, _base(pane), on_line):
             pane.notify("No pyproject.toml here: installing into the env only")
             project = False
         if not project:
-            await envs.install(env, packages, on_line)
+            await envs.install(env, names, on_line)
     except envs.EnvError as error:
         pane.notify(f"Install failed: {error}", severity="error", timeout=10)
-        return
+        return False
     finally:
         pane.set_kernel_state(state)
     if pane.kernel.ready.is_set():
         await pane.kernel._execute("__import__('importlib').invalidate_caches()", None, store_history=False)
-    pane.notify(f"{'Added' if project else 'Installed'} {names} → {env.name}")
+    pane.notify(f"{'Added' if project else 'Installed'} {text} → {env.name}")
+    return True
+
+
+def install_missing(pane, cells: list, after_install: bool = False) -> None:
+    """Cells whose run ended in ModuleNotFoundError (`cell.missing`): marimo's missing-package banner.
+
+    The picker asks first, prefilled with the PyPI names; enter installs them into the kernel's
+    env and runs the cells again. Every run of the cell asks again, except the re-run after an
+    install, which leaves out the modules just tried (a wrong name must not loop). With
+    `:set autoinstall` the first try of a module installs without a question; a module whose
+    install failed is asked about on the next run instead.
+    """
+    new = [cell for cell in cells if not (after_install and cell.missing in pane.tried)]
+    if not new:
+        return
+    tried_before = any(cell.missing in pane.tried for cell in new)
+    pane.tried.update(cell.missing for cell in new)
+    names = sorted({packages.pypi_name(cell.missing, cell.source) for cell in new})
+    cids = [cell.cid for cell in new]
+    if pane.app.autoinstall and not tried_before:
+        pane.app.run_worker(_install_then_run(pane, names, cids), group="env")
+        return
+    if isinstance(pane.app.screen, ModalScreen):
+        return
+    env = pane.kernel.env
+    modules = sorted({cell.missing for cell in new})
+    how = "uv pip install" if envs.uv() else "pip install"
+    verb = "is" if len(modules) == 1 else "are"
+    again = ", ".join(cell.label for cell in new) + (" runs" if len(new) == 1 else " run")
+    title = f"{', '.join(modules)} {verb} not installed · enter: {how} → {env.name}, then {again} again · esc skips"
+
+    def done(choice: tuple | None) -> None:
+        if choice and choice[0] == "install":
+            pane.app.run_worker(_install_then_run(pane, choice[1], cids), group="env")
+
+    pane.app.push_screen(EnvPicker(env, _base(pane), title=title, ask=("install",), prefill=" ".join(names)), done)
+
+
+async def _install_then_run(pane, names: list[str], cids: list[str]) -> None:
+    if await install(pane, names):
+        await pane.run_cells(cids, after_install=True)
 
 
 async def run_tool(pane, argv: list[str], title: str) -> None:
@@ -386,9 +433,9 @@ def handle(pane, choice: tuple | None) -> None:
     pane.app.run_worker(work, group="env")
 
 
-def open_picker(pane, ask: tuple | None = None) -> None:
+def open_picker(pane, ask: tuple | None = None, prefill: str = "") -> None:
     if not isinstance(pane.app.screen, EnvPicker):
-        pane.app.push_screen(EnvPicker(pane.kernel.env, _base(pane), ask=ask), lambda choice: handle(pane, choice))
+        pane.app.push_screen(EnvPicker(pane.kernel.env, _base(pane), ask=ask, prefill=prefill), lambda choice: handle(pane, choice))
 
 
 def _words(arg: str) -> list[str]:
@@ -426,10 +473,12 @@ def ex_venv(pane, arg: str = "", tool: str = "venv") -> None:
 
 
 def ex_pip(pane, arg: str = "") -> None:
-    """:pip numpy · :pip install numpy · :pip uninstall numpy · :pip list — for the kernel's env."""
+    """:pip numpy · :pip install numpy · :pip uninstall numpy · :pip list — for the kernel's env.
+
+    :pip alone asks, prefilled with the package the current cell failed to import."""
     words = _words(arg)
     if not words:
-        open_picker(pane, ask=("install",))
+        open_picker(pane, ask=("install",), prefill=pane.missing_package())
         return
     if words[0] == "install":
         words = words[1:]

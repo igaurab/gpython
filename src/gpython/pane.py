@@ -19,7 +19,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.geometry import Region
 from textual.widgets import DataTable, Static
 
-from . import config, envs, notebook
+from . import config, envpicker, envs, notebook, packages
 from .cell import Cell, CellSnapshot, ends_with_string, outputs_to_ipynb, time_summary
 from .dom import forget_removed
 from .graph import Graph, build
@@ -54,6 +54,7 @@ class NotebookPane(Vertical):
         self._shutting_down = False
         self._booted = asyncio.Event()
         self._run_lock = asyncio.Lock()
+        self.tried: set[str] = set()
         self.loaded = asyncio.Event()
         self._specs: list[notebook.CellSpec] = []
         self._pending_sources: list[notebook.CellSpec] = []
@@ -310,11 +311,12 @@ class NotebookPane(Vertical):
             cell.set_info(graph)
         return graph
 
-    async def run_cells(self, roots: list[str], downstream: bool | None = None) -> None:
+    async def run_cells(self, roots: list[str], downstream: bool | None = None, after_install: bool = False) -> None:
         """Run roots in dependency order, stale ancestors first.
 
         `downstream` None follows the app's run mode: lazy (the default) only marks the cells
-        downstream stale, reactive runs them too.
+        downstream stale, reactive runs them too. `after_install` marks the re-run that follows
+        a package install, so a module that still fails is not offered again at once.
         """
         await self.loaded.wait()
         async with self._run_lock:
@@ -334,6 +336,7 @@ class NotebookPane(Vertical):
                 by_id[cid].set_status("queued")
 
             failed: set[str] = set()
+            missing: list[Cell] = []
             for cid in order:
                 cell = by_id[cid]
                 if not cell.is_mounted:
@@ -362,11 +365,36 @@ class NotebookPane(Vertical):
                 cell.ran_source = source
                 cell.last_defs = graph.defs[cid]
                 cell.end_run("ok" if ok and cell.source == source else "error" if not ok else "stale")
+                cell.missing = self._note_missing(cell) if not ok else None
                 if not ok:
                     failed.add(cid)
+                if cell.missing:
+                    missing.append(cell)
                 self._keep_focus_visible(cell)
 
             await self.refresh_vars(graph)
+        if missing:
+            envpicker.install_missing(self, missing, after_install)
+
+    def _note_missing(self, cell: Cell) -> str | None:
+        """After a failed run: the module a ModuleNotFoundError names, with a hint under the traceback.
+
+        A standard-library module is pointed out but never offered: pip cannot supply it.
+        """
+        module = packages.missing_module(cell.last_error)
+        if module is None:
+            return None
+        env = self.kernel.env.name
+        if packages.is_stdlib(module):
+            cell.show_hint(f"{module} is part of Python's standard library, but the interpreter in {env} was built without it")
+            return None
+        cell.show_hint(f"{module} is not installed in {env} · :pip {packages.pypi_name(module, cell.source)} installs it")
+        return module
+
+    def missing_package(self) -> str:
+        """The PyPI name the current cell failed to import, or '' (what :pip offers first)."""
+        cell = self.current_cell()
+        return packages.pypi_name(cell.missing, cell.source) if cell is not None and cell.missing else ""
 
     @staticmethod
     def _stale_ancestors(graph: Graph, by_id: dict[str, Cell], roots: list[str]) -> list[str]:
@@ -806,6 +834,7 @@ class NotebookPane(Vertical):
 
     def _kernel_reset(self) -> None:
         """A fresh kernel process: every cell that ran is stale, the variables panel is empty."""
+        self.tried.clear()
         for cell in self.cells():
             cell.last_defs = set()
             if cell.ran_source is not None:

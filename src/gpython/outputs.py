@@ -45,6 +45,8 @@ def _render(kind: str, text: str) -> Text:
         return Text(text, style="bold red")
     if kind == "note":
         return Text(text, style="dim italic")
+    if kind == "hint":
+        return Text(text, style="italic")
     return Text.from_ansi(text, style="red" if kind == "stderr" else "")
 
 
@@ -162,6 +164,10 @@ class OutputArea(Vertical):
     def show_error(self, message: str) -> None:
         self.clear()
         self._add_text("error", message)
+
+    def add_hint(self, text: str) -> None:
+        """A line under the output about what to do next; not one of the kernel's outputs."""
+        self._add_text("hint", text)
 
     def add(self, kind: str, content: dict) -> None:
         """Add one output, with the same (kind, content) as `Kernel.execute` callbacks."""
