@@ -95,17 +95,63 @@ class CellSnapshot:
     spec: notebook.CellSpec | None = None
 
 
-def time_summary(durations: list[float]) -> str:
-    """What `r t` prints under a cell: one run's time, or mean · median · min · max of several."""
+def percentile(ordered: list[float], p: float) -> float:
+    """The p-th percentile (0..100) of sorted values, interpolating between neighbours."""
+    position = (len(ordered) - 1) * p / 100
+    low = int(position)
+    high = min(low + 1, len(ordered) - 1)
+    return ordered[low] + (ordered[high] - ordered[low]) * (position - low)
+
+
+def time_stats(durations: list[float]) -> dict[str, float]:
+    """mean, median, std, variance, min, p50, p90, p99 and max of several run times, in seconds."""
     import statistics
 
+    ordered = sorted(durations)
+    return {
+        "mean": statistics.mean(ordered),
+        "median": statistics.median(ordered),
+        "std": statistics.stdev(ordered),
+        "variance": statistics.variance(ordered),
+        "min": ordered[0],
+        "p50": percentile(ordered, 50),
+        "p90": percentile(ordered, 90),
+        "p99": percentile(ordered, 99),
+        "max": ordered[-1],
+    }
+
+
+def time_summary(durations: list[float]) -> str:
+    """What `r t` prints under a cell: one run's time, or a small table of statistics for several runs."""
     if len(durations) == 1:
         return f"1 run: {format_duration(durations[0])}"
-    mean, median = statistics.mean(durations), statistics.median(durations)
-    return (
-        f"{len(durations)} runs: mean {format_duration(mean)} · median {format_duration(median)}"
-        f" · min {format_duration(min(durations))} · max {format_duration(max(durations))}"
-    )
+    stats = time_stats(durations)
+    cells = {name: format_duration(value) for name, value in stats.items()}
+    cells["variance"] = f"{stats['variance']:.3g}s²" if stats["std"] >= 1 else f"{stats['variance'] * 1e6:.3g}ms²"
+    headers = ["mean", "median", "std", "var", "p50", "p90", "p99", "min", "max"]
+    values = [cells[name] for name in ("mean", "median", "std", "variance", "p50", "p90", "p99", "min", "max")]
+    return f"{len(durations)} runs\n" + boxed_table(headers, values)
+
+
+def boxed_table(headers: list[str], values: list[str]) -> str:
+    """A one-row table with box-drawing borders: a header line, a rule and the values."""
+    widths = [max(len(h), len(v)) for h, v in zip(headers, values)]
+
+    def row(items: list[str]) -> str:
+        return "│ " + " │ ".join(f"{item:<{w}}" for item, w in zip(items, widths)) + " │"
+
+    def rule(left: str, mid: str, right: str) -> str:
+        return left + mid.join("─" * (w + 2) for w in widths) + right
+
+    return "\n".join([rule("┌", "┬", "┐"), row(headers), rule("├", "┼", "┤"), row(values), rule("└", "┴", "┘")])
+
+
+def time_brief(durations: list[float]) -> str:
+    """The toast after `r t`: runs, mean, median and p90 on one line."""
+    if len(durations) == 1:
+        return time_summary(durations)
+    stats = time_stats(durations)
+    return f"{len(durations)} runs: mean {format_duration(stats['mean'])} · median {format_duration(stats['median'])} · p90 {format_duration(stats['p90'])}"
 
 
 def format_duration(seconds: float) -> str:

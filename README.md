@@ -11,8 +11,9 @@ since, or their inputs changed), then the cell. What happens to the cells
   when you want, without moving: `r 6` runs cell c6, `r r` this cell, `r C` the
   cells down to this one, `r a` the cells after it, `r A` all, `r s` the stale
   ones (`f4`); `r k` restarts the kernel, `r R` restarts and runs all, `r i`
-  interrupts; `r t 5` times this cell over five runs and prints the mean, median,
-  min and max under it, like `%%timeit` (`r t` alone runs it once; `:timeit 5`).
+  interrupts; `r t 5` times this cell over five runs and prints a bordered table
+  under it (mean, median, std, variance, p50 / p90 / p99, min, max), like
+  `%%timeit` (`r t` alone runs it once; `:timeit 5`).
   The same keys work in the editor's normal mode, where `space r …` is a synonym.
 - **reactive**: they re-run automatically, like marimo.
 

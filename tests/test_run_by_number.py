@@ -437,20 +437,32 @@ def test_r_t_times_the_cell_over_n_runs(tmp_path):
         assert app._number_sequence is None
         await settle(app, pilot)
         assert last.status == "ok" and app.focused is last
-        assert "3 runs: mean" in last.output_text and "median" in last.output_text and "max" in last.output_text
+        assert "3 runs" in last.output_text and "mean" in last.output_text and "p90" in last.output_text
         await pilot.press(":", *"timeit", "enter")
         await settle(app, pilot)
         assert "1 run:" in last.output_text
         first.editor.focus()
         await pilot.press("r", "t", "2", "enter")
         await settle(app, pilot)
-        assert "2 runs: mean" in first.output_text and app.focused is first.editor
+        assert "2 runs" in first.output_text and "p99" in first.output_text and app.focused is first.editor
 
     ui(tmp_path, test, kernel=True)
 
 
 def test_time_summary():
-    from gpython.cell import time_summary
+    from gpython.cell import percentile, time_brief, time_stats, time_summary
 
     assert time_summary([0.5]) == "1 run: 500ms"
-    assert time_summary([1.0, 2.0, 6.0]) == "3 runs: mean 3.00s · median 2.00s · min 1.00s · max 6.00s"
+    stats = time_stats([1.0, 2.0, 6.0])
+    assert (stats["mean"], stats["median"], stats["min"], stats["max"]) == (3.0, 2.0, 1.0, 6.0)
+    assert stats["p50"] == 2.0 and round(stats["p90"], 2) == 5.2 and round(stats["p99"], 2) == 5.92
+    assert round(stats["std"], 3) == 2.646 and stats["variance"] == 7.0
+    assert percentile([1.0, 2.0, 6.0], 0) == 1.0 and percentile([1.0, 2.0, 6.0], 100) == 6.0
+    table = time_summary([1.0, 2.0, 6.0]).splitlines()
+    assert table[0] == "3 runs" and len(table) == 6
+    assert table[1].startswith("┌") and table[3].startswith("├") and table[5].startswith("└")
+    assert [c.strip() for c in table[2].strip("│").split("│")] == ["mean", "median", "std", "var", "p50", "p90", "p99", "min", "max"]
+    assert [c.strip() for c in table[4].strip("│").split("│")] == ["3.00s", "2.00s", "2.65s", "7s²", "2.00s", "5.20s", "5.92s", "1.00s", "6.00s"]
+    assert len({len(line) for line in table[1:]}) == 1
+    assert "5.7ms²" in time_summary([0.003, 0.004, 0.004, 0.009, 0.006]).splitlines()[4]
+    assert time_brief([1.0, 2.0, 6.0]) == "3 runs: mean 3.00s · median 2.00s · p90 5.20s"
