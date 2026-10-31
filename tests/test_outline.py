@@ -11,7 +11,7 @@ from gpython.outline import Outline, Symbol, symbols
 
 CELLS = [
     CellSpec("# Analysis\n\nSome text", kind="markdown"),
-    CellSpec("import numpy as np\n\nxs = [1, 2, 3]"),
+    CellSpec("import json\n\nxs = [1, 2, 3]"),
     CellSpec("def scale(x: float) -> float:\n    return x * 2\n\n\nclass Thing:\n    pass"),
     CellSpec("print(scale(xs[0]))"),
 ]
@@ -104,8 +104,8 @@ def test_f2_mounts_the_outline_lazily_and_lists_cells_and_symbols(tmp_path):
         assert [n.data for n in nodes] == [("cell", c.cid) for c in app.cells()]
         assert outline.tree_view.cursor_node is node_for(outline, app.pane.current_cell().cid)
         assert marked(outline) == ["● " + str(node_for(outline, app.pane.current_cell().cid).label).removeprefix("● ")]
-        assert labels(nodes) == ["c1  Analysis", "c2  defines np, xs", "c3  defines Thing, scale", "c4  uses scale, xs"]
-        assert labels(nodes[1].children) == ["np  import", "xs"]
+        assert labels(nodes) == ["c1  Analysis", "c2  defines json, xs", "c3  defines Thing, scale", "c4  uses scale, xs"]
+        assert labels(nodes[1].children) == ["json  import", "xs"]
         assert labels(nodes[2].children) == ["scale(x: float) -> float", "class Thing"]
         assert len(nodes[3].children) == 0 and nodes[1].is_expanded
         assert app.focused is not outline.tree_view
@@ -213,9 +213,9 @@ def test_edits_update_the_outline_after_a_pause(tmp_path):
         await pilot.pause()
         outline = app.query_one(Outline)
         _, c2, _, _ = app.cells()
-        c2.editor.text = "import numpy as np\n\nxs = [1, 2, 3]\nys = 4"
+        c2.editor.text = "import json\n\nxs = [1, 2, 3]\nys = 4"
         await pilot.pause(0.7)
-        assert labels(node_for(outline, c2.cid).children) == ["np  import", "xs", "ys"]
+        assert labels(node_for(outline, c2.cid).children) == ["json  import", "xs", "ys"]
 
     ui(tmp_path, test)
 
@@ -228,11 +228,11 @@ def test_variables_show_their_live_type_and_value_after_a_run(tmp_path):
         _, c2, c3, _ = app.cells()
         await pilot.press("f5")
         await settle(app, pilot)
-        assert labels(node_for(outline, c2.cid).children) == ["np  module", "xs  list  [1, 2, 3]"]
+        assert labels(node_for(outline, c2.cid).children) == ["json  module", "xs  list  [1, 2, 3]"]
         assert len(marked(outline)) == 1
         assert str(node_for(outline, c3.cid, "scale").label) == "scale(x: float) -> float"
         await app.pane.restart_kernel()
         await pilot.pause()
-        assert labels(node_for(outline, c2.cid).children) == ["np  import", "xs"]
+        assert labels(node_for(outline, c2.cid).children) == ["json  import", "xs"]
 
     ui(tmp_path, test, kernel=True)
