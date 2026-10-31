@@ -291,9 +291,16 @@ interpreter, and `%pip` uses uv in environments that have no pip.
 prompt opens at the bottom, prefilled with the package (`cv2` becomes
 `opencv-python`, `sklearn` becomes `scikit-learn`, `from google.cloud import
 storage` becomes `google-cloud-storage`; the table is `packages.json`, anything
-else installs under its import name). `enter` installs it into the kernel's
-environment with uv and runs the cell again; `esc` declines. A hint under the
-traceback keeps the `:pip` command, and `:pip` alone offers the same package.
+else installs under its import name). The prompt lists how: `uv add` (into
+`pyproject.toml`, synced into the env) when the project has one, and
+`uv pip install` (the env only; plain pip without uv). `↑`/`↓` pick: the
+chosen row carries `●` and the title shows the exact command `enter` will
+run. The pick is remembered as `install_mode`; until you pick `uv add` once,
+the default is `uv pip install`, which touches no project file. `enter`
+installs and runs the cell again;
+`esc` declines. A failed install shows the exact command, its exit code and
+what uv or pip said, both as a notification and under the cell. A hint under
+the traceback keeps the `:pip` command, and `:pip` alone offers the same package.
 Running the cell again asks again; only the automatic re-run after an install
 leaves out a module that still fails. `:set autoinstall` installs and re-runs
 without asking (a failed install asks on the next run); `:set noautoinstall`

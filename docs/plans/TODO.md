@@ -290,7 +290,8 @@ after `return`), the `--theme` / `--no-vim` flags, the key table (generated from
 - `:split` with no file opens an untitled notebook (vim shows the same buffer twice; we
   cannot, one kernel per window).
 - Done 2026-10-30: `ModuleNotFoundError` opens the install prompt prefilled with the PyPI name
-  (`packages.json`), `enter` installs with uv and re-runs the cell; `:set autoinstall` skips the
+  (`packages.json`) and a row per way (`uv add` to the project / `uv pip install` into the env,
+  remembered as `install_mode`); `enter` installs and re-runs the cell; `:set autoinstall` skips the
   question (`docs/plans/08-missing-packages.md`). Next there: verified candidates via PyPI's JSON API.
 - Done 2026-10-30: marimo `hide_code=True` cells open with the code hidden (`h` in cell mode,
   `:hide` / `:show`; saved back as `hide_code`); `.ipynb` stored outputs and execution counts load,

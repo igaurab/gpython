@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import shlex
 import shutil
 import sys
 from collections.abc import Callable
@@ -278,19 +279,49 @@ async def run(argv: list[str], on_line: LineCallback | None = None, cwd: Path | 
 
 
 class EnvError(Exception):
-    """A uv/pip/venv command failed; the message is its last output line."""
+    """A uv/pip/venv command failed. The message names the command, its exit code and, on
+    the following lines, what it said (see `explain`)."""
+
+
+_DECORATION = re.compile(r"^[\s×╰╭╮╯─│┃▶→•]+")
+_MARKER = re.compile(r"^\s*(×|╰─▶|help:|hint:|error:|warning:|ERROR:|WARNING:)", re.IGNORECASE)
+_KEPT_FROM = re.compile(r"×|error|no solution|not found|failed|unsatisfiable", re.IGNORECASE)
+
+
+def explain(lines: list[str]) -> list[str]:
+    """uv's and pip's error output as plain sentences: decorations stripped, wrapped lines joined,
+    everything from the first error on (the last three items when nothing looks like one)."""
+    items: list[str] = []
+    for raw in lines:
+        if not raw.strip():
+            continue
+        text = _DECORATION.sub("", raw).strip()
+        if not text:
+            continue
+        if items and not _MARKER.match(raw) and raw.startswith(" "):
+            items[-1] = f"{items[-1]} {text}"
+        else:
+            items.append(text)
+    first = next((i for i, item in enumerate(items) if _KEPT_FROM.search(item)), None)
+    return items[first:] if first is not None else items[-3:]
+
+
+def _shown(argv: list[str]) -> str:
+    return shlex.join(argv).replace(str(Path.home()), "~")
 
 
 async def _check(argv: list[str], on_line: LineCallback | None, **kw) -> None:
-    last: list[str] = []
+    lines: list[str] = []
 
     def tee(line: str) -> None:
-        last[:] = [line]
+        lines.append(line)
+        del lines[:-200]
         if on_line:
             on_line(line)
 
-    if await run(argv, tee, **kw) != 0:
-        raise EnvError(last[0] if last else f"{Path(argv[0]).name} failed")
+    code = await run(argv, tee, **kw)
+    if code != 0:
+        raise EnvError("\n".join([f"{_shown(argv)}  (exit {code})", *explain(lines)]))
 
 
 async def create(

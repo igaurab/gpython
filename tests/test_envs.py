@@ -7,6 +7,7 @@ import sysconfig
 from pathlib import Path
 
 import pytest
+from rich.console import Console
 from textual.widgets import Input, OptionList
 
 from gpython import config, envpicker, envs
@@ -194,6 +195,17 @@ def ui(tmp_path, test):
     asyncio.run(main())
 
 
+def title(screen) -> str:
+    return str(screen.query_one("#env-title").render())
+
+
+def plain(renderable) -> str:
+    console = Console(width=120, color_system=None)
+    with console.capture() as capture:
+        console.print(renderable)
+    return capture.get().strip()
+
+
 def option_ids(screen):
     options = screen.query_one(OptionList)
     return [options.get_option_at_index(i).id for i in range(options.option_count)]
@@ -273,3 +285,86 @@ def test_env_switch_is_remembered_per_notebook(tmp_path):
     config.save({f"env:{(tmp_path / 'nb.py').resolve()}": str(fake)})
     env, _ = envs.default_for(tmp_path / "nb.py", config.load()[f"env:{(tmp_path / 'nb.py').resolve()}"])
     assert env.prefix == tmp_path / "custom"
+
+
+def test_explain_turns_uv_and_pip_output_into_sentences():
+    uv_out = [
+        "  × No solution found when resolving dependencies:",
+        "  ╰─▶ Because numpyyy was not found in the package registry and you require",
+        "      numpyyy, we can conclude that your requirements are unsatisfiable.",
+    ]
+    assert envs.explain(uv_out) == [
+        "No solution found when resolving dependencies:",
+        "Because numpyyy was not found in the package registry and you require numpyyy, we can conclude that your requirements are unsatisfiable.",
+    ]
+    pip_out = ["Collecting numpyyy", "ERROR: No matching distribution found for numpyyy"]
+    assert envs.explain(pip_out) == ["ERROR: No matching distribution found for numpyyy"]
+    assert envs.explain(["Resolved 1 package", "", "Prepared 1 package"]) == ["Resolved 1 package", "Prepared 1 package"]
+
+
+def test_env_error_names_the_command_exit_code_and_output():
+    code = "import sys; print('  × boom:'); print('  ╰─▶ because of'); print('      reasons'); sys.exit(3)"
+    with pytest.raises(envs.EnvError) as info:
+        asyncio.run(envs._check([sys.executable, "-c", code], None))
+    text = str(info.value)
+    assert text.splitlines()[0].endswith("(exit 3)") and text.splitlines()[0].startswith(sys.executable.replace(str(Path.home()), "~"))
+    assert text.splitlines()[1:] == ["boom:", "because of reasons"]
+
+
+@needs_uv
+def test_install_prompt_offers_uv_add_in_a_project_and_remembers_the_choice(tmp_path, monkeypatch):
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\nversion='0'\n")
+    fake_venv(tmp_path / ".venv", ipykernel=True)
+    calls = []
+
+    async def fake_add(env, packages, start, on_line=None):
+        calls.append(("add", list(packages)))
+        return True
+
+    async def fake_install(env, packages, on_line=None, tool="uv"):
+        calls.append(("install", list(packages)))
+
+    monkeypatch.setattr(envs, "add", fake_add)
+    monkeypatch.setattr(envs, "install", fake_install)
+
+    async def test(app, pilot):
+        assert app.pane.kernel.env.prefix == tmp_path / ".venv"
+        await app._run_ex("pip")
+        await pilot.pause(0.2)
+        screen = app.screen
+        assert isinstance(screen, EnvPicker)
+        ids = option_ids(screen)
+        assert ids[:2] == ["mode:add", "mode:install"]
+        options = screen.query_one(OptionList)
+        assert options.highlighted == 1
+        assert "enter: uv pip install …" in title(screen) and "↑↓ switch" in title(screen)
+        assert plain(options.get_option_at_index(1).prompt).startswith("●")
+        assert not plain(options.get_option_at_index(0).prompt).startswith("●")
+        await pilot.press(*"rich", "enter")
+        await pilot.pause(0.5)
+        assert calls == [("install", ["rich"])]
+        assert config.load()["install_mode"] == "install"
+
+        await app._run_ex("pip")
+        await pilot.pause(0.2)
+        options = app.screen.query_one(OptionList)
+        assert options.highlighted == 1
+        await pilot.press("up")
+        await pilot.press(*"httpx")
+        await pilot.pause()
+        assert options.highlighted == 0
+        assert "enter: uv add httpx → " in title(app.screen) and "pyproject.toml" in title(app.screen)
+        assert plain(options.get_option_at_index(0).prompt).startswith("●")
+        await pilot.press("enter")
+        await pilot.pause(0.5)
+        assert calls[-1] == ("add", ["httpx"])
+        assert config.load()["install_mode"] == "add"
+
+        await app._run_ex("pip")
+        await pilot.pause(0.2)
+        assert app.screen.query_one(OptionList).highlighted == 0
+        await pilot.press("escape")
+        await pilot.pause()
+
+    ui(tmp_path, test)

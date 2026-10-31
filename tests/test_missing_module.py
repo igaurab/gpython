@@ -141,6 +141,7 @@ def test_autoinstall_installs_without_asking_and_asks_after_a_failed_install(tmp
         assert calls == [["opencv-python"]] and prompt(app) is None
         assert cell.status == "error" and cell.missing == "cv2"
         assert ":pip opencv-python" in cell.output_text
+        assert "No solution found when resolving dependencies" in cell.output_text
         assert app.pane.kernel_state == "kernel ready"
         await pilot.press("ctrl+e")
         await settle(app, pilot)
