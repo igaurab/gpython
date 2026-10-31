@@ -34,7 +34,7 @@ KEYMAP: list[tuple[str, str, str]] = [
     ("any", "alt+shift+up", "Move cell up"),
     ("any", "alt+shift+down", "Move cell down"),
     ("any", "f1", "Help (this screen)"),
-    ("any", "f2", "Toggle variables panel"),
+    ("any", "ctrl+o", "Outline panel on the right: each cell with what it defines, live types after a run, its dependency edges; enter jumps. Not in insert mode, where it is vim's one-shot normal command (:outline, :tags, :vars)"),
     ("any", "f3", "Toggle run mode, saved: lazy (default) runs the cell and the stale cells it uses, and only marks cells that use its variables stale; reactive re-runs those too (:lazy, :set lazy|nolazy)"),
     ("any", "ctrl+p", "Command palette"),
     ("any", "ctrl+q", "Quit (asks if unsaved)"),
@@ -142,6 +142,12 @@ KEYMAP: list[tuple[str, str, str]] = [
     ("files", "/ , n", "Search file names / repeat the search"),
     ("files", "R", "Reload the tree"),
     ("files", "q / escape", "Hide the explorer"),
+    ("outline", "j / k", "Move through the cells and their definitions"),
+    ("outline", "enter", "Jump: a cell selects it, a definition opens the cell's editor on that line"),
+    ("outline", "h / l", "Collapse / expand a cell"),
+    ("outline", "q", "Hide the outline and go back to the notebook"),
+    ("outline", "escape", "Back to the notebook, the outline stays"),
+    ("outline", "ctrl+w h", "Back to the notebook (ctrl+w l from the rightmost window focuses the outline)"),
 ]
 
 MODE_TITLES = {
@@ -150,6 +156,7 @@ MODE_TITLES = {
     "visual": "Vim visual mode (v, V)",
     "cell": "Cell mode (esc esc)",
     "files": "File explorer (ctrl+b)",
+    "outline": "Outline (ctrl+o, :outline)",
 }
 
 
