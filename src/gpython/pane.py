@@ -1003,6 +1003,8 @@ class NotebookPane(Vertical):
                 cell.toggle_collapsed()
             case "C" | "shift+c":
                 cell.clear_output()
+            case "v":
+                app.view_image(cell)
             case "l":
                 app.set_line_numbers(not VimTextArea.line_numbers)
             case "t":

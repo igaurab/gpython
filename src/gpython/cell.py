@@ -281,6 +281,10 @@ class Cell(Vertical):
     def output_text(self) -> str:
         return self._outputs.text if self._outputs is not None else ""
 
+    @property
+    def images(self) -> list[bytes]:
+        return self._outputs.images if self._outputs is not None else []
+
     def set_label(self, n: int) -> None:
         """Show the 1-based display position (c1, c2, ...) in the header."""
         label = f"c{n}"

@@ -22,7 +22,7 @@ from textual.screen import ModalScreen, Screen
 from textual.widgets import Header, Input, Label, Static
 from textual.widgets._header import HeaderIcon
 
-from . import bigtext, config, images
+from . import bigtext, config, images, imageview
 from .cell import Cell, CellSnapshot, ends_with_string
 from .explorer import Explorer
 from .help import HelpScreen
@@ -1043,6 +1043,7 @@ class GPython(App):
             (("stale", "runstale"), "Run stale cells", lambda arg="": self.action_run_stale()),
             (("restart",), "Restart kernel", lambda arg="": self.action_restart_kernel()),
             (("clear",), "Clear all outputs", lambda arg="": self.pane.clear_outputs()),
+            (("img", "image"), "View this cell's image full screen (v in cell mode); :img save [file] saves it as PNG next to the notebook, :img open opens it in the browser", self._ex_image),
             (("set",), "Options: vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall", self._ex_set),
             (("time", "timing"), "Show / hide each cell's run time in its header (t in cell mode; saved)", lambda arg="": self.set_timing(not Cell.show_timing)),
             (("variables", "vars"), "Toggle variables panel", lambda arg="": self.action_toggle_vars()),
@@ -1062,6 +1063,44 @@ class GPython(App):
             (("find", "fin", "Telescope"), "Find files by fuzzy name (space f f; :find text starts the search)", lambda arg="": self.action_find_files(arg)),
             (("help", "h"), "Keys and commands", lambda arg="": self.action_help()),
         ]
+
+    def view_image(self, cell: Cell | None = None) -> bool:
+        """Open the image viewer on `cell` (default: the current one). False when it has no image."""
+        cell = cell or self.current_cell()
+        pngs = cell.images if cell else []
+        if not pngs:
+            self.notify("No image in this cell", severity="warning")
+            return False
+        self.push_screen(imageview.ImageViewer(pngs, 0, self._image_stem(cell), self._image_folder()))
+        return True
+
+    def _image_stem(self, cell: Cell) -> str:
+        return f"{self.pane.path.stem if self.pane.path else 'untitled'}-{cell.label}"
+
+    def _image_folder(self) -> Path:
+        return self.pane.path.parent if self.pane.path else Path.cwd()
+
+    def _ex_image(self, arg: str = "") -> None:
+        words = arg.split(None, 1)
+        if not words:
+            self.view_image()
+            return
+        cell = self.current_cell()
+        pngs = cell.images if cell else []
+        if not pngs:
+            self.notify("No image in this cell", severity="warning")
+            return
+        stem = self._image_stem(cell)
+        try:
+            if words[0] == "save":
+                target = Path(words[1]) if len(words) > 1 else imageview.unused_path(self._image_folder(), stem)
+                self.notify(f"Saved {imageview.save_png(pngs[0], target)}")
+            elif words[0] in ("open", "browser"):
+                imageview.open_in_browser(pngs[0], stem)
+            else:
+                self.notify(":img · :img save [file] · :img open", severity="warning")
+        except OSError as error:
+            self.notify(str(error), severity="error")
 
     async def _ex_kind(self, kind: str) -> None:
         if cell := self.current_cell():

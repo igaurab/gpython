@@ -114,6 +114,7 @@ KEYMAP: list[tuple[str, str, str]] = [
     ("cell", "h", "Hide / show the cell's code (marimo hide_code), or fold a markdown cell (:hide, :show)"),
     ("cell", "c", "Collapse / expand output"),
     ("cell", "C", "Clear output"),
+    ("cell", "v", "View the cell's image (a matplotlib figure) full screen (:img): + - zoom, 0 fit, 1 actual size, h j k l pan, n p next / previous image, s save as PNG, o open in the browser, q closes"),
     ("cell", "l", "Toggle line numbers"),
     ("cell", "t", "Show / hide each cell's run time in its header (off by default; saved as timing in the config; :set time|notime)"),
     ("cell", "/", "Jump to cell by number, or select the next cell matching text (highlighted)"),

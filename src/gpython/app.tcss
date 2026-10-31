@@ -248,6 +248,38 @@ HelpScreen {
     align: center middle;
 }
 
+ImageViewer {
+    background: $background;
+}
+
+#image-view {
+    width: 100%;
+    height: 1fr;
+    align: center middle;
+    scrollbar-size: 1 1;
+}
+
+#image-view .output-image {
+    margin: 0;
+}
+
+#image-bar {
+    dock: bottom;
+    height: 1;
+    padding: 0 1;
+    background: $surface;
+}
+
+#image-save {
+    dock: bottom;
+    display: none;
+    height: 1;
+    border: none;
+    padding: 0 1;
+    background: $surface;
+    color: $accent;
+}
+
 #help {
     width: 90;
     max-width: 100%;

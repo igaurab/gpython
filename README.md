@@ -131,7 +131,8 @@ selected as a cell), deleting, undoing, searching or switching tabs keeps it; `e
 | `J` / `K` | Move the cell down / up |
 | `m` / `y` | Markdown / code cell |
 | `h` | Hide / show the cell's code (marimo `hide_code`) |
-| `o` / `O` | Collapse output / clear output |
+| `c` / `C` | Collapse output / clear output |
+| `v` | View the cell's image (a matplotlib figure) full screen: `+` `-` zoom, `0` fit, `1` actual size, `h j k l` pan, `n` `p` next / previous image, `s` save as PNG, `o` open in the browser, `q` closes |
 | `l` | Toggle line numbers |
 | `t` | Show / hide each cell's run time in its header (off by default; `:set time`, `timing = true` in the config) |
 | `gt` / `gT` | Next / previous tab |
@@ -163,7 +164,9 @@ Matplotlib figures and other `image/png` outputs are drawn as pictures in
 terminals with the kitty graphics protocol (Kitty, Ghostty, Rex, WezTerm,
 Konsole), scaled to the cell's width and at most 30 rows. Elsewhere they fall
 back to Sixel or coloured half cells. `GPYTHON_KITTY_IMAGES=0` forces the
-fallback.
+fallback. `v` in cell mode views the figure full screen with zoom and pan;
+`:img save [file]` saves it as PNG next to the notebook and `:img open` opens
+it in the browser.
 
 ## Markdown cells
 

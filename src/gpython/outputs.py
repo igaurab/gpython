@@ -154,6 +154,11 @@ class OutputArea(Vertical):
     def has_output(self) -> bool:
         return bool(self._blocks)
 
+    @property
+    def images(self) -> list[bytes]:
+        """The PNG bytes of every image block, in order."""
+        return [block.gp_png for block in self._blocks if getattr(block, "gp_png", None)]
+
     def clear(self) -> None:
         self._clear_pending = False
         self._cancel_timer()
@@ -253,11 +258,13 @@ class OutputArea(Vertical):
     def _add_image(self, b64: str) -> None:
         png = base64.b64decode(b64)
         if images.supported():
-            self._mount_block(images.KittyImage(png, classes="output-image"))
-            return
-        from PIL import Image as PILImage
+            widget = images.KittyImage(png, classes="output-image")
+        else:
+            from PIL import Image as PILImage
 
-        self._mount_block(Image(PILImage.open(io.BytesIO(png)), classes="output-image"))
+            widget = Image(PILImage.open(io.BytesIO(png)), classes="output-image")
+        widget.gp_png = png
+        self._mount_block(widget)
 
 
     def _add_stream(self, name: str, text: str) -> None:
