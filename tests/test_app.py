@@ -1,6 +1,6 @@
 import asyncio
 
-from textual.widgets import DataTable, Static
+from textual.widgets import Static
 
 from gpython.app import GPython
 from gpython.notebook import parse
@@ -31,8 +31,7 @@ def test_reactive_run_edit_delete_save(tmp_path):
             await pilot.press("ctrl+e")
             await app.workers.wait_for_complete()
             assert second.output_text.strip() == "20"
-            rows = {app.query_one("#vars", DataTable).get_row_at(i)[0] for i in range(2)}
-            assert rows == {"x", "y"}
+            assert set(app.pane.variables) == {"x", "y"}
 
             await pilot.press("f3")
             first.editor.text = "x = 100"
@@ -179,15 +178,14 @@ def test_ex_commands(tmp_path, monkeypatch):
     async def main():
         app = GPython(None)
         async with app.run_test(size=(120, 40)) as pilot:
-            table = app.query_one("#vars")
-            assert table.display is False
+            assert not app.pane.outline_visible
             await pilot.press(":")
             await pilot.press(*"variables", "enter")
             await pilot.pause()
-            assert table.display is True
+            assert app.pane.outline_visible
             await pilot.press(":", *"vars", "enter")
             await pilot.pause()
-            assert table.display is False
+            assert not app.pane.outline_visible
             await pilot.press(":", *"new", "enter")
             await pilot.pause()
             assert len(app.cells()) == 2

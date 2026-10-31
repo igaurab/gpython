@@ -17,13 +17,15 @@ from textual import events, on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.geometry import Region
-from textual.widgets import DataTable, Static
+from textual.timer import Timer
+from textual.widgets import Static
 
 from . import config, envpicker, envs, notebook, packages
 from .cell import Cell, CellSnapshot, ends_with_string, outputs_to_ipynb, time_brief, time_summary
 from .dom import forget_removed
 from .graph import Graph, build
 from .kernel import Kernel
+from .outline import Outline, Values
 from .vim import VimTextArea, search_regex
 
 MIN_INITIAL_CELLS = 4
@@ -59,7 +61,9 @@ class NotebookPane(Vertical):
         self._specs: list[notebook.CellSpec] = []
         self._pending_sources: list[notebook.CellSpec] = []
         self._cells_box: VerticalScroll | None = None
-        self._vars: DataTable | None = None
+        self._outline: Outline | None = None
+        self._outline_timer: Timer | None = None
+        self._values: Values = {}
         self._status: Static | None = None
         self._status_key: tuple | None = None
         self.last_focus = None
@@ -122,10 +126,6 @@ class NotebookPane(Vertical):
                     cell = Cell(spec.source, kind=spec.kind, spec=spec)
                     cell.set_label(n)
                     yield cell
-            self._vars = DataTable(id="vars", cursor_type="row", zebra_stripes=True)
-            self._vars.add_columns("name", "type", "value")
-            self._vars.display = False
-            yield self._vars
         self._status = Static(classes="pane-status")
         yield self._status
 
@@ -239,6 +239,10 @@ class NotebookPane(Vertical):
         widget = event.widget
         if isinstance(widget, (Cell, VimTextArea)):
             self.last_focus = widget
+            if self.outline_visible:
+                cell = widget if isinstance(widget, Cell) else widget.parent
+                row = widget.cursor_location[0] if isinstance(widget, VimTextArea) else None
+                self._outline.follow(cell.cid if isinstance(cell, Cell) else None, row)
         self.app.pane_focused(self)
 
 
@@ -309,7 +313,64 @@ class NotebookPane(Vertical):
         graph = self.graph()
         for cell in self.cells():
             cell.set_info(graph)
+        self._refresh_outline(graph)
         return graph
+
+    @property
+    def outline_visible(self) -> bool:
+        return self._outline is not None and self._outline.display
+
+    @property
+    def variables(self) -> Values:
+        """name → (type, repr) for the names the cells define, as of the last run."""
+        return self._values
+
+    def toggle_outline(self) -> None:
+        """ctrl+o, :outline: show or hide the outline panel; it is built the first time."""
+        if self._outline is None:
+            self._outline = Outline()
+            self._cells_box.parent.mount(self._outline)
+            self.call_after_refresh(self._refresh_outline)
+            return
+        self._outline.display = not self._outline.display
+        if self._outline.display:
+            self._refresh_outline()
+
+    def focus_outline(self) -> None:
+        if self.outline_visible:
+            self._outline.tree_view.focus()
+
+    def _refresh_outline(self, graph: Graph | None = None) -> None:
+        if not self.outline_visible:
+            return
+        current = self.current_cell()
+        focused = self.app.focused
+        row = focused.cursor_location[0] if isinstance(focused, VimTextArea) else None
+        self._outline.rebuild(self.cells(), graph or self.graph(), self._values, current.cid if current else None, row)
+
+    @on(VimTextArea.SelectionChanged)
+    def _cursor_moved(self, event: VimTextArea.SelectionChanged) -> None:
+        """The outline's cursor tracks the symbol under the editor's cursor, like tagbar."""
+        if self.outline_visible and event.text_area is self.app.focused and isinstance(event.text_area.parent, Cell):
+            self._outline.follow(event.text_area.parent.cid, event.selection.end[0])
+
+    @on(Outline.Jump)
+    def _outline_jump(self, event: Outline.Jump) -> None:
+        event.stop()
+        cell = next((c for c in self.cells() if c.cid == event.cid), None)
+        if cell is None:
+            return
+        if event.line is None or cell.editor_hidden:
+            self.select(cell, "cell")
+        else:
+            self.select(cell, "normal", row=event.line)
+
+    @on(Outline.Closed)
+    def _outline_closed(self, event: Outline.Closed) -> None:
+        event.stop()
+        if event.hide:
+            self._outline.display = False
+        self.focus_pane()
 
     async def run_cells(self, roots: list[str], downstream: bool | None = None, after_install: bool = False) -> None:
         """Run roots in dependency order, stale ancestors first.
@@ -414,12 +475,9 @@ class NotebookPane(Vertical):
     async def refresh_vars(self, graph: Graph) -> None:
         names = set().union(*graph.defs.values()) if graph.defs else set()
         rows = await self.kernel.variables(names)
-        table = self._vars
-        if table is None:
-            return
-        table.clear()
-        for row in rows:
-            table.add_row(*row)
+        self._values = {name: (kind, value) for name, kind, value in rows}
+        if self.outline_visible:
+            self._outline.set_values(self._values)
 
     def write_file(self) -> None:
         cells = [self._spec_of(c) for c in self.cells()] + self._pending_sources
@@ -817,10 +875,6 @@ class NotebookPane(Vertical):
     async def interrupt(self) -> None:
         await self.kernel.interrupt()
 
-    def toggle_vars(self) -> None:
-        if self._vars is not None:
-            self._vars.display = not self._vars.display
-
     async def restart_kernel(self) -> None:
         self.set_kernel_state("restarting kernel…")
         await self.kernel.restart()
@@ -838,8 +892,9 @@ class NotebookPane(Vertical):
             cell.last_defs = set()
             if cell.ran_source is not None:
                 cell.mark_inputs_stale()
-        if self._vars is not None:
-            self._vars.clear()
+        self._values = {}
+        if self.outline_visible:
+            self._outline.set_values({})
 
     def clear_outputs(self) -> None:
         for cell in self.cells():
@@ -1028,6 +1083,10 @@ class NotebookPane(Vertical):
     def _edited(self) -> None:
         if not self.dirty:
             self.mark_dirty()
+        if self.outline_visible:
+            if self._outline_timer is not None:
+                self._outline_timer.stop()
+            self._outline_timer = self.set_timer(0.4, self._refresh_outline)
 
     @on(VimTextArea.EdgeReached)
     def _edge(self, event: VimTextArea.EdgeReached) -> None:
