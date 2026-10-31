@@ -1,6 +1,7 @@
 # gpython
 
-Terminal notebook built on Textual. `uv run python3 -m pytest -q` runs the tests (~150 s);
+Terminal notebook built on Textual. `uv run pytest -q` runs the tests in parallel (pytest-xdist,
+`-n auto` set in pyproject.toml; under a minute on 14 workers, `-n 0` runs them serially in ~5 min);
 `uv run python3 scripts/bench.py` is the headless benchmark and `uv run python3 scripts/ptybench.py`
 times a real launch in a pseudo-terminal. Never run a benchmark while the tests run.
 

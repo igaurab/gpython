@@ -25,7 +25,12 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "pytest>=9.2.0",
+    "pytest-xdist>=3.8.0",
 ]
 
 [tool.uv.build-backend]
 module-name = "gpython"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-n auto -v"
