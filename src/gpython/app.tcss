@@ -130,6 +130,10 @@ Cell TextArea {
     margin: 1 0;
 }
 
+.cell-output KittyImage {
+    margin: 1 0;
+}
+
 Prompt {
     align: center bottom;
     background: transparent;

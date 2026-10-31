@@ -5,7 +5,8 @@ whole text for every chunk is O(n^2), so chunks are collected in a list and
 drawn at most 30 times a second by one timer (`_flush`).
 
 Results and displays pick the richest MIME type we can show (`MIME_PRIORITY`):
-images, markdown, JSON, HTML (as plain text) and LaTeX (as source).
+images, markdown, JSON, HTML (as plain text) and LaTeX (as source). Images are kitty
+graphics placements (`images.py`) where the terminal has them, textual_image's widget elsewhere.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from textual.widget import Widget
 from textual.widgets import Static
 from textual_image.widget import Image
 
+from . import images
 from .dom import forget_removed
 from .markdown import MarkdownView
 
@@ -249,9 +251,13 @@ class OutputArea(Vertical):
         self._mount_block(widget)
 
     def _add_image(self, b64: str) -> None:
+        png = base64.b64decode(b64)
+        if images.supported():
+            self._mount_block(images.KittyImage(png, classes="output-image"))
+            return
         from PIL import Image as PILImage
 
-        self._mount_block(Image(PILImage.open(io.BytesIO(base64.b64decode(b64)))))
+        self._mount_block(Image(PILImage.open(io.BytesIO(png)), classes="output-image"))
 
 
     def _add_stream(self, name: str, text: str) -> None:

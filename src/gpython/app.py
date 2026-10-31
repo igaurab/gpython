@@ -282,6 +282,7 @@ class GPython(App):
         self.update_status()
 
     async def on_unmount(self) -> None:
+        images.forget_all(self)
         await asyncio.gather(*(pane.kernel.shutdown() for pane in self.workspace.buffers), return_exceptions=True)
 
 

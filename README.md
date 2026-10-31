@@ -145,6 +145,12 @@ Tab inserts four spaces.
 `shift+enter` and `ctrl+enter` need a terminal that reports them (Ghostty,
 Kitty, WezTerm, iTerm2). In Terminal.app use `ctrl+e` and `ctrl+n`.
 
+Matplotlib figures and other `image/png` outputs are drawn as pictures in
+terminals with the kitty graphics protocol (Kitty, Ghostty, Rex, WezTerm,
+Konsole), scaled to the cell's width and at most 30 rows. Elsewhere they fall
+back to Sixel or coloured half cells. `GPYTHON_KITTY_IMAGES=0` forces the
+fallback.
+
 ## Markdown cells
 
 A markdown cell shows rendered text (headings, lists, code, links) instead of an
@@ -343,7 +349,7 @@ via jupyter_client · `notebook.py` file formats (`# %%`, scripts, marimo,
 `.ipynb`) · `vim.py` modal editor and completion popup · `cell.py` one cell ·
 `pane.py` one notebook window · `windows.py` tabs and split layout ·
 `explorer.py` file tree · `themes.py` / `themepicker.py` / `config.py` ·
-`outputs.py` rich outputs · `keymap.py` the key table (help and this README) ·
+`outputs.py` rich outputs · `images.py` kitty graphics placements · `keymap.py` the key table (help and this README) ·
 `app.py` + `app.tcss` the Textual app.
 
 ```sh
