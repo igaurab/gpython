@@ -88,6 +88,7 @@ KeyCapture {
     height: 1fr;
     padding: 0 1;
     border-left: vkey $panel;
+    overflow-x: hidden;
     scrollbar-size-vertical: 1;
 }
 
