@@ -144,6 +144,8 @@ class Outline(Vertical):
         self._labels: dict[str, str] = {}
         self._order: list[str] = []
         self._current: tuple[str | None, int | None] = (None, None)
+        self._marked: TreeNode | None = None
+        self._marked_label: Text | None = None
 
     def compose(self) -> ComposeResult:
         yield self.tree_view
@@ -167,15 +169,18 @@ class Outline(Vertical):
                     data = ("symbol", cell.cid, symbol.name, symbol.line, symbol.kind, symbol.detail, symbol.end)
                     node.add_leaf(self._symbol_label(symbol), data)
         self._current = (None, None)
+        self._marked = None
         self.call_after_refresh(self.follow, current, row)
 
     def set_values(self, values: Values) -> None:
         """The kernel's types and values after a run (or none after a restart), without rebuilding."""
         self._values = values
+        marked = self._unmark()
         for cell_node in self._cell_nodes.values():
             for node in cell_node.children:
                 _, _, name, line, kind, detail, end = node.data
                 node.set_label(self._symbol_label(Symbol(name, kind, detail, line, end)))
+        self._mark(marked)
 
     def follow(self, cid: str | None, row: int | None = None) -> None:
         """Put the cursor on the cell's node, or on the symbol whose lines hold the editor's
@@ -192,7 +197,23 @@ class Outline(Vertical):
                         target = child
             if self.tree_view.cursor_node is not target:
                 self.tree_view.move_cursor(target)
+            self._unmark()
+            self._mark(target)
         self._show_edges(cid)
+
+    def _mark(self, node: TreeNode | None) -> None:
+        """● before the current node's label: the blurred tree cursor is invisible in some themes."""
+        if node is None:
+            return
+        self._marked, self._marked_label = node, node.label
+        node.set_label(Text.assemble(("● ", "bold"), node.label))
+
+    def _unmark(self) -> TreeNode | None:
+        node = self._marked
+        if node is not None and self._marked_label is not None:
+            node.set_label(self._marked_label)
+        self._marked = None
+        return node
 
     def _symbol_label(self, symbol: Symbol) -> Text:
         if symbol.kind == "function":
