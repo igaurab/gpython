@@ -324,12 +324,13 @@ class GPython(App):
         if self._explorer_open_at_start:
             await self.show_explorer()
         self.update_status()
+        self.after_first_frame(self._prune_cell_layouts)
 
-    async def _shutdown(self) -> None:
-        """Before Textual removes the widgets: store outputs of runs that finished under half a second ago."""
-        for pane in self.workspace.buffers:
-            pane.store_outputs_now()
-        await super()._shutdown()
+    def _prune_cell_layouts(self) -> None:
+        """Forget plain-script cell layouts nobody used for a month (sidecar.prune), off the UI thread."""
+        from . import sidecar
+
+        self.run_worker(asyncio.to_thread(sidecar.prune), group="prune", exit_on_error=False)
 
     async def on_unmount(self) -> None:
         images.forget_all(self)

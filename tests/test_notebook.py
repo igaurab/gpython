@@ -1,3 +1,4 @@
+import dataclasses
 import json
 
 from gpython.notebook import CellSpec, dump, dump_ipynb, load_cells, parse, parse_ipynb, save, split_script
@@ -78,8 +79,22 @@ def test_new_cells_get_one_blank_line_or_two_around_a_def():
 def test_an_edited_docstring_cell_is_rewritten_and_an_untouched_one_kept():
     cells = split_script('"""Title."""\nx = 1\n')
     assert dump(cells, markers=False) == '"""Title."""\nx = 1\n'
-    edited = [CellSpec("New title", "markdown", gap=cells[0].gap, raw=cells[0].raw), cells[1]]
+    edited = [dataclasses.replace(cells[0], source="New title"), cells[1]]
     assert dump(edited, markers=False) == '"""\nNew title\n"""\nx = 1\n'
+
+
+def test_a_line_of_only_spaces_between_cells_is_kept_as_it_was():
+    text = "x = 1\n    \ny = 2\n"
+    cells = split_script(text)
+    assert [c.source for c in cells] == ["x = 1", "y = 2"]
+    assert dump(cells, markers=False) == text
+
+
+def test_a_remembered_gap_is_dropped_when_another_cell_comes_next():
+    title, code = split_script('"""Title."""\nx = 1\n')
+    inserted = [title, CellSpec("def f():\n    pass"), code]
+    assert dump(inserted, markers=False) == '"""Title."""\n\n\ndef f():\n    pass\n\n\nx = 1\n'
+    assert dump([title, code], markers=False) == '"""Title."""\nx = 1\n'
 
 
 def test_markdown_with_triple_quotes_survives_script_roundtrip():
