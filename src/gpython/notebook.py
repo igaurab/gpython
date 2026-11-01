@@ -48,6 +48,7 @@ class CellSpec:
     decorator: Decorator = "cell"
     outputs: list = field(default_factory=list)
     execution_count: int | None = None
+    duration: float | None = field(default=None, compare=False)
     gap: int | None = field(default=None, compare=False)
     raw: str | None = field(default=None, compare=False)
 
@@ -235,9 +236,23 @@ def _dump_script(cells: list[CellSpec]) -> str:
     return dump_script_with_layout(cells)[0]
 
 
+def _cell_state(cell: CellSpec) -> dict:
+    """What a plain script cannot hold: kind, hidden code, and a code cell's last outputs, run number and run time."""
+    state: dict = {"kind": cell.kind, "hide_code": cell.hide_code}
+    if cell.kind == "code":
+        if cell.outputs:
+            state["outputs"] = cell.outputs
+        if cell.execution_count:
+            state["execution_count"] = cell.execution_count
+        if cell.duration is not None:
+            state["duration"] = cell.duration
+    return state
+
+
 def dump_script_with_layout(cells: list[CellSpec]) -> tuple[str, list[dict]]:
     """A plain script (markdown cells as docstrings, no `# %%`) and where each cell sits in it:
-    {start, end, kind, hide_code} with `end` exclusive, in lines. A cell keeps the blank lines that
+    {start, end, kind, hide_code, outputs?, execution_count?, duration?} with `end` exclusive, in
+    lines. A cell keeps the blank lines that
     followed it in the file (`gap`), and an unedited docstring cell its own text (`raw`), so saving
     leaves the spacing alone. An empty cell writes no text and is remembered as an empty range."""
     out: list[str] = []
@@ -247,7 +262,7 @@ def dump_script_with_layout(cells: list[CellSpec]) -> tuple[str, list[dict]]:
     for cell in cells:
         body = cell.source.strip("\n")
         if not body.strip():
-            layout.append({"start": line, "end": line, "kind": cell.kind, "hide_code": cell.hide_code})
+            layout.append({"start": line, "end": line, **_cell_state(cell)})
             continue
         text = _script_text(cell, body)
         if previous is not None:
@@ -256,7 +271,7 @@ def dump_script_with_layout(cells: list[CellSpec]) -> tuple[str, list[dict]]:
             out.append("\n" * (gap + 1))
             line += gap
         height = text.count("\n") + 1
-        layout.append({"start": line, "end": line + height, "kind": cell.kind, "hide_code": cell.hide_code})
+        layout.append({"start": line, "end": line + height, **_cell_state(cell)})
         out.append(text)
         line += height
         previous = (cell, text)
@@ -647,6 +662,23 @@ def _is_plain_script(path: Path, specs: list[CellSpec], markers: bool) -> bool:
     return not markers and not _is_ipynb(path) and not (
         path.resolve() in _marimo_frame or (not path.exists() and _starts_with_marimo_import(specs))
     )
+
+
+def remember_outputs(path: Path, cells: list[CellSpec], markers: bool) -> bool:
+    """Store the cells' outputs and run times in ~/.gpython without writing the script, when
+    `path` is a plain script whose text on disk is exactly these cells. True if stored."""
+    if not _is_plain_script(path, cells, markers):
+        return False
+    text, layout = dump_script_with_layout(cells)
+    try:
+        if path.read_text() != text:
+            return False
+    except OSError:
+        return False
+    from . import sidecar
+
+    sidecar.write(path, text, layout)
+    return True
 
 
 def save(path: Path, cells: list[CellSpec | str], markers: bool = True) -> None:

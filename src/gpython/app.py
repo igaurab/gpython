@@ -325,6 +325,12 @@ class GPython(App):
             await self.show_explorer()
         self.update_status()
 
+    async def _shutdown(self) -> None:
+        """Before Textual removes the widgets: store outputs of runs that finished under half a second ago."""
+        for pane in self.workspace.buffers:
+            pane.store_outputs_now()
+        await super()._shutdown()
+
     async def on_unmount(self) -> None:
         images.forget_all(self)
         write_to_terminal(self, RESET_CURSOR_SHAPE)

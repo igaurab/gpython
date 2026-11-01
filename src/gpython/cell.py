@@ -235,10 +235,12 @@ class Cell(Vertical):
     def on_mount(self) -> None:
         if self.code_hidden and self._editor is not None:
             self._editor.display = False
-        if self.spec is not None and self.spec.outputs and self.kind == "code":
-            self.replay(outputs_from_ipynb(self.spec.outputs))
+        if self.spec is not None and self.kind == "code":
             if self.spec.execution_count:
                 self.exec_count = self.spec.execution_count
+            self.duration = self.spec.duration
+        if self.spec is not None and self.spec.outputs and self.kind == "code":
+            self.replay(outputs_from_ipynb(self.spec.outputs))
         elif self.code_hidden and (preview := marimo_markdown(self.source)) is not None:
             self.output_box.add("display_data", {"data": {"text/markdown": preview}})
         self._render_header()

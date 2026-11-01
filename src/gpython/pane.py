@@ -58,6 +58,7 @@ class NotebookPane(Vertical):
         self.loaded = asyncio.Event()
         self._specs: list[notebook.CellSpec] = []
         self._pending_sources: list[notebook.CellSpec] = []
+        self._outputs_timer = None
         self._cells_box: VerticalScroll | None = None
         self._vars: DataTable | None = None
         self._status: Static | None = None
@@ -219,6 +220,11 @@ class NotebookPane(Vertical):
             await self._booted.wait()
         await self.kernel.shutdown()
 
+    def remove(self):
+        """Closing the buffer: store outputs still waiting for their timer while the cells exist."""
+        self.store_outputs_now()
+        return super().remove()
+
     async def on_unmount(self) -> None:
         if not self._shutting_down:
             self._shutting_down = True
@@ -365,6 +371,7 @@ class NotebookPane(Vertical):
                 cell.ran_source = source
                 cell.last_defs = graph.defs[cid]
                 cell.end_run("ok" if ok and cell.source == source else "error" if not ok else "stale")
+                self.outputs_changed()
                 cell.missing = self._note_missing(cell) if not ok else None
                 if not ok:
                     failed.add(cid)
@@ -443,9 +450,10 @@ class NotebookPane(Vertical):
         """The CellSpec to save for `cell`: its loaded spec (format extras) with the current state."""
         outputs = outputs_to_ipynb(cell.outputs_snapshot(), cell.exec_count or None) if cell.kind == "code" else []
         count = (cell.exec_count or None) if cell.kind == "code" else None
+        duration = cell.duration if count else None
         if cell.spec is not None:
-            return dataclasses.replace(cell.spec, source=cell.source, kind=cell.kind, hide_code=cell.code_hidden, outputs=outputs, execution_count=count)
-        return notebook.CellSpec(cell.source, cell.kind, hide_code=cell.code_hidden, outputs=outputs, execution_count=count)
+            return dataclasses.replace(cell.spec, source=cell.source, kind=cell.kind, hide_code=cell.code_hidden, outputs=outputs, execution_count=count, duration=duration)
+        return notebook.CellSpec(cell.source, cell.kind, hide_code=cell.code_hidden, outputs=outputs, execution_count=count, duration=duration)
 
     def _after_loaded(self, callback) -> None:
         """Call `callback` now if every cell is mounted, else once they are."""
@@ -856,6 +864,27 @@ class NotebookPane(Vertical):
     def clear_outputs(self) -> None:
         for cell in self.cells():
             cell.clear_output()
+        self.outputs_changed()
+
+    def outputs_changed(self) -> None:
+        """A run finished or outputs were cleared: store them in ~/.gpython half a second later, no :w needed."""
+        if self._outputs_timer is not None:
+            self._outputs_timer.stop()
+        self._outputs_timer = self.set_timer(0.5, self._store_outputs)
+
+    async def _store_outputs(self) -> None:
+        self._outputs_timer = None
+        if self.dirty or self.path is None or self.markers:
+            return
+        await asyncio.to_thread(notebook.remember_outputs, self.path, self.all_specs(), self.markers)
+
+    def store_outputs_now(self) -> None:
+        if self._outputs_timer is None:
+            return
+        self._outputs_timer.stop()
+        self._outputs_timer = None
+        if not self.dirty and self.path is not None and not self.markers:
+            notebook.remember_outputs(self.path, self.all_specs(), self.markers)
 
     def on_click(self, event) -> None:
         """Clicking the empty space below the last cell focuses the nearest cell."""
@@ -1015,6 +1044,7 @@ class NotebookPane(Vertical):
                 cell.toggle_collapsed()
             case "C" | "shift+c":
                 cell.clear_output()
+                self.outputs_changed()
             case "v":
                 app.view_image(cell)
             case "l":

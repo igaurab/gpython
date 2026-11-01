@@ -1,7 +1,8 @@
 """Cell layout of plain .py notebooks, kept outside the script so the script stays ordinary code.
 
 gpython writes a plain .py notebook without `# %%` lines. Where each cell starts and ends, whether
-it is markdown or has its code hidden, goes to ~/.gpython/cells/<digest>.json, named after the
+it is markdown or has its code hidden, and each code cell's last outputs (nbformat dicts, as in
+.ipynb), run number and run time go to ~/.gpython/cells/<digest>.json, named after the
 file's content (GPYTHON_HOME moves ~/.gpython). On open the layout is found by the content alone,
 so a file moved, renamed or copied while unchanged keeps its cells; a file changed by another
 editor has no layout and is split afresh. cells/paths/<id> notes which layout a path saved last,
@@ -80,8 +81,9 @@ def _cells(lines: list[str], entries: list[dict]) -> list[CellSpec] | None:
         if kind not in ("code", "markdown") or not (start == end or 0 <= start < end <= len(lines)):
             return None
         hidden = bool(entry.get("hide_code"))
+        ran = _run_state(entry) if kind == "code" else {}
         if start == end:
-            cells.append(CellSpec("", kind, hide_code=hidden))
+            cells.append(CellSpec("", kind, hide_code=hidden, **ran))
             continue
         chunk = "\n".join(lines[start:end])
         gap = next_start[id(entry)] - end if id(entry) in next_start else None
@@ -91,5 +93,16 @@ def _cells(lines: list[str], entries: list[dict]) -> list[CellSpec] | None:
                 return None
             cells.append(CellSpec(source, kind, hide_code=hidden, gap=gap, raw=chunk))
         else:
-            cells.append(CellSpec(chunk, kind, hide_code=hidden, gap=gap))
+            cells.append(CellSpec(chunk, kind, hide_code=hidden, gap=gap, **ran))
     return cells or None
+
+
+def _run_state(entry: dict) -> dict:
+    outputs = entry.get("outputs")
+    count = entry.get("execution_count")
+    duration = entry.get("duration")
+    return {
+        "outputs": outputs if isinstance(outputs, list) else [],
+        "execution_count": count if isinstance(count, int) and count > 0 else None,
+        "duration": float(duration) if isinstance(duration, (int, float)) and duration >= 0 else None,
+    }
