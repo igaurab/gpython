@@ -21,9 +21,9 @@ def _fake_terminal(tmp_path, monkeypatch):
     VimTextArea.insert_cursor = "bar"
 
 
-def run(tmp_path, monkeypatch, test):
-    path = tmp_path / "nb.py"
-    notebook.save(path, [CellSpec("a = 1"), CellSpec("b = 2")])
+def run(tmp_path, monkeypatch, test, name="nb.py", cells=(CellSpec("a = 1"), CellSpec("b = 2"))):
+    path = tmp_path / name
+    notebook.save(path, list(cells))
     written: list[str] = []
     monkeypatch.setattr(vim, "write_to_terminal", lambda app, data: written.append(data))
 
@@ -97,9 +97,23 @@ def test_block_shape_paints_the_cursor_and_hides_the_terminal_one(tmp_path, monk
 def test_copy_all_puts_the_whole_file_on_the_clipboard(tmp_path, monkeypatch):
     async def test(app, pilot, written):
         await app._run_ex("copy all")
-        assert app.clipboard == app.pane.file_text()
+        assert app.clipboard == (tmp_path / "nb.py").read_text()
         assert "a = 1" in app.clipboard and "b = 2" in app.clipboard
         await app._run_ex("copy")
         assert app.clipboard == "a = 1"
 
     run(tmp_path, monkeypatch, test)
+
+
+def test_copy_all_of_an_ipynb_is_code_with_markdown_as_comments(tmp_path, monkeypatch):
+    cells = (CellSpec("# Title", "markdown"), CellSpec("x = 1"), CellSpec("print(x)"))
+
+    async def test(app, pilot, written):
+        await app._run_ex("copy all")
+        text = app.clipboard
+        assert "{" not in text and '"cell_type"' not in text
+        assert text == notebook.dump(list(cells), True)
+        assert "# %% [markdown]" in text and "# # Title" in text
+        assert "x = 1" in text and "print(x)" in text
+
+    run(tmp_path, monkeypatch, test, "nb.ipynb", cells)

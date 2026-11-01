@@ -424,8 +424,11 @@ class NotebookPane(Vertical):
     def all_specs(self) -> list[notebook.CellSpec]:
         return [self._spec_of(c) for c in self.cells()] + self._pending_sources
 
-    def file_text(self) -> str:
-        """The whole notebook as its file would hold it, unsaved edits included."""
+    def copy_text(self) -> str:
+        """The whole notebook to paste elsewhere, unsaved edits included: the file's own text, but
+        a .ipynb becomes a # %% script (markdown cells as comments) instead of its JSON."""
+        if self.path is not None and self.path.suffix.lower() == ".ipynb":
+            return notebook.dump(self.all_specs(), True)
         return notebook.file_text(self.path, self.all_specs(), self.markers)
 
     def write_file(self) -> None:

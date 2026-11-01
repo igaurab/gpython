@@ -1088,7 +1088,7 @@ class GPython(App):
             (("clear",), "Clear all outputs", lambda arg="": self.pane.clear_outputs()),
             (("img", "image"), "View this cell's image full screen (v in cell mode; :img 2 the second); :img save [N] [file] saves this cell's image(s) as PNG next to the notebook, :img open [N] opens them in the browser; :img save all / :img open all take every cell's", self._ex_image),
             (("set",), "Options: vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall cursor=bar|underline|block", self._ex_set),
-            (("copy", "yank"), "Copy to the system clipboard: :copy all the whole file (as :w would write it), :copy this cell", self._ex_copy),
+            (("copy", "yank"), "Copy to the system clipboard: :copy all the whole notebook (a .ipynb as # %% code, markdown as comments), :copy this cell", self._ex_copy),
             (("time", "timing"), "Show / hide each cell's run time in its header (t in cell mode; saved)", lambda arg="": self.set_timing(not Cell.show_timing)),
             (("variables", "vars"), "Toggle variables panel", lambda arg="": self.action_toggle_vars()),
             (("lazy",), "Toggle run mode: lazy (dependents only marked stale) / reactive (they re-run); saved (f3)", lambda arg="": self.action_toggle_lazy()),
@@ -1254,7 +1254,7 @@ class GPython(App):
         """:copy all puts the whole notebook file on the system clipboard; :copy alone, this cell."""
         what = arg.strip()
         if what == "all":
-            text = self.pane.file_text()
+            text = self.pane.copy_text()
             label = self.pane.path.name if self.pane.path else "the notebook"
         elif not what:
             cell = self.current_cell()
