@@ -94,9 +94,9 @@ def test_block_shape_paints_the_cursor_and_hides_the_terminal_one(tmp_path, monk
     run(tmp_path, monkeypatch, test)
 
 
-def test_copy_all_puts_the_whole_file_on_the_clipboard(tmp_path, monkeypatch):
+def test_copy_all_metadata_puts_the_whole_file_on_the_clipboard(tmp_path, monkeypatch):
     async def test(app, pilot, written):
-        await app._run_ex("copy all")
+        await app._run_ex("copy all metadata")
         assert app.clipboard == (tmp_path / "nb.py").read_text()
         assert "a = 1" in app.clipboard and "b = 2" in app.clipboard
         await app._run_ex("copy")
@@ -105,11 +105,11 @@ def test_copy_all_puts_the_whole_file_on_the_clipboard(tmp_path, monkeypatch):
     run(tmp_path, monkeypatch, test)
 
 
-def test_copy_all_of_an_ipynb_is_code_with_markdown_as_comments(tmp_path, monkeypatch):
+def test_copy_all_metadata_of_an_ipynb_is_percent_code_not_json(tmp_path, monkeypatch):
     cells = (CellSpec("# Title", "markdown"), CellSpec("x = 1"), CellSpec("print(x)"))
 
     async def test(app, pilot, written):
-        await app._run_ex("copy all")
+        await app._run_ex("copy all metadata")
         text = app.clipboard
         assert "{" not in text and '"cell_type"' not in text
         assert text == notebook.dump(list(cells), True)
@@ -119,11 +119,12 @@ def test_copy_all_of_an_ipynb_is_code_with_markdown_as_comments(tmp_path, monkey
     run(tmp_path, monkeypatch, test, "nb.ipynb", cells)
 
 
-def test_copy_all_clean_has_no_cell_markers(tmp_path, monkeypatch):
+def test_copy_all_has_no_cell_markers_by_default(tmp_path, monkeypatch):
     cells = (CellSpec("# Title", "markdown"), CellSpec("x = 1"), CellSpec("print(x)"))
 
     async def test(app, pilot, written):
-        await app._run_ex("copy all clean")
-        assert app.clipboard == "# # Title\n\nx = 1\n\nprint(x)\n"
+        for command in ("copy all", "copy all clean"):
+            await app._run_ex(command)
+            assert app.clipboard == "# # Title\n\nx = 1\n\nprint(x)\n"
 
     run(tmp_path, monkeypatch, test, "nb.ipynb", cells)

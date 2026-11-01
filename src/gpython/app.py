@@ -1088,7 +1088,7 @@ class GPython(App):
             (("clear",), "Clear all outputs", lambda arg="": self.pane.clear_outputs()),
             (("img", "image"), "View this cell's image full screen (v in cell mode; :img 2 the second); :img save [N] [file] saves this cell's image(s) as PNG next to the notebook, :img open [N] opens them in the browser; :img save all / :img open all take every cell's", self._ex_image),
             (("set",), "Options: vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall cursor=bar|underline|block", self._ex_set),
-            (("copy", "yank"), "Copy to the system clipboard: :copy all the whole notebook (a .ipynb as # %% code, markdown as comments), :copy all clean the same without # %% lines, :copy this cell", self._ex_copy),
+            (("copy", "yank"), "Copy to the system clipboard: :copy all the whole notebook as plain code, markdown as comments; :copy all metadata keeps the # %% cell lines (the file's text; a .ipynb as # %% code); :copy this cell", self._ex_copy),
             (("time", "timing"), "Show / hide each cell's run time in its header (t in cell mode; saved)", lambda arg="": self.set_timing(not Cell.show_timing)),
             (("variables", "vars"), "Toggle variables panel", lambda arg="": self.action_toggle_vars()),
             (("lazy",), "Toggle run mode: lazy (dependents only marked stale) / reactive (they re-run); saved (f3)", lambda arg="": self.action_toggle_lazy()),
@@ -1251,10 +1251,10 @@ class GPython(App):
         config.save({"insert_cursor": shape})
 
     def _ex_copy(self, arg: str = "") -> None:
-        """:copy all puts the whole notebook file on the system clipboard (:copy all clean: no # %% lines); :copy alone, this cell."""
+        """:copy all puts the whole notebook on the system clipboard as plain code (:copy all metadata keeps the # %% lines); :copy alone, this cell."""
         what = " ".join(arg.split())
-        if what in ("all", "all clean"):
-            text = self.pane.copy_text(clean=what == "all clean")
+        if what in ("all", "all clean", "all metadata"):
+            text = self.pane.copy_text(clean=what != "all metadata")
             label = self.pane.path.name if self.pane.path else "the notebook"
         elif not what:
             cell = self.current_cell()
@@ -1263,7 +1263,7 @@ class GPython(App):
                 return
             text, label = cell.source, f"cell {cell.label}"
         else:
-            self.notify(":copy all copies the whole file, :copy all clean without # %% lines; :copy alone, this cell", severity="warning")
+            self.notify(":copy all copies the whole notebook without # %% lines, :copy all metadata with them; :copy alone, this cell", severity="warning")
             return
         self.copy_to_clipboard(text)
         lines = text.count("\n") + (not text.endswith("\n") and bool(text))
