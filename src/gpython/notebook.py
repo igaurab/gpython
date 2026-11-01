@@ -48,6 +48,8 @@ class CellSpec:
     decorator: Decorator = "cell"
     outputs: list = field(default_factory=list)
     execution_count: int | None = None
+    gap: int | None = field(default=None, compare=False)
+    raw: str | None = field(default=None, compare=False)
 
 
 def _spec(cell: CellSpec | str) -> CellSpec:
@@ -173,12 +175,52 @@ def split_script(text: str) -> list[CellSpec]:
         chunk = "\n".join(lines[a:b]).strip("\n")
         if not chunk.strip():
             continue
+        gap = _trailing_blank_lines(lines[a:b])
         node = _statement_at(body, a + 1)
         if node is not None and _is_docstring(node) and not lines[a].lstrip().startswith("#"):
-            cells.append(CellSpec(node.value.value.strip("\n"), "markdown"))
+            cells.append(CellSpec(node.value.value.strip("\n"), "markdown", gap=gap, raw=chunk))
         else:
-            cells.append(CellSpec(chunk))
+            cells.append(CellSpec(chunk, gap=gap))
     return cells or [CellSpec("")]
+
+
+def _trailing_blank_lines(lines: list[str]) -> int:
+    count = 0
+    for line in reversed(lines):
+        if line.strip():
+            break
+        count += 1
+    return count
+
+
+def _starts_definition(body: str) -> bool:
+    first = body.lstrip().split("\n", 1)[0]
+    return first.startswith(("def ", "async def ", "class ", "@"))
+
+
+def _default_gap(before: str, after: str) -> int:
+    """Blank lines between two cells that have none remembered: two around a def or class (PEP 8), else one."""
+    return 2 if _starts_definition(before) or _starts_definition(after) else 1
+
+
+def docstring_value(chunk: str) -> str | None:
+    """The string of `chunk` when it is one string statement (a docstring), else None."""
+    try:
+        body = ast.parse(chunk).body
+    except SyntaxError:
+        return None
+    if len(body) == 1 and _is_docstring(body[0]):
+        return body[0].value.value.strip("\n")
+    return None
+
+
+def _script_text(cell: CellSpec, body: str) -> str:
+    if cell.kind != "markdown":
+        return body
+    if cell.raw is not None and docstring_value(cell.raw) == body:
+        return cell.raw
+    escaped = body.replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
+    return f'"""\n{escaped}\n"""'
 
 
 def _statement_at(body: list[ast.stmt], lineno: int) -> ast.stmt | None:
@@ -195,24 +237,30 @@ def _dump_script(cells: list[CellSpec]) -> str:
 
 def dump_script_with_layout(cells: list[CellSpec]) -> tuple[str, list[dict]]:
     """A plain script (markdown cells as docstrings, no `# %%`) and where each cell sits in it:
-    {start, end, kind, hide_code} with `end` exclusive, in lines. An empty cell writes no text and
-    is remembered as an empty range."""
-    parts: list[str] = []
+    {start, end, kind, hide_code} with `end` exclusive, in lines. A cell keeps the blank lines that
+    followed it in the file (`gap`), and an unedited docstring cell its own text (`raw`), so saving
+    leaves the spacing alone. An empty cell writes no text and is remembered as an empty range."""
+    out: list[str] = []
     layout: list[dict] = []
     line = 0
+    previous: tuple[CellSpec, str] | None = None
     for cell in cells:
         body = cell.source.strip("\n")
         if not body.strip():
             layout.append({"start": line, "end": line, "kind": cell.kind, "hide_code": cell.hide_code})
             continue
-        if cell.kind == "markdown":
-            escaped = body.replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
-            body = f'"""\n{escaped}\n"""'
-        height = body.count("\n") + 1
+        text = _script_text(cell, body)
+        if previous is not None:
+            before, before_text = previous
+            gap = before.gap if before.gap is not None else _default_gap(before_text, text)
+            out.append("\n" * (gap + 1))
+            line += gap
+        height = text.count("\n") + 1
         layout.append({"start": line, "end": line + height, "kind": cell.kind, "hide_code": cell.hide_code})
-        parts.append(body)
-        line += height + 2
-    return "\n\n\n".join(parts) + "\n", layout
+        out.append(text)
+        line += height
+        previous = (cell, text)
+    return ("".join(out) + "\n" if out else ""), layout
 
 
 _DEFAULT_IPYNB_META = {
@@ -577,9 +625,9 @@ def load_cells(path: Path) -> tuple[list[CellSpec], bool]:
         return parse(text), True
     from . import sidecar
 
-    remembered = sidecar.read(path, text)
+    remembered = sidecar.read(text)
     if remembered is not None:
-        return [CellSpec(source, kind, hide_code=hidden) for source, kind, hidden in remembered], False
+        return remembered, False
     return split_script(text), False
 
 

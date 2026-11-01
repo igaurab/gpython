@@ -28,8 +28,8 @@ def test_layout_is_kept_outside_the_file_in_gpython_home(tmp_path, monkeypatch):
     monkeypatch.setenv("GPYTHON_HOME", str(home))
     path = tmp_path / "nb.py"
     save(path, CELLS, markers=False)
-    assert sidecar.layout_file(path).parent == home / "cells"
-    assert sidecar.layout_file(path).exists()
+    layout = sidecar.layout_file(path.read_text())
+    assert layout.parent == home / "cells" and layout.exists()
 
 
 def test_a_file_edited_elsewhere_is_split_afresh(tmp_path):
@@ -52,3 +52,33 @@ def test_files_that_already_use_markers_keep_them(tmp_path):
     assert markers
     save(path, cells, markers)
     assert path.read_text().count("# %%") == 2
+
+
+def test_a_moved_file_keeps_its_cells(tmp_path):
+    path = tmp_path / "nb.py"
+    save(path, CELLS, markers=False)
+    moved = tmp_path / "elsewhere" / "renamed.py"
+    moved.parent.mkdir()
+    path.rename(moved)
+    cells, _ = load_cells(moved)
+    assert [(c.source, c.kind) for c in cells] == [(c.source, c.kind) for c in CELLS]
+
+
+def test_saving_again_forgets_the_old_layout(tmp_path):
+    path = tmp_path / "nb.py"
+    save(path, [CellSpec("a = 1")], markers=False)
+    first = sidecar.layout_file(path.read_text())
+    save(path, [CellSpec("a = 2")], markers=False)
+    assert not first.exists() and sidecar.layout_file(path.read_text()).exists()
+
+
+def test_a_hand_written_file_keeps_its_spacing_when_saved(tmp_path):
+    original = 'import os\nimport sys\n\n\n\ndef f():\n    return 1\nx = f()\n'
+    path = tmp_path / "nb.py"
+    path.write_text(original)
+    cells, markers = load_cells(path)
+    save(path, cells, markers)
+    assert path.read_text() == original
+    again, _ = load_cells(path)
+    save(path, again, markers)
+    assert path.read_text() == original
