@@ -2,6 +2,7 @@ import asyncio
 
 from textual.widgets import DataTable, Static
 
+from gpython import notebook
 from gpython.app import GPython
 from gpython.notebook import parse
 from gpython.vim import CompletionPopup
@@ -168,7 +169,7 @@ def test_untitled_save_prompt(tmp_path, monkeypatch):
             await pilot.press("ctrl+s")
             await pilot.press(*"new.py", "enter")
             await pilot.pause()
-            assert (tmp_path / "new.py").read_text() == "# %%\nz = 1\n"
+            assert (tmp_path / "new.py").read_text() == "z = 1\n"
 
     asyncio.run(main())
 
@@ -195,7 +196,8 @@ def test_ex_commands(tmp_path, monkeypatch):
             await pilot.press("escape", ":", *"wqall out.py", "enter")
             await pilot.pause()
             assert app.return_code == 0
-            assert (tmp_path / "out.py").read_text() == "# %%\na = 1\n\n# %%\n\n"
+            assert (tmp_path / "out.py").read_text() == "a = 1\n"
+            assert [spec.source for spec in notebook.load_cells(tmp_path / "out.py")[0]] == ["a = 1", ""]
 
     asyncio.run(main())
 

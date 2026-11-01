@@ -42,7 +42,7 @@ class NotebookPane(Vertical):
     def __init__(self, path: Path | None = None) -> None:
         super().__init__(classes="pane")
         self.path = path
-        self.markers = True
+        self.markers = False
         self.dirty = False
         self.exec_counter = 0
         self.kernel_state = "starting kernel…"
@@ -58,6 +58,9 @@ class NotebookPane(Vertical):
         self.loaded = asyncio.Event()
         self._specs: list[notebook.CellSpec] = []
         self._pending_sources: list[notebook.CellSpec] = []
+        self._outputs_timer = None
+        self._outputs_to_store: tuple[Path, list[notebook.CellSpec], str] | None = None
+        self._run_state_json: dict[str, tuple[tuple, str]] = {}
         self._cells_box: VerticalScroll | None = None
         self._vars: DataTable | None = None
         self._status: Static | None = None
@@ -138,9 +141,29 @@ class NotebookPane(Vertical):
         self.app.after_first_frame(self._after_first_frame)
 
     def _after_first_frame(self) -> None:
-        self.run_worker(self._mount_rest(), group="mount")
+        self.run_worker(self._restore_outputs_then_mount_rest(), group="mount")
         if (boot := self.start_kernel()) is not None:
             self.run_worker(boot, group="kernel")
+
+    async def _restore_outputs_then_mount_rest(self) -> None:
+        if self.path is not None and not self.markers:
+            await self._restore_outputs()
+        await self._mount_rest()
+
+    async def _restore_outputs(self) -> None:
+        """A plain script's stored outputs are read after the first frame (sidecar.py), then shown."""
+        cells = self.cells()
+        specs = [self._light_spec(c) for c in cells] + self._pending_sources
+        try:
+            states = await asyncio.to_thread(notebook.load_outputs, self.path, specs)
+        except Exception:
+            return
+        if states is None or self.dirty or self.cells() != cells:
+            return
+        mounted = len(cells)
+        for cell, state in zip(cells, states):
+            cell.restore_run(notebook.with_run_state(self._light_spec(cell), state))
+        self._pending_sources = [notebook.with_run_state(spec, state) for spec, state in zip(self._pending_sources, states[mounted:])]
 
     async def _mount_rest(self) -> None:
         """Mount the cells left out of compose(), a batch at a time, after the first frame."""
@@ -220,6 +243,7 @@ class NotebookPane(Vertical):
         await self.kernel.shutdown()
 
     async def on_unmount(self) -> None:
+        self.store_outputs_now()
         if not self._shutting_down:
             self._shutting_down = True
             await self._shutdown_kernel()
@@ -365,6 +389,7 @@ class NotebookPane(Vertical):
                 cell.ran_source = source
                 cell.last_defs = graph.defs[cid]
                 cell.end_run("ok" if ok and cell.source == source else "error" if not ok else "stale")
+                self.outputs_changed()
                 cell.missing = self._note_missing(cell) if not ok else None
                 if not ok:
                     failed.add(cid)
@@ -421,19 +446,62 @@ class NotebookPane(Vertical):
         for row in rows:
             table.add_row(*row)
 
+    def all_specs(self) -> list[notebook.CellSpec]:
+        return [self._spec_of(c) for c in self.cells()] + self._pending_sources
+
+    def copy_text(self, clean: bool = False) -> str:
+        """The whole notebook to paste elsewhere, unsaved edits included: the file's own text, but
+        a .ipynb becomes a # %% script (markdown cells as comments) instead of its JSON.
+        `clean` drops every `# %%` line: code as written, markdown as comments."""
+        if clean:
+            return notebook.dump_clean(self.all_specs())
+        if self.path is not None and self.path.suffix.lower() == ".ipynb":
+            return notebook.dump(self.all_specs(), True)
+        return notebook.file_text(self.path, self.all_specs(), self.markers or self.path is None)
+
     def write_file(self) -> None:
-        cells = [self._spec_of(c) for c in self.cells()] + self._pending_sources
-        notebook.save(self.path, cells, self.markers)
+        notebook.save(self.path, self.all_specs(), self.markers, outputs=False)
         self.mark_dirty(False)
+        self.outputs_changed()
         self.notify(f"Saved {self.path}")
+
+    def _light_spec(self, cell: Cell) -> notebook.CellSpec:
+        """The CellSpec of `cell` without its outputs: enough to write the script text."""
+        if cell.spec is not None:
+            return dataclasses.replace(cell.spec, source=cell.source, kind=cell.kind, hide_code=cell.code_hidden, outputs=[], execution_count=None, duration=None)
+        return notebook.CellSpec(cell.source, cell.kind, hide_code=cell.code_hidden)
+
+    def _run_state_of(self, cell: Cell) -> str:
+        """The JSON of `cell`'s run state, made again only when its outputs, run number or run time changed."""
+        version = (cell.kind, cell.outputs_version, cell.exec_count, cell.duration)
+        cached = self._run_state_json.get(cell.cid)
+        if cached is not None and cached[0] == version:
+            return cached[1]
+        import json
+
+        encoded = json.dumps(notebook.run_state(self._spec_of(cell)))
+        self._run_state_json[cell.cid] = (version, encoded)
+        return encoded
+
+    def _outputs_snapshot(self) -> tuple[list[notebook.CellSpec], str]:
+        """The cells (no outputs) and the JSON list of their run states, as remember_outputs takes them."""
+        import json
+
+        cells = self.cells()
+        states = [self._run_state_of(c) for c in cells] + [json.dumps(notebook.run_state(s)) for s in self._pending_sources]
+        live = {c.cid for c in cells}
+        for cid in [cid for cid in self._run_state_json if cid not in live]:
+            del self._run_state_json[cid]
+        return [self._light_spec(c) for c in cells] + self._pending_sources, "[" + ",".join(states) + "]"
 
     def _spec_of(self, cell: Cell) -> notebook.CellSpec:
         """The CellSpec to save for `cell`: its loaded spec (format extras) with the current state."""
         outputs = outputs_to_ipynb(cell.outputs_snapshot(), cell.exec_count or None) if cell.kind == "code" else []
         count = (cell.exec_count or None) if cell.kind == "code" else None
+        duration = cell.duration if count else None
         if cell.spec is not None:
-            return dataclasses.replace(cell.spec, source=cell.source, kind=cell.kind, hide_code=cell.code_hidden, outputs=outputs, execution_count=count)
-        return notebook.CellSpec(cell.source, cell.kind, hide_code=cell.code_hidden, outputs=outputs, execution_count=count)
+            return dataclasses.replace(cell.spec, source=cell.source, kind=cell.kind, hide_code=cell.code_hidden, outputs=outputs, execution_count=count, duration=duration)
+        return notebook.CellSpec(cell.source, cell.kind, hide_code=cell.code_hidden, outputs=outputs, execution_count=count, duration=duration)
 
     def _after_loaded(self, callback) -> None:
         """Call `callback` now if every cell is mounted, else once they are."""
@@ -844,6 +912,35 @@ class NotebookPane(Vertical):
     def clear_outputs(self) -> None:
         for cell in self.cells():
             cell.clear_output()
+        self.outputs_changed()
+
+    def outputs_changed(self) -> None:
+        """A run finished, outputs were cleared or the file was saved: take a snapshot now (cheap,
+        only changed cells are encoded) and write it to ~/.gpython from a thread half a second
+        later, no :w needed. on_unmount writes a snapshot still waiting, so quitting keeps it."""
+        if self.dirty or self.path is None or self.markers:
+            return
+        specs, states = self._outputs_snapshot()
+        self._outputs_to_store = (self.path, specs, states)
+        if self._outputs_timer is not None:
+            self._outputs_timer.stop()
+        self._outputs_timer = self.set_timer(0.5, self._store_outputs)
+
+    async def _store_outputs(self) -> None:
+        self._outputs_timer = None
+        pending, self._outputs_to_store = self._outputs_to_store, None
+        if pending is not None:
+            path, specs, states = pending
+            await asyncio.to_thread(notebook.remember_outputs, path, specs, False, states)
+
+    def store_outputs_now(self) -> None:
+        if self._outputs_timer is not None:
+            self._outputs_timer.stop()
+            self._outputs_timer = None
+        pending, self._outputs_to_store = self._outputs_to_store, None
+        if pending is not None:
+            path, specs, states = pending
+            notebook.remember_outputs(path, specs, False, states)
 
     def on_click(self, event) -> None:
         """Clicking the empty space below the last cell focuses the nearest cell."""
@@ -1003,6 +1100,7 @@ class NotebookPane(Vertical):
                 cell.toggle_collapsed()
             case "C" | "shift+c":
                 cell.clear_output()
+                self.outputs_changed()
             case "v":
                 app.view_image(cell)
             case "l":

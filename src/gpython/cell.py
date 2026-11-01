@@ -209,6 +209,7 @@ class Cell(Vertical):
         self.info = ""
         self.exec_count = 0
         self.duration: float | None = None
+        self.outputs_version = 0
         self._run_start = 0.0
         self._ticker: Timer | None = None
         self._log: list[tuple] = []
@@ -235,10 +236,12 @@ class Cell(Vertical):
     def on_mount(self) -> None:
         if self.code_hidden and self._editor is not None:
             self._editor.display = False
-        if self.spec is not None and self.spec.outputs and self.kind == "code":
-            self.replay(outputs_from_ipynb(self.spec.outputs))
+        if self.spec is not None and self.kind == "code":
             if self.spec.execution_count:
                 self.exec_count = self.spec.execution_count
+            self.duration = self.spec.duration
+        if self.spec is not None and self.spec.outputs and self.kind == "code":
+            self.replay(outputs_from_ipynb(self.spec.outputs))
         elif self.code_hidden and (preview := marimo_markdown(self.source)) is not None:
             self.output_box.add("display_data", {"data": {"text/markdown": preview}})
         self._render_header()
@@ -458,6 +461,7 @@ class Cell(Vertical):
 
 
     def clear_output(self) -> None:
+        self.outputs_version += 1
         self._log.clear()
         self._log_clear_pending = False
         if self._outputs is not None:
@@ -465,6 +469,7 @@ class Cell(Vertical):
         self._update_note()
 
     def show_error(self, message: str) -> None:
+        self.outputs_version += 1
         self._log[:] = [("_error", message, None)]
         self._log_clear_pending = False
         self.output_box.show_error(message)
@@ -487,6 +492,7 @@ class Cell(Vertical):
     def add_output(self, kind: str, content: dict) -> None:
         if kind == "execute_result" and self.echo_suppressed:
             return
+        self.outputs_version += 1
         log = self._log
         if kind == "clear_output" and content.get("wait"):
             self._log_clear_pending = True
@@ -523,6 +529,17 @@ class Cell(Vertical):
             else:
                 out.append((kind, content))
         return out
+
+    def restore_run(self, spec: notebook.CellSpec) -> None:
+        """Show a stored run (outputs, run number, run time) on a cell that has not run since it loaded."""
+        if self.kind != "code" or self.exec_count or self._log:
+            return
+        if spec.execution_count:
+            self.exec_count = spec.execution_count
+        self.duration = spec.duration
+        if spec.outputs:
+            self.replay(outputs_from_ipynb(spec.outputs))
+        self._render_header()
 
     def replay(self, outputs: list[tuple[str, object]]) -> None:
         for kind, content in outputs:

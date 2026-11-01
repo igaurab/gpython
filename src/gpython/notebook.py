@@ -4,9 +4,11 @@ Percent format (VS Code, Spyder, Jupytext):
     # %%                 code cell
     # %% [markdown]      markdown cell, each line prefixed with "# "
 
-Plain scripts are split automatically at top-level statements; module-level
-string statements (docstrings) become markdown cells. They are saved back
-without markers so the file stays an ordinary script.
+Plain scripts, and new files, are saved without markers so the file stays an
+ordinary script; where each cell starts is remembered in ~/.gpython (sidecar.py)
+and used when the file is reopened unchanged. Otherwise the script is split at
+top-level statements, and module-level strings (docstrings) become markdown cells.
+Files that already have `# %%` markers keep them.
 
 `.ipynb` files load code and markdown cells with their stored outputs and
 execution counts and save as nbformat 4, keeping the notebook metadata that was loaded.
@@ -24,7 +26,8 @@ import io
 import json
 import textwrap
 import tokenize
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from itertools import count
 from pathlib import Path
 from typing import Literal
 
@@ -46,6 +49,29 @@ class CellSpec:
     decorator: Decorator = "cell"
     outputs: list = field(default_factory=list)
     execution_count: int | None = None
+    duration: float | None = field(default=None, compare=False)
+    gap: str | None = field(default=None, compare=False)
+    gap_to: int | None = field(default=None, compare=False)
+    key: int | None = field(default=None, compare=False)
+    raw: str | None = field(default=None, compare=False)
+
+
+_keys = count(1)
+
+
+def new_key() -> int:
+    """A number that names one loaded cell, so a cell's `gap` is used only before the cell it was measured to."""
+    return next(_keys)
+
+
+def link_gaps(cells: list[CellSpec], gaps: list[str | None]) -> list[CellSpec]:
+    """Give every cell a key and tie `gaps[i]` (the exact lines after cell i) to the next non-empty cell."""
+    keyed = [replace(cell, key=new_key()) for cell in cells]
+    filled = [i for i, cell in enumerate(keyed) if cell.source.strip()]
+    for i, after in zip(filled, filled[1:]):
+        if gaps[i] is not None:
+            keyed[i] = replace(keyed[i], gap=gaps[i], gap_to=keyed[after].key)
+    return keyed
 
 
 def _spec(cell: CellSpec | str) -> CellSpec:
@@ -101,6 +127,19 @@ def _dump_percent(cells: list[CellSpec]) -> str:
     return "\n".join(parts)
 
 
+def dump_clean(cells: list[CellSpec]) -> str:
+    """The cells as one script with no `# %%` lines: code as written, markdown as `# ` comments."""
+    parts = []
+    for cell in cells:
+        body = cell.source.strip("\n")
+        if not body.strip():
+            continue
+        if cell.kind == "markdown":
+            body = "\n".join(f"# {line}" if line.strip() else "#" for line in body.splitlines())
+        parts.append(body)
+    return "\n\n".join(parts) + "\n" if parts else ""
+
+
 def _kind(node: ast.stmt) -> str:
     if isinstance(node, (ast.Import, ast.ImportFrom)):
         return "import"
@@ -154,16 +193,56 @@ def split_script(text: str) -> list[CellSpec]:
 
     bounds = [*starts, len(lines)]
     cells: list[CellSpec] = []
-    for node_index, (a, b) in enumerate(zip(bounds, bounds[1:])):
-        chunk = "\n".join(lines[a:b]).strip("\n")
+    gaps: list[str | None] = []
+    for a, b in zip(bounds, bounds[1:]):
+        end = b
+        while end > a and not lines[end - 1].strip():
+            end -= 1
+        chunk = "\n".join(lines[a:end]).strip("\n")
         if not chunk.strip():
             continue
+        gaps.append(separator(lines[end:b]))
         node = _statement_at(body, a + 1)
         if node is not None and _is_docstring(node) and not lines[a].lstrip().startswith("#"):
-            cells.append(CellSpec(node.value.value.strip("\n"), "markdown"))
+            cells.append(CellSpec(node.value.value.strip("\n"), "markdown", raw=chunk))
         else:
             cells.append(CellSpec(chunk))
-    return cells or [CellSpec("")]
+    return link_gaps(cells, gaps) or [CellSpec("")]
+
+
+def separator(blank_lines: list[str]) -> str:
+    """The exact text of the blank (or only-spaces) lines between two cells, each line ending in a newline."""
+    return "".join(line + "\n" for line in blank_lines)
+
+
+def _starts_definition(body: str) -> bool:
+    first = body.lstrip().split("\n", 1)[0]
+    return first.startswith(("def ", "async def ", "class ", "@"))
+
+
+def _default_gap(before: str, after: str) -> str:
+    """Blank lines between two cells that have none remembered: two around a def or class (PEP 8), else one."""
+    return "\n\n" if _starts_definition(before) or _starts_definition(after) else "\n"
+
+
+def docstring_value(chunk: str) -> str | None:
+    """The string of `chunk` when it is one string statement (a docstring), else None."""
+    try:
+        body = ast.parse(chunk).body
+    except SyntaxError:
+        return None
+    if len(body) == 1 and _is_docstring(body[0]):
+        return body[0].value.value.strip("\n")
+    return None
+
+
+def _script_text(cell: CellSpec, body: str) -> str:
+    if cell.kind != "markdown":
+        return body
+    if cell.raw is not None and docstring_value(cell.raw) == body:
+        return cell.raw
+    escaped = body.replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
+    return f'"""\n{escaped}\n"""'
 
 
 def _statement_at(body: list[ast.stmt], lineno: int) -> ast.stmt | None:
@@ -175,17 +254,66 @@ def _statement_at(body: list[ast.stmt], lineno: int) -> ast.stmt | None:
 
 
 def _dump_script(cells: list[CellSpec]) -> str:
-    parts = []
+    return dump_script_with_layout(cells)[0]
+
+
+def run_state(cell: CellSpec) -> dict:
+    """What a plain script cannot hold about a run: a code cell's last outputs, run number and run time."""
+    state: dict = {}
+    if cell.kind == "code":
+        if cell.outputs:
+            state["outputs"] = cell.outputs
+        if cell.execution_count:
+            state["execution_count"] = cell.execution_count
+        if cell.duration is not None:
+            state["duration"] = cell.duration
+    return state
+
+
+def with_run_state(cell: CellSpec, state: dict) -> CellSpec:
+    """`cell` with the outputs, run number and run time of `state` (as run_state wrote it), checked."""
+    if cell.kind != "code" or not isinstance(state, dict):
+        return cell
+    outputs = state.get("outputs")
+    number = state.get("execution_count")
+    duration = state.get("duration")
+    return replace(
+        cell,
+        outputs=outputs if isinstance(outputs, list) else [],
+        execution_count=number if isinstance(number, int) and number > 0 else None,
+        duration=float(duration) if isinstance(duration, (int, float)) and duration >= 0 else None,
+    )
+
+
+def dump_script_with_layout(cells: list[CellSpec]) -> tuple[str, list[dict]]:
+    """A plain script (markdown cells as docstrings, no `# %%`) and where each cell sits in it:
+    {start, end, kind, hide_code} with `end` exclusive, in lines. A cell keeps the exact lines that
+    followed it in the file (`gap`) while the same cell (`gap_to`) still follows it, and an
+    unedited docstring cell its own text (`raw`), so saving leaves the spacing alone. An empty
+    cell writes no text and is remembered as an empty range."""
+    out: list[str] = []
+    layout: list[dict] = []
+    line = 0
+    previous: tuple[CellSpec, str] | None = None
     for cell in cells:
         body = cell.source.strip("\n")
+        state = {"kind": cell.kind, "hide_code": cell.hide_code}
         if not body.strip():
+            layout.append({"start": line, "end": line, **state})
             continue
-        if cell.kind == "markdown":
-            escaped = body.replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
-            parts.append(f'"""\n{escaped}\n"""')
-        else:
-            parts.append(body)
-    return "\n\n\n".join(parts) + "\n"
+        text = _script_text(cell, body)
+        if previous is not None:
+            before, before_text = previous
+            kept = before.gap is not None and before.gap_to is not None and before.gap_to == cell.key
+            gap = before.gap if kept else _default_gap(before_text, text)
+            out.append("\n" + gap)
+            line += gap.count("\n")
+        height = text.count("\n") + 1
+        layout.append({"start": line, "end": line + height, **state})
+        out.append(text)
+        line += height
+        previous = (cell, text)
+    return ("".join(out) + "\n" if out else ""), layout
 
 
 _DEFAULT_IPYNB_META = {
@@ -536,9 +664,10 @@ def dump(cells: list[CellSpec | str], markers: bool = True) -> str:
 
 
 def load_cells(path: Path) -> tuple[list[CellSpec], bool]:
-    """Return (cells, uses_markers). New files use markers."""
+    """Return (cells, uses_markers). New files and plain scripts have no markers: their cells
+    come from the layout gpython keeps in ~/.gpython (see sidecar.py), or are split afresh."""
     if not path.exists():
-        return [CellSpec("")], True
+        return [CellSpec("")], False
     text = path.read_text()
     if _is_ipynb(path):
         return parse_ipynb(text, path), True
@@ -547,14 +676,82 @@ def load_cells(path: Path) -> tuple[list[CellSpec], bool]:
         return parse_marimo(text, path), True
     if has_markers(text):
         return parse(text), True
+    from . import sidecar
+
+    remembered = sidecar.read(text, path)
+    if remembered is not None:
+        return remembered, False
     return split_script(text), False
 
 
-def save(path: Path, cells: list[CellSpec | str], markers: bool = True) -> None:
+def load_outputs(path: Path, cells: list[CellSpec]) -> list[dict] | None:
+    """The run state (run_state) gpython stored for each of `cells`, when `path` is a plain script
+    whose text on disk is exactly these cells; else None. Read after the first frame."""
+    if not _is_plain_script(path, cells, False):
+        return None
+    try:
+        text = path.read_text()
+    except OSError:
+        return None
+    if dump_script_with_layout(cells)[0] != text:
+        return None
+    from . import sidecar
+
+    states = sidecar.read_outputs(text, path)
+    return states if states is not None and len(states) == len(cells) else None
+
+
+def file_text(path: Path | None, cells: list[CellSpec | str], markers: bool = True) -> str:
+    """The text `save` would write to `path`: ipynb JSON, a marimo app or a .py script."""
     specs = [_spec(c) for c in cells]
+    if path is None:
+        return dump(specs, markers)
     if _is_ipynb(path):
-        path.write_text(dump_ipynb(specs, path))
-    elif path.resolve() in _marimo_frame or (not path.exists() and _starts_with_marimo_import(specs)):
-        path.write_text(dump_marimo(specs, path))
-    else:
-        path.write_text(dump(specs, markers))
+        return dump_ipynb(specs, path)
+    if path.resolve() in _marimo_frame or (not path.exists() and _starts_with_marimo_import(specs)):
+        return dump_marimo(specs, path)
+    return dump(specs, markers)
+
+
+def _is_plain_script(path: Path, specs: list[CellSpec], markers: bool) -> bool:
+    return not markers and not _is_ipynb(path) and not (
+        path.resolve() in _marimo_frame or (not path.exists() and _starts_with_marimo_import(specs))
+    )
+
+
+def outputs_json(cells: list[CellSpec]) -> str:
+    return json.dumps([run_state(cell) for cell in cells])
+
+
+def remember_outputs(path: Path, cells: list[CellSpec], markers: bool, states: str | None = None) -> bool:
+    """Store the cells' outputs and run times in ~/.gpython without writing the script, when
+    `path` is a plain script whose text on disk is exactly these cells. `states` is the JSON list
+    of run states when the caller already has it (outputs_json). True if stored."""
+    if not _is_plain_script(path, cells, markers):
+        return False
+    text = dump_script_with_layout(cells)[0]
+    try:
+        if path.read_text() != text:
+            return False
+    except OSError:
+        return False
+    from . import sidecar
+
+    sidecar.write_outputs(path, text, outputs_json(cells) if states is None else states)
+    return True
+
+
+def save(path: Path, cells: list[CellSpec | str], markers: bool = True, outputs: bool = True) -> None:
+    """Write the notebook. A plain script also gets its cell layout remembered in ~/.gpython and,
+    unless `outputs` is False (the caller stores them later, off the UI thread), its outputs."""
+    specs = [_spec(c) for c in cells]
+    if not _is_plain_script(path, specs, markers):
+        path.write_text(file_text(path, specs, markers))
+        return
+    from . import sidecar
+
+    text, layout = dump_script_with_layout(specs)
+    path.write_text(text)
+    sidecar.write_layout(path, text, layout)
+    if outputs:
+        sidecar.write_outputs(path, text, outputs_json(specs))
