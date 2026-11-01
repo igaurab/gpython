@@ -60,6 +60,22 @@ MONOKAI_NORMAL = dataclasses.replace(
 )
 SEARCH_STYLE = Style(color="#000000", bgcolor="#ffd75f", bold=True)
 _REVERSE = Style(reverse=True)
+INSERT_CURSOR_SHAPES = {"bar": "\x1b[5 q", "underline": "\x1b[3 q", "block": ""}
+SHOW_CURSOR = "\x1b[?25h"
+SHOW_BAR_CURSOR = INSERT_CURSOR_SHAPES["bar"] + SHOW_CURSOR
+HIDE_CURSOR = "\x1b[?25l"
+RESET_CURSOR_SHAPE = "\x1b[0 q"
+_BAR_MODES = ("insert", "replace")
+
+
+def has_real_terminal(app) -> bool:
+    return not app.is_headless
+
+
+def write_to_terminal(app, data: str) -> None:
+    driver = getattr(app, "_driver", None)
+    if driver is not None and not driver.is_headless:
+        driver.write(data)
 
 
 def search_regex(pattern: str) -> re.Pattern:
@@ -234,12 +250,39 @@ class CompletionPopup(OptionList):
     """
 
 
+def sync_terminal_cursor(app) -> None:
+    """Show the terminal's own cursor, shaped by `VimTextArea.insert_cursor` (a blinking bar or
+    underline), while the focused editor is in insert or replace mode, and hide it otherwise:
+    normal mode, and the "block" shape, paint a block instead. Writes only on change."""
+    shape = INSERT_CURSOR_SHAPES.get(VimTextArea.insert_cursor, "")
+    focused = app.focused if shape and has_real_terminal(app) else None
+    editor = (
+        focused
+        if isinstance(focused, VimTextArea) and VimTextArea.mode in _BAR_MODES and not focused.read_only
+        else None
+    )
+    previous = VimTextArea.bar_editor
+    if editor is previous:
+        return
+    VimTextArea.bar_editor = editor
+    if (editor is None) != (previous is None):
+        write_to_terminal(app, shape + SHOW_CURSOR if editor is not None else HIDE_CURSOR)
+    for changed in (previous, editor):
+        if changed is not None and changed.is_attached:
+            changed.forget_cursor_line()
+            changed.refresh()
+    if editor is not None:
+        editor.cursor_blink = False
+
+
 class VimTextArea(TextArea):
     selection: reactive[Selection] = reactive(Selection(), init=False, always_update=True, repaint=False)
 
     enabled = True
     line_numbers = True
     mode = "normal"
+    bar_editor: VimTextArea | None = None
+    insert_cursor = "bar"
     register = ""
     registers: dict[str, tuple[str, bool]] = {}
     macros: dict[str, list[tuple[str, str | None]]] = {}
@@ -373,6 +416,9 @@ class VimTextArea(TextArea):
         screen, self._mounted_screen = self._mounted_screen, None
         if screen is not None:
             screen.text_selection_started_signal.unsubscribe(self)
+        if VimTextArea.bar_editor is self:
+            VimTextArea.bar_editor = None
+            write_to_terminal(self.app, HIDE_CURSOR)
 
     def set_editor_theme(self, insert: TextAreaTheme, normal: TextAreaTheme) -> None:
         """Use `insert` in insert mode and `normal` (e.g. with a block cursor) in normal mode."""
@@ -536,6 +582,12 @@ class VimTextArea(TextArea):
         super()._watch_has_focus(focus)
         self.set_reactive(TextArea.highlight_cursor_line, focus and not self.visual)
         self.forget_cursor_line()
+        sync_terminal_cursor(self.app)
+
+    @property
+    def _draw_cursor(self) -> bool:
+        """While the terminal's own cursor (a bar or underline) marks the spot, no block is painted."""
+        return VimTextArea.bar_editor is not self and TextArea._draw_cursor.fget(self)
 
     def forget_cursor_line(self) -> None:
         _, cursor_y = self._cursor_offset
@@ -548,7 +600,9 @@ class VimTextArea(TextArea):
         theme = self._theme_names[0] if mode in ("insert", "replace") else self._theme_names[1]
         if self.theme != theme:
             self.theme = theme
-        self.cursor_blink = mode in ("insert", "replace")
+        if self.has_focus:
+            sync_terminal_cursor(self.app)
+        self.cursor_blink = mode in _BAR_MODES and VimTextArea.bar_editor is not self
 
     def _record(self, key: str, char: str | None) -> None:
         """Every key goes to the macro being recorded and to the keys of the current command (for `.`)."""

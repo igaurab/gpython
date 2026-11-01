@@ -550,11 +550,17 @@ def load_cells(path: Path) -> tuple[list[CellSpec], bool]:
     return split_script(text), False
 
 
-def save(path: Path, cells: list[CellSpec | str], markers: bool = True) -> None:
+def file_text(path: Path | None, cells: list[CellSpec | str], markers: bool = True) -> str:
+    """The text `save` would write to `path`: ipynb JSON, a marimo app or a .py script."""
     specs = [_spec(c) for c in cells]
+    if path is None:
+        return dump(specs, markers)
     if _is_ipynb(path):
-        path.write_text(dump_ipynb(specs, path))
-    elif path.resolve() in _marimo_frame or (not path.exists() and _starts_with_marimo_import(specs)):
-        path.write_text(dump_marimo(specs, path))
-    else:
-        path.write_text(dump(specs, markers))
+        return dump_ipynb(specs, path)
+    if path.resolve() in _marimo_frame or (not path.exists() and _starts_with_marimo_import(specs)):
+        return dump_marimo(specs, path)
+    return dump(specs, markers)
+
+
+def save(path: Path, cells: list[CellSpec | str], markers: bool = True) -> None:
+    path.write_text(file_text(path, cells, markers))

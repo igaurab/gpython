@@ -421,9 +421,15 @@ class NotebookPane(Vertical):
         for row in rows:
             table.add_row(*row)
 
+    def all_specs(self) -> list[notebook.CellSpec]:
+        return [self._spec_of(c) for c in self.cells()] + self._pending_sources
+
+    def file_text(self) -> str:
+        """The whole notebook as its file would hold it, unsaved edits included."""
+        return notebook.file_text(self.path, self.all_specs(), self.markers)
+
     def write_file(self) -> None:
-        cells = [self._spec_of(c) for c in self.cells()] + self._pending_sources
-        notebook.save(self.path, cells, self.markers)
+        notebook.save(self.path, self.all_specs(), self.markers)
         self.mark_dirty(False)
         self.notify(f"Saved {self.path}")
 

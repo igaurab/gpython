@@ -33,7 +33,7 @@ from . import envpicker
 from .envpicker import KernelChip
 from .themepicker import ThemePicker
 from .themes import CUSTOM_APP_THEMES, DEFAULT_THEME, TERMINAL_THEME, THEME_ALIASES, editor_themes, palette_for
-from .vim import VimTextArea, _is_escape
+from .vim import INSERT_CURSOR_SHAPES, RESET_CURSOR_SHAPE, VimTextArea, _is_escape, sync_terminal_cursor, write_to_terminal
 from .windows import TabBar, Workspace
 
 KEY_HINTS = "shift+enter run+next · ctrl+enter run · esc esc cell mode · / jump · ctrl+b files · ctrl+w splits · f1 help"
@@ -202,6 +202,7 @@ class GPython(App):
         VimTextArea.enabled = vim
         VimTextArea.line_numbers = settings.get("line_numbers", True) is not False
         Cell.show_timing = settings.get("timing") is True
+        VimTextArea.insert_cursor = self._insert_cursor_setting(settings.get("insert_cursor"))
         bigtext.enabled = settings.get("experimental.true_markdown") is True
         VimTextArea.search = None
 
@@ -260,6 +261,26 @@ class GPython(App):
 
         driver.write = record
 
+    @property
+    def cursor_position(self):
+        """Where Textual parks the terminal's cursor after each frame. While the bar cursor is shown
+        it is read from the editor at that moment, so it never lags behind a scroll or a resize."""
+        editor = VimTextArea.bar_editor
+        if editor is not None and editor.is_attached:
+            return editor.cursor_screen_offset
+        return self._cursor_position
+
+    @cursor_position.setter
+    def cursor_position(self, offset) -> None:
+        self._cursor_position = offset
+
+    def _sync_terminal_cursor_on_screen_change(self, _screen=None) -> None:
+        sync_terminal_cursor(self)
+
+    def _restore_cursor_shape_on_suspend(self, _app=None) -> None:
+        VimTextArea.bar_editor = None
+        write_to_terminal(self, RESET_CURSOR_SHAPE)
+
     def after_first_frame(self, callback) -> None:
         if self._first_frame_done:
             self.call_after_refresh(callback)
@@ -286,6 +307,9 @@ class GPython(App):
     async def on_mount(self) -> None:
         self._record_terminal_output()
         VimTextArea.mode = "normal"
+        self.screen_change_signal.subscribe(self, self._sync_terminal_cursor_on_screen_change)
+        self.app_suspend_signal.subscribe(self, self._restore_cursor_shape_on_suspend)
+        self.app_resume_signal.subscribe(self, self._sync_terminal_cursor_on_screen_change)
         header = self.query_one(Header)
         self._mode_chip = Static(id="mode-chip")
         await header.mount(self._mode_chip, after=header.query_one(HeaderIcon))
@@ -303,6 +327,7 @@ class GPython(App):
 
     async def on_unmount(self) -> None:
         images.forget_all(self)
+        write_to_terminal(self, RESET_CURSOR_SHAPE)
         await asyncio.gather(*(pane.kernel.shutdown() for pane in self.workspace.buffers), return_exceptions=True)
 
 
@@ -1062,7 +1087,8 @@ class GPython(App):
             (("restart",), "Restart kernel", lambda arg="": self.action_restart_kernel()),
             (("clear",), "Clear all outputs", lambda arg="": self.pane.clear_outputs()),
             (("img", "image"), "View this cell's image full screen (v in cell mode; :img 2 the second); :img save [N] [file] saves this cell's image(s) as PNG next to the notebook, :img open [N] opens them in the browser; :img save all / :img open all take every cell's", self._ex_image),
-            (("set",), "Options: vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall", self._ex_set),
+            (("set",), "Options: vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall cursor=bar|underline|block", self._ex_set),
+            (("copy", "yank"), "Copy to the system clipboard: :copy all the whole file (as :w would write it), :copy this cell", self._ex_copy),
             (("time", "timing"), "Show / hide each cell's run time in its header (t in cell mode; saved)", lambda arg="": self.set_timing(not Cell.show_timing)),
             (("variables", "vars"), "Toggle variables panel", lambda arg="": self.action_toggle_vars()),
             (("lazy",), "Toggle run mode: lazy (dependents only marked stale) / reactive (they re-run); saved (f3)", lambda arg="": self.action_toggle_lazy()),
@@ -1204,8 +1230,44 @@ class GPython(App):
             self.set_timing(not option.startswith("no"))
         elif option in ("autoinstall", "noautoinstall"):
             self.set_autoinstall(option == "autoinstall")
+        elif option.startswith("cursor"):
+            self.set_insert_cursor(option.partition("=")[2].strip())
         else:
-            self.notify(f"Unknown option: {option or '(none)'}  (vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall)", severity="error")
+            self.notify(f"Unknown option: {option or '(none)'}  (vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall cursor=bar|underline|block)", severity="error")
+
+    @staticmethod
+    def _insert_cursor_setting(value) -> str:
+        return value if value in INSERT_CURSOR_SHAPES else "bar"
+
+    def set_insert_cursor(self, shape: str) -> None:
+        """:set cursor=bar|underline|block: the cursor in insert mode; saved as `insert_cursor`."""
+        if shape not in INSERT_CURSOR_SHAPES:
+            self.notify(f"insert cursor is {VimTextArea.insert_cursor}; choose one of: {', '.join(INSERT_CURSOR_SHAPES)}", severity="warning" if shape else "information")
+            return
+        VimTextArea.insert_cursor = "block"
+        sync_terminal_cursor(self)
+        VimTextArea.insert_cursor = shape
+        sync_terminal_cursor(self)
+        config.save({"insert_cursor": shape})
+
+    def _ex_copy(self, arg: str = "") -> None:
+        """:copy all puts the whole notebook file on the system clipboard; :copy alone, this cell."""
+        what = arg.strip()
+        if what == "all":
+            text = self.pane.file_text()
+            label = self.pane.path.name if self.pane.path else "the notebook"
+        elif not what:
+            cell = self.current_cell()
+            if cell is None:
+                self.notify("No cell to copy", severity="warning")
+                return
+            text, label = cell.source, f"cell {cell.label}"
+        else:
+            self.notify(":copy all copies the whole file; :copy alone, this cell", severity="warning")
+            return
+        self.copy_to_clipboard(text)
+        lines = text.count("\n") + (not text.endswith("\n") and bool(text))
+        self.notify(f"Copied {label}: {lines} line{'s' if lines != 1 else ''}")
 
     async def _ex_write(self, arg: str = "") -> None:
         if arg:
