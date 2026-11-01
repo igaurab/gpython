@@ -101,6 +101,19 @@ def _dump_percent(cells: list[CellSpec]) -> str:
     return "\n".join(parts)
 
 
+def dump_clean(cells: list[CellSpec]) -> str:
+    """The cells as one script with no `# %%` lines: code as written, markdown as `# ` comments."""
+    parts = []
+    for cell in cells:
+        body = cell.source.strip("\n")
+        if not body.strip():
+            continue
+        if cell.kind == "markdown":
+            body = "\n".join(f"# {line}" if line.strip() else "#" for line in body.splitlines())
+        parts.append(body)
+    return "\n\n".join(parts) + "\n" if parts else ""
+
+
 def _kind(node: ast.stmt) -> str:
     if isinstance(node, (ast.Import, ast.ImportFrom)):
         return "import"

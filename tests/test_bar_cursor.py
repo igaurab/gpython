@@ -117,3 +117,13 @@ def test_copy_all_of_an_ipynb_is_code_with_markdown_as_comments(tmp_path, monkey
         assert "x = 1" in text and "print(x)" in text
 
     run(tmp_path, monkeypatch, test, "nb.ipynb", cells)
+
+
+def test_copy_all_clean_has_no_cell_markers(tmp_path, monkeypatch):
+    cells = (CellSpec("# Title", "markdown"), CellSpec("x = 1"), CellSpec("print(x)"))
+
+    async def test(app, pilot, written):
+        await app._run_ex("copy all clean")
+        assert app.clipboard == "# # Title\n\nx = 1\n\nprint(x)\n"
+
+    run(tmp_path, monkeypatch, test, "nb.ipynb", cells)
