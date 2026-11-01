@@ -4,9 +4,11 @@ Percent format (VS Code, Spyder, Jupytext):
     # %%                 code cell
     # %% [markdown]      markdown cell, each line prefixed with "# "
 
-Plain scripts are split automatically at top-level statements; module-level
-string statements (docstrings) become markdown cells. They are saved back
-without markers so the file stays an ordinary script.
+Plain scripts, and new files, are saved without markers so the file stays an
+ordinary script; where each cell starts is remembered in ~/.gpython (sidecar.py)
+and used when the file is reopened unchanged. Otherwise the script is split at
+top-level statements, and module-level strings (docstrings) become markdown cells.
+Files that already have `# %%` markers keep them.
 
 `.ipynb` files load code and markdown cells with their stored outputs and
 execution counts and save as nbformat 4, keeping the notebook metadata that was loaded.
@@ -188,17 +190,29 @@ def _statement_at(body: list[ast.stmt], lineno: int) -> ast.stmt | None:
 
 
 def _dump_script(cells: list[CellSpec]) -> str:
-    parts = []
+    return dump_script_with_layout(cells)[0]
+
+
+def dump_script_with_layout(cells: list[CellSpec]) -> tuple[str, list[dict]]:
+    """A plain script (markdown cells as docstrings, no `# %%`) and where each cell sits in it:
+    {start, end, kind, hide_code} with `end` exclusive, in lines. An empty cell writes no text and
+    is remembered as an empty range."""
+    parts: list[str] = []
+    layout: list[dict] = []
+    line = 0
     for cell in cells:
         body = cell.source.strip("\n")
         if not body.strip():
+            layout.append({"start": line, "end": line, "kind": cell.kind, "hide_code": cell.hide_code})
             continue
         if cell.kind == "markdown":
             escaped = body.replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
-            parts.append(f'"""\n{escaped}\n"""')
-        else:
-            parts.append(body)
-    return "\n\n\n".join(parts) + "\n"
+            body = f'"""\n{escaped}\n"""'
+        height = body.count("\n") + 1
+        layout.append({"start": line, "end": line + height, "kind": cell.kind, "hide_code": cell.hide_code})
+        parts.append(body)
+        line += height + 2
+    return "\n\n\n".join(parts) + "\n", layout
 
 
 _DEFAULT_IPYNB_META = {
@@ -549,9 +563,10 @@ def dump(cells: list[CellSpec | str], markers: bool = True) -> str:
 
 
 def load_cells(path: Path) -> tuple[list[CellSpec], bool]:
-    """Return (cells, uses_markers). New files use markers."""
+    """Return (cells, uses_markers). New files and plain scripts have no markers: their cells
+    come from the layout gpython keeps in ~/.gpython (see sidecar.py), or are split afresh."""
     if not path.exists():
-        return [CellSpec("")], True
+        return [CellSpec("")], False
     text = path.read_text()
     if _is_ipynb(path):
         return parse_ipynb(text, path), True
@@ -560,6 +575,11 @@ def load_cells(path: Path) -> tuple[list[CellSpec], bool]:
         return parse_marimo(text, path), True
     if has_markers(text):
         return parse(text), True
+    from . import sidecar
+
+    remembered = sidecar.read(path, text)
+    if remembered is not None:
+        return [CellSpec(source, kind, hide_code=hidden) for source, kind, hidden in remembered], False
     return split_script(text), False
 
 
@@ -575,5 +595,20 @@ def file_text(path: Path | None, cells: list[CellSpec | str], markers: bool = Tr
     return dump(specs, markers)
 
 
+def _is_plain_script(path: Path, specs: list[CellSpec], markers: bool) -> bool:
+    return not markers and not _is_ipynb(path) and not (
+        path.resolve() in _marimo_frame or (not path.exists() and _starts_with_marimo_import(specs))
+    )
+
+
 def save(path: Path, cells: list[CellSpec | str], markers: bool = True) -> None:
-    path.write_text(file_text(path, cells, markers))
+    """Write the notebook; a plain script also gets its cell layout remembered in ~/.gpython."""
+    specs = [_spec(c) for c in cells]
+    if not _is_plain_script(path, specs, markers):
+        path.write_text(file_text(path, specs, markers))
+        return
+    from . import sidecar
+
+    text, layout = dump_script_with_layout(specs)
+    path.write_text(text)
+    sidecar.write(path, text, layout)

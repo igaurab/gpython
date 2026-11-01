@@ -42,7 +42,7 @@ class NotebookPane(Vertical):
     def __init__(self, path: Path | None = None) -> None:
         super().__init__(classes="pane")
         self.path = path
-        self.markers = True
+        self.markers = False
         self.dirty = False
         self.exec_counter = 0
         self.kernel_state = "starting kernel…"
@@ -432,7 +432,7 @@ class NotebookPane(Vertical):
             return notebook.dump_clean(self.all_specs())
         if self.path is not None and self.path.suffix.lower() == ".ipynb":
             return notebook.dump(self.all_specs(), True)
-        return notebook.file_text(self.path, self.all_specs(), self.markers)
+        return notebook.file_text(self.path, self.all_specs(), self.markers or self.path is None)
 
     def write_file(self) -> None:
         notebook.save(self.path, self.all_specs(), self.markers)
