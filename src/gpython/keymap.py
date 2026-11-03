@@ -160,7 +160,7 @@ KEYMAP: list[tuple[str, str, str]] = [
     ("vars", "g", "Go to the line of the cell that defined the variable"),
     ("vars", "d", "Delete the variable from the kernel (cells that defined it become stale)"),
     ("vars", "/", "Filter by name or type"),
-    ("vars", "a", "Show / hide modules, functions and classes"),
+    ("vars", "a", "Hide / show modules, functions and classes (shown by default)"),
     ("vars", "q / escape", "Hide the panel / back to the notebook, the panel stays"),
     ("vars", "ctrl+w h / j / k", "Back to the notebook / to the outline below or above it"),
     ("debug", "n / s / r / c", "Next line / step into / run until return / continue"),
@@ -175,7 +175,7 @@ KEYMAP: list[tuple[str, str, str]] = [
     ("debug", "e", "Any pdb command (p expr, pp, !stmt)"),
     ("debug", "enter", "Full value of the local under the cursor"),
     ("debug", "g", "Go to the paused line in its cell"),
-    ("debug", "a / /", "Show modules, functions and classes / filter the locals"),
+    ("debug", "a / /", "Hide / show modules, functions and classes / filter the locals"),
 ]
 
 MODE_TITLES = {

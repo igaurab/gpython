@@ -1191,7 +1191,7 @@ class GPython(App):
             (("restart",), "Restart kernel", lambda arg="": self.action_restart_kernel()),
             (("clear",), "Clear all outputs", lambda arg="": self.pane.clear_outputs()),
             (("img", "image"), "View this cell's image full screen (v in cell mode; :img 2 the second); :img save [N] [file] saves this cell's image(s) as PNG next to the notebook, :img open [N] opens them in the browser; :img save all / :img open all take every cell's", self._ex_image),
-            (("set",), "Options: vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall cursor=bar|underline|block; debugger history: debug_detail=full|balanced|lean (full is the default), debug_history=200MB debug_events debug_thinning=on|off debug_repr_chars debug_strip_items debug_grid_size debug_stats=watched|cpu|off, debug_<key>? shows the value in effect", self._ex_set),
+            (("set",), "Options: vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall cursor=bar|underline|block; debugger history: debug_detail=full|balanced|lean|auto (full is the default; auto is full until 10,000 steps, then balanced), debug_history=200MB debug_events debug_thinning=on|off debug_repr_chars debug_strip_items debug_grid_size debug_stats=watched|cpu|off, debug_<key>? shows the value in effect", self._ex_set),
             (("copy", "yank"), "Copy to the system clipboard: :copy all the whole notebook as plain code, markdown as comments; :copy all metadata keeps the # %% cell lines (the file's text; a .ipynb as # %% code); :copy this cell", self._ex_copy),
             (("time", "timing"), "Show / hide each cell's run time in its header (t in cell mode; saved)", lambda arg="": self.set_timing(not Cell.show_timing)),
             (("outline", "tags"), "Outline panel: each cell with what it defines, live types after a run, its edges; enter jumps (ctrl+o)", lambda arg="": self.action_toggle_outline()),
@@ -1342,16 +1342,16 @@ class GPython(App):
         elif option.startswith("debug_"):
             self.set_debug_option(option)
         else:
-            self.notify(f"Unknown option: {option or '(none)'}  (vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall cursor=bar|underline|block debug_detail=full|balanced|lean debug_<limit>=…)", severity="error")
+            self.notify(f"Unknown option: {option or '(none)'}  (vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall cursor=bar|underline|block debug_detail=full|balanced|lean|auto debug_<limit>=…)", severity="error")
 
     def set_debug_option(self, option: str) -> None:
-        """:set debug_detail=full|balanced|lean picks the recorder's preset; :set debug_<limit>=value
+        """:set debug_detail=full|balanced|lean|auto picks the recorder's preset; :set debug_<limit>=value
         overrides one limit (debug_history=20MB, debug_events, debug_thinning=on|off,
         debug_repr_chars, debug_strip_items, debug_grid_size, debug_stats=watched|cpu|off; an empty
         value goes back to the preset); :set debug_<key>? shows the value in effect and where it
         comes from. Saved; the kernels use it from their next recording."""
         from .kernel import debug_settings
-        from .kernel_side import PRESETS, SETTINGS, resolve
+        from .kernel_side import DETAILS, SETTINGS, resolve
 
         name, equals, value = option.partition("=")
         asking = name.endswith("?")
@@ -1370,8 +1370,8 @@ class GPython(App):
                 self.notify(f"debug_{key} = {_debug_value(key, limits[key])} ({where})")
             return
         value = value.strip()
-        if key == "detail" and value not in PRESETS:
-            self.notify(f"debug_detail is one of: {', '.join(PRESETS)}", severity="error")
+        if key == "detail" and value not in DETAILS:
+            self.notify(f"debug_detail is one of: {', '.join(DETAILS)}", severity="error")
             return
         if key != "detail" and value and resolve({name: value})[1][key] != "override":
             self.notify(f"Not a value for {name}: {value}", severity="error")

@@ -183,14 +183,14 @@ def _apply(state: dict | None, entry: dict) -> dict:
     for name in entry.get("gone", ()):
         for field in FIELDS:
             state[field].pop(name, None)
-    for key in ("i", "cell", "line", "func", "loops"):
+    for key in ("i", "cell", "file", "line", "func", "loops"):
         state[key] = entry.get(key)
     return state
 
 
 def _as_record(state: dict) -> dict:
     return {
-        "i": state.get("i"), "cell": state.get("cell"), "line": state.get("line"), "func": state.get("func"),
+        "i": state.get("i"), "cell": state.get("cell"), "file": state.get("file"), "line": state.get("line"), "func": state.get("func"),
         "loops": state.get("loops") or [], "vars": [[name, value] for name, value in state["vars"].items()],
         "seqs": list(state["seqs"].values()), "grids": list(state["grids"].values()), "maps": list(state["maps"].values()),
     }

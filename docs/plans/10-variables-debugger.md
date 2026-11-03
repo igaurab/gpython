@@ -91,6 +91,11 @@ are not summarised again. Objects are never deep-compared or copied.
 | `debug_grid_size` | 50 | 20 | 10 |
 | `debug_stats` | watched | watched | watched |
 
+`debug_detail = auto` starts as full and, once a recording passes 10 000 steps (`AUTO_STEPS`),
+switches its storage limits (history, events, thinning, deltas; overrides kept) to balanced in
+place (`Recorder._go_balanced`); the footer then says `auto → balanced`. Deciding up front from
+the loops' sizes was rejected: at the breakpoint the iterables often do not exist yet.
+
 `debug_detail` picks the preset; each `debug_<limit>` overrides it (`resolve`). gpython sends
 the keys at kernel start and on `:set` (`_gp_configure`); a session reads them when it starts.
 `:set debug_<key>?` shows the value and whether it came from the preset or an override. When
@@ -123,9 +128,10 @@ type whose repr once took over 10 ms is not repr'd again.
 
 ## Follow-ups
 
-- `debug_detail = auto`: full when the cell's loops are small (known totals under ~10 000
-  iterations), balanced otherwise.
-- Recording during `s` into library code records nothing (only cells' frames).
+- Stepping (`n`, `s`, `r`) into library code records each stop with its file, line and the
+  function's locals; replay shows `file.py:12 in f()` and clears the cell highlight. The
+  run-until modes (`]`, `}`, `)`, stop-if) still watch the cells' own lines only, so a library
+  loop is never traced line by line.
 
 ## Loop goals and breakpoints
 

@@ -64,16 +64,19 @@ def test_ctrl_v_builds_the_panel_on_first_use_and_lists_the_variables(tmp_path):
         panel = app.query_one(VariablesPanel)
         assert app.pane.variables_visible and rows(panel) == []
         await run(app, pilot, 1)
-        await until(pilot, lambda: rows(panel) == ["label", "nums"])
+        await until(pilot, lambda: rows(panel) == ["json", "label", "nums"])
         assert panel.rows == [
             ("json", "module", "", "", "module", "c1"),
             ("label", "str", "'abc'", "len 3", "data", "c1"),
             ("nums", "list", "[1, 3, 5, 7]", "len 4", "data", "c1"),
         ]
-        assert "1 hidden" in str(panel.title.render())
+        assert "hidden" not in str(panel.title.render())
         await pilot.press("ctrl+w", "l")
         await pilot.pause()
         assert app.focused is panel.table and app.ui_mode == "vars"
+        await pilot.press("a")
+        assert rows(panel) == ["label", "nums"]
+        assert "1 hidden" in str(panel.title.render())
         await pilot.press("a")
         assert rows(panel) == ["json", "label", "nums"]
         await pilot.press("slash")
@@ -97,9 +100,9 @@ def test_enter_shows_the_value_g_jumps_and_d_deletes(tmp_path):
         await pilot.press("ctrl+v")
         c1 = await run(app, pilot, 1)
         panel = app.query_one(VariablesPanel)
-        await until(pilot, lambda: rows(panel) == ["label", "nums"])
+        await until(pilot, lambda: rows(panel) == ["json", "label", "nums"])
         panel.table.focus()
-        panel.table.move_cursor(row=1)
+        panel.table.move_cursor(row=2)
         await pilot.press("enter")
         await until(pilot, lambda: isinstance(app.screen, ValueScreen))
         assert app.screen.value == {"kind": "text", "text": "[1, 3, 5, 7]"}
@@ -110,9 +113,9 @@ def test_enter_shows_the_value_g_jumps_and_d_deletes(tmp_path):
         assert app.focused is c1.editor and c1.editor.cursor_location == (1, 0)
         await pilot.press("ctrl+w", "l")
         await pilot.pause()
-        panel.table.move_cursor(row=1)
+        panel.table.move_cursor(row=2)
         await pilot.press("d")
-        await until(pilot, lambda: rows(panel) == ["label"])
+        await until(pilot, lambda: rows(panel) == ["json", "label"])
         assert await app.kernel.variables({"nums"}) == [] and c1.status == "stale"
 
     ui(tmp_path, test)
@@ -322,7 +325,8 @@ def test_set_debug_options_are_saved_and_explained(tmp_path):
         await ex("set debug_history=1GB")
         assert await ex("set debug_history?") == "debug_history = 1024 MB (override)"
         assert "Not a value" in await ex("set debug_thinning=sideways")
-        assert "one of: full, balanced, lean" in await ex("set debug_detail=huge")
+        assert "one of: full, balanced, lean, auto" in await ex("set debug_detail=huge")
+        assert "debug_detail = auto" in await ex("set debug_detail=auto")
 
     ui(tmp_path, test, kernel=False)
 
@@ -333,7 +337,7 @@ def test_ctrl_v_after_a_run_lists_the_variables_at_once(tmp_path):
         await until(pilot, lambda: app.pane._var_rows)
         await pilot.press("ctrl+v")
         panel = app.query_one(VariablesPanel)
-        await until(pilot, lambda: rows(panel) == ["label", "nums"])
+        await until(pilot, lambda: rows(panel) == ["json", "label", "nums"])
         assert "Variables" in str(panel.title.render()) and "g go to cell" in str(panel.footer.render())
 
     ui(tmp_path, test)

@@ -188,7 +188,7 @@ a short value and the cell that bound it. `ctrl+w l` focuses it, then:
 | `g` | Go to the line of the cell that defined it |
 | `d` | Delete it from the kernel (the cell becomes stale) |
 | `/` | Filter by name or type |
-| `a` | Show modules, functions and classes too |
+| `a` | Hide modules, functions and classes (shown by default) |
 | `q`, `escape` | Hide the panel / back to the notebook |
 
 `input()` in a cell asks at the bottom of the screen (`escape` interrupts).
@@ -218,7 +218,9 @@ last stop and their earlier values (`total: 0 → 1 → 4`).
 
 How much is recorded is one setting, `debug_detail`, saved in the config and
 set with `:set debug_detail=…` (it applies to the next recording):
-`full` (the default) keeps every step with every value, up to 200 MB; `balanced`
+`full` (the default) keeps every step with every value, up to 200 MB; `auto`
+is full until a recording passes 10,000 steps, then balanced (the footer says
+`auto → balanced`); `balanced`
 keeps changes only, with a keyframe every 100 steps, and thins old iterations
 (every line of the last three, one moment per older iteration, then every 10th
 and every 100th), up to 20 MB; `lean` keeps only the loop positions and watched
@@ -231,6 +233,8 @@ where it comes from. The footer shows `full · 1,240 steps · 3.1 MB / 200 MB`.
 In every preset tensors and arrays are summarised by type, shape, dtype and
 device (no GPU sync), also inside lists; their strips show the pointers but no
 values; watched ones also get their values, mean, min, max and the NaN count.
+Stepping into library code with `s` records those steps too, shown as
+`file.py:12 in f()`.
 pdb breakpoints (`e` then `b 12`) are underlined in the cell and stop `]`, `}`,
 `)` and stop-if too.
 Nothing is installed while no cell is paused, so a normal run costs nothing.

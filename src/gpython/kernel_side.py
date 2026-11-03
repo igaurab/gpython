@@ -63,6 +63,9 @@ PRESETS = {
     },
 }
 DEFAULT_PRESET = "full"
+DETAILS = (*PRESETS, "auto")
+AUTO_STEPS = 10_000
+AUTO_SWITCH = ("history", "events", "thinning", "deltas")
 SETTINGS = ("history", "events", "thinning", "repr_chars", "strip_items", "grid_size", "stats")
 THINNING = {"on": (3, 100, 1000), "aggressive": (1, 20, 200)}
 
@@ -101,11 +104,14 @@ def _parse(key: str, value):
 
 def resolve(settings: dict) -> tuple[dict, dict]:
     """The limits in effect for config keys `debug_detail` and `debug_<limit>`, and where each came
-    from: the preset's name, or "override". An unknown preset or a bad value falls back to the preset."""
+    from: the preset's name, or "override". An unknown preset or a bad value falls back to the preset.
+
+    `auto` starts as full; its limits carry `then`, the balanced storage limits (those not
+    overridden) that the Recorder switches to once a recording passes AUTO_STEPS steps."""
     detail = str(settings.get("debug_detail", DEFAULT_PRESET)).lower()
-    if detail not in PRESETS:
+    if detail not in DETAILS:
         detail = DEFAULT_PRESET
-    limits = dict(PRESETS[detail], detail=detail)
+    limits = dict(PRESETS["full" if detail == "auto" else detail], detail=detail)
     sources = {key: detail for key in SETTINGS}
     for key in SETTINGS:
         value = settings.get(f"debug_{key}")
@@ -116,6 +122,8 @@ def resolve(settings: dict) -> tuple[dict, dict]:
             sources[key] = "override"
         except (ValueError, KeyError):
             continue
+    if detail == "auto":
+        limits["then"] = {key: PRESETS["balanced"][key] for key in AUTO_SWITCH if sources.get(key) != "override"}
     return limits, sources
 
 
@@ -893,7 +901,7 @@ class Recorder:
             "grids": {view["name"]: view for view in record.get("grids", [])},
             "maps": {view["name"]: view for view in record.get("maps", [])},
         }
-        entry = {key: record.get(key) for key in ("cell", "line", "func", "loops")}
+        entry = {key: record.get(key) for key in ("cell", "file", "line", "func", "loops")}
         entry["i"] = self.count
         key = self.limits["deltas"] == "off" or self.since_key >= KEYFRAME_EVERY
         if key:
@@ -912,6 +920,8 @@ class Recorder:
         self.sizes.append(size)
         self.bytes += size
         self.count += 1
+        if self.count >= AUTO_STEPS and "then" in self.limits:
+            self._go_balanced()
         path = _path(entry)
         if path and path != self.last_path and self.limits["thinning"] != "off" and len(self.entries) >= self.next_thin:
             self.thin()
@@ -919,6 +929,12 @@ class Recorder:
         self.last_path = path
         self._cap()
         return entry
+
+    def _go_balanced(self) -> None:
+        """debug_detail=auto: the run is long, so keep changes only, thin and cap at the balanced size."""
+        self.limits.update(self.limits.pop("then"))
+        self.limits["detail"] = "auto → balanced"
+        self.next_thin = 0
 
     def _cap(self) -> None:
         cap, events = self.limits["history"], self.limits["events"]
@@ -1340,6 +1356,8 @@ def _make_debugger_class():
                     self.stop_index = pending[2]["i"]
                 else:
                     self.stop_index = self.record(frame, line)["i"]
+            elif frame is not None and not self.postmortem and self.recording:
+                self.stop_index = self.record(frame, frame.f_lineno)["i"]
             else:
                 self.stop_index = None
             self.pending = None

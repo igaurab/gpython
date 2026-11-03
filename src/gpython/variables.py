@@ -2,7 +2,7 @@
 
 Variables mode lists what the cells defined, with type, shape or length, a short value and the
 cell that bound it; enter opens the full value, g jumps to the cell, d deletes the name from the
-kernel, / filters, a shows modules, functions and classes too.
+kernel, / filters, a hides modules, functions and classes (they show by default).
 
 When a cell pauses in breakpoint() (or `r d`, `:debug`), the same panel turns into the debugger:
 the loop stack, pointer strips over sequences, grids and dict changes on top (debugview), the
@@ -109,7 +109,7 @@ class VariablesPanel(Vertical):
         super().__init__(id="variables")
         self.pane = pane
         self.mode = "vars"
-        self.show_all = False
+        self.show_all = True
         self.filter = ""
         self.rows: list[tuple] = []
         self.session: debugview.DebugSession | None = None

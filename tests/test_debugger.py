@@ -356,6 +356,33 @@ def test_full_keeps_every_step_of_a_thousand_iterations():
     assert history["steps"] >= 2000
 
 
+def test_auto_is_full_for_short_runs_and_balanced_once_a_run_is_long():
+    limits, sources = kernel_side.resolve({"debug_detail": "auto", "debug_history": "50MB"})
+    assert limits["detail"] == "auto" and limits["thinning"] == "off" and limits["deltas"] == "off"
+    assert limits["then"] == {"events": 200_000, "thinning": "on", "deltas": "on"} and sources["history"] == "override"
+    recorder = kernel_side.Recorder(limits)
+    loop = {"line": 2, "header": "for k in range(6000)", "kind": "for", "vars": [], "n": 6000}
+
+    def add(k, line):
+        recorder.add({"cell": "c1", "line": line, "func": "<module>", "loops": [dict(loop, k=k)], "vars": [["k", str(k)], ["line", str(line)]]})
+
+    for k in range(1, 4000):
+        add(k, 3), add(k, 4)
+    assert recorder.summary()["detail"] == "auto" and recorder.summary()["steps"] == 7998 and recorder.thinned == 0
+    for k in range(4000, 6001):
+        add(k, 3), add(k, 4)
+    summary = recorder.summary()
+    assert summary["detail"] == "auto → balanced" and summary["cap"] == 50 * kernel_side.MB
+    assert recorder.thinned > 0 and summary["steps"] < 12000
+    assert recorder.entries[-1]["key"] is False and recorder.entries[-1]["loops"][0]["k"] == 6000
+    kernel_side.configure({"debug_detail": "auto"})
+    try:
+        stops, _ = run_cell(NESTED, ["n", "n", "c"])
+    finally:
+        kernel_side.configure({})
+    assert stops[-1]["history"]["detail"] == "auto"
+
+
 def test_thinning_keeps_the_newest_iterations_in_full_detail():
     recorder = kernel_side.Recorder(kernel_side.resolve({"debug_detail": "balanced"})[0])
     loop = {"line": 2, "header": "for k in range(500)", "kind": "for", "vars": [], "n": 500}
@@ -505,6 +532,22 @@ def test_a_function_defined_in_a_cell_is_stepped_into_and_the_stack_shown():
     assert loops(inside) == [("for x in xs", {"x": "1"}, 1, 2)]
     assert seq(inside, "xs")["ptrs"] == [["x", 0]]
     assert stops[5]["frame"] == 0 and stops[5]["now"]["func"] == "<module>"
+
+
+def test_steps_into_library_code_are_recorded_with_their_file():
+    library_source = "def double(xs):\n    total = 0\n    for x in xs:\n        total += x * 2\n    return total\n"
+    library = {"__name__": "mylib"}
+    exec(compile(library_source, "/libs/mylib.py", "exec"), library)
+    linecache.cache["/libs/mylib.py"] = (len(library_source), None, library_source.splitlines(True), "/libs/mylib.py")
+    source = "breakpoint()\nanswer = double([1, 2])\n"
+    stops, _ = run_cell(source, ["s", "s", "s", "s", "c"], cid="c9", namespace={"__name__": "__main__", "double": library["double"]})
+    inside = stops[3]
+    assert inside["now"]["func"] == "double" and inside["now"]["cell"] is None and inside["now"]["file"] == "/libs/mylib.py"
+    assert inside["index"] is not None
+    records = [record for stop in stops for batch in stop["history"]["batches"] for record in batch["records"]]
+    in_library = [record for record in records if record.get("file") == "/libs/mylib.py"]
+    assert in_library and all(record["func"] == "double" and record["cell"] is None for record in in_library)
+    assert any("total" in record.get("vars", {}) for record in in_library)
 
 
 class CpuTensor(FakeTensor):
