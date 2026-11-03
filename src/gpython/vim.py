@@ -60,6 +60,7 @@ MONOKAI_NORMAL = dataclasses.replace(
 )
 SEARCH_STYLE = Style(color="#000000", bgcolor="#ffd75f", bold=True)
 DEBUG_LINE_STYLE = Style(bgcolor="#5f0000", bold=True)
+BREAK_LINE_STYLE = Style(underline=True, color="#ff5f5f")
 _REVERSE = Style(reverse=True)
 INSERT_CURSOR_SHAPES = {"bar": "\x1b[5 q", "underline": "\x1b[3 q", "block": ""}
 SHOW_CURSOR = "\x1b[?25h"
@@ -292,6 +293,7 @@ class VimTextArea(TextArea):
     visual = ""
     search: re.Pattern | None = None
     debug_line: int | None = None
+    debug_breaks: frozenset = frozenset()
 
     class ModeChanged(Message):
         def __init__(self, editor: VimTextArea, mode: str) -> None:
@@ -450,6 +452,8 @@ class VimTextArea(TextArea):
         line = self._search_line(line_index) if self.search is not None else super().get_line(line_index)
         if line_index == self.debug_line:
             line.stylize(DEBUG_LINE_STYLE)
+        elif line_index in self.debug_breaks:
+            line.stylize(BREAK_LINE_STYLE)
         if self.visual == "V" and self._theme is not None and self._theme.selection_style is not None:
             first, last = sorted((self._anchor[0], self.cursor_location[0]))
             if first <= line_index <= last:
@@ -470,6 +474,13 @@ class VimTextArea(TextArea):
         """The line a paused debugger is on, painted in DEBUG_LINE_STYLE (None clears it)."""
         if row != self.debug_line:
             self.debug_line = row
+            self.repaint_search()
+
+    def set_debug_breaks(self, rows) -> None:
+        """The lines that hold a pdb breakpoint (`b 12` typed with e), painted in BREAK_LINE_STYLE."""
+        rows = frozenset(rows)
+        if rows != self.debug_breaks:
+            self.debug_breaks = rows
             self.repaint_search()
 
     def repaint_search(self) -> None:

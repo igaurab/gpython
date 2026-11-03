@@ -422,7 +422,7 @@ def test_a_tensor_is_summarised_from_its_metadata_unless_watched():
     tensor = FakeTensor()
     source = "breakpoint()\nfor step in range(3):\n    weights = tensor\n    step2 = step\n"
     stops, _ = run_cell(source, ["n", "n", "n", "n", "_gp_watch weights", "c"], namespace={"__name__": "__main__", "tensor": tensor})
-    assert tensor.touched == ["mean", "min", "max"] or set(tensor.touched) <= {"mean"}
+    assert set(tensor.touched) <= {"mean", "min", "max", "getitem"}
     shown = dict(stops[4]["now"]["vars"])["weights"]
     assert shown.startswith("FakeTensor(1000, 512) torch.float32 cuda:0")
     assert stops[5]["watches"][0][1].startswith("FakeTensor(1000, 512)")
@@ -505,3 +505,76 @@ def test_a_function_defined_in_a_cell_is_stepped_into_and_the_stack_shown():
     assert loops(inside) == [("for x in xs", {"x": "1"}, 1, 2)]
     assert seq(inside, "xs")["ptrs"] == [["x", 0]]
     assert stops[5]["frame"] == 0 and stops[5]["now"]["func"] == "<module>"
+
+
+class CpuTensor(FakeTensor):
+    """A small 1-D tensor on the CPU, in a list of them too: still nothing of its data is read
+    unless it is watched, in every preset."""
+
+    __module__ = "torch"
+
+    def __init__(self):
+        super().__init__()
+        self.shape, self.device, self.ndim = (8,), "cpu", 1
+
+    def numel(self):
+        return 8
+
+    def __len__(self):
+        return 8
+
+
+@pytest.mark.parametrize("preset", ["full", "balanced", "lean"])
+def test_arrays_on_the_cpu_and_lists_of_tensors_are_never_read_unless_watched(preset):
+    tensor = CpuTensor()
+    source = "breakpoint()\nlosses = []\nfor i in range(3):\n    w = t\n    losses.append(w)\n    x = w[i]\n"
+    kernel_side.configure({"debug_detail": preset})
+    try:
+        stops, raised = run_cell(source, ["n", "n", "n", "n", "_gp_next 0", "_gp_until i == 2", "c"], namespace={"__name__": "__main__", "t": tensor})
+    finally:
+        kernel_side.configure({})
+    assert isinstance(raised, RuntimeError) and tensor.touched == ["getitem"]
+    strip = next(view for view in stops[-1]["now"]["seqs"] if view["name"] == "w")
+    assert set(strip["items"]) == {"·"} and strip["ptrs"] == [["i", 0]]
+    assert "losses" in dict(stops[-1]["now"]["vars"]) and "CpuTensor(8,)" in dict(stops[-1]["now"]["vars"])["losses"]
+
+
+LAST_LOOP = "breakpoint()\nacc = 0\nfor k in range(5):\n    acc += k\n"
+
+
+def test_loop_end_on_the_cells_last_statement_pauses_on_the_way_out():
+    stops, raised = run_cell(LAST_LOOP, ["n", "n", "n", "_gp_end", "c"])
+    assert raised is None and len(stops) == 5
+    assert stops[4]["event"] == "return" and dict(stops[4]["now"]["vars"])["acc"] == "10"
+    stops, _ = run_cell(LAST_LOOP + "after = acc\n", ["n", "n", "n", "_gp_end", "c"])
+    assert stops[4]["event"] == "line" and stops[4]["now"]["line"] == 5
+    stops, _ = run_cell(LAST_LOOP, ["n", "n", "n", "_gp_goto 0 9", "c"])
+    assert stops[4]["event"] == "return" and sys.gettrace() is None
+
+
+def test_an_armed_cell_that_never_runs_leaves_no_trace():
+    kernel_side.arm("never")
+    kernel_side.run_ended()
+    assert sys.gettrace() is not None
+    kernel_side.new_run("c1")
+    kernel_side.run_ended()
+    assert sys.gettrace() is None and kernel_side._state["armed"] is None
+
+
+def test_pdb_breakpoints_of_a_cell_are_in_the_payload():
+    stops, _ = run_cell(NESTED, ["b 7", "c", "c"])
+    assert stops[1]["breaks"] == {"c1": [7]} and stops[2]["now"]["line"] == 7
+
+
+def test_a_sequence_that_is_not_indexed_gets_no_warning_from_a_loop_counter():
+    source = "found = []\nbreakpoint()\nfor a in range(2):\n    b = a\n"
+    stops, _ = run_cell(source, ["n", "n", "c"])
+    view = seq(stops[-1], "found")
+    assert view["ptrs"] == [] and debugview.seq_warnings(view, None) == []
+
+
+def test_loop_keys_stop_at_a_pdb_breakpoint_and_count_each_iteration_once():
+    stops, _ = run_cell(NESTED, ["n", "n", "n", "b 7", "_gp_until total > 1000", "c"])
+    assert stops[5]["now"]["line"] == 7 and stops[5]["breaks"] == {"c1": [7]}
+    stops, _ = run_cell(NESTED, ["n", "n", "n", "b 7", "_gp_next 1", "_gp_next 1", "c", "c"])
+    assert [loop[2] for loop in loops(stops[5])] == [2, 0] and [loop[2] for loop in loops(stops[6])] == [3, 0]

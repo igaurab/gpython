@@ -89,7 +89,7 @@ are not summarised again. Objects are never deep-compared or copied.
 | `debug_repr_chars` | 2000 | 80 | 40 |
 | `debug_strip_items` | 500 | 40 | 20 |
 | `debug_grid_size` | 50 | 20 | 10 |
-| `debug_stats` | cpu | watched | watched |
+| `debug_stats` | watched | watched | watched |
 
 `debug_detail` picks the preset; each `debug_<limit>` overrides it (`resolve`). gpython sends
 the keys at kernel start and on `:set` (`_gp_configure`); a session reads them when it starts.
@@ -101,8 +101,12 @@ the full preset's cap is hit the footer says "history full (200 MB): oldest step
 
 numpy, pandas, torch, jax and friends are told apart by the type's module; nothing is imported.
 A summary is type, shape, dtype and device, read from metadata. Stats (mean, min, max, NaN
-count) only for watched names, or with `debug_stats=cpu` for data on the CPU of at most 100 000
-elements; a failing stat is skipped. Strips and grids over arrays only on the CPU. A repr is
+count) only for watched names, or with `debug_stats=cpu` (opt-in, no preset uses it) for data on
+the CPU of at most 100 000 elements; a failing stat is skipped. An array or tensor in a container
+is shown by its metadata too (`_Shaper`), so a list of CUDA losses never syncs. Strips and grids
+over an array or tensor that is not watched are drawn from its shape alone (boxes `·`, the
+pointers and their warnings still exact); a watched one is read with one `.tolist()` of the
+window. `.item()` is only used on numpy scalars, which are host values already. A repr is
 capped in length; an object whose `len()` is over 100 000 is shown by its type and length; a
 type whose repr once took over 10 ms is not repr'd again.
 
@@ -122,4 +126,14 @@ type whose repr once took over 10 ms is not repr'd again.
 - `debug_detail = auto`: full when the cell's loops are small (known totals under ~10 000
   iterations), balanced otherwise.
 - Recording during `s` into library code records nothing (only cells' frames).
-- Breakpoints by line (`b 12`) are pdb's, typed with `e`; they are not drawn in the editor.
+
+## Loop goals and breakpoints
+
+- IPython runs each top-level statement as its own frame. A loop goal (`]`, `}`, `)`, `G`) whose
+  frame returns before the goal is met pauses on the way out (event "return") when nothing of
+  the cell runs after it (`ends_run`: a function, or the cell's last statement); otherwise the
+  next statement's first line is the stop.
+- pdb breakpoints (`b 12`, typed with `e`) stop the run-until modes too: the hook checks
+  `break_here`, and pdb's trace is taken off (`_untrace`) so no line is counted twice. The
+  payload's `breaks` underlines those lines in the cells (`VimTextArea.set_debug_breaks`).
+- `arm` (`r d`) is dropped at the end of the next cell run even when the cell's code never ran.

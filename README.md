@@ -212,7 +212,7 @@ last stop and their earlier values (`total: 0 → 1 → 4`).
 | `G` | Go to iteration N (`N L` for loop level L) |
 | `b` / `B` | Stop if an expression is true (`j == len(nums) - 1`, `loss != loss`); `B` records every line on the way (`:stop if …`) |
 | `h` / `l` | Back / forward through the recorded moments: time travel over what already ran |
-| `T` | Timeline: one row per iteration, inner loops nested, changed values, ⚠ where an index was out of range |
+| `T` | Timeline: one row per iteration, inner loops nested (`l` / `h` open and close them), changed values, ⚠ where an index was out of range |
 | `u` / `d` | Up / down the stack |
 | `w`, `e`, `enter` | Watch an expression, any pdb command, the full value of a local |
 
@@ -225,10 +225,14 @@ and every 100th), up to 20 MB; `lean` keeps only the loop positions and watched
 names, up to 5 MB. Each limit has its own key that overrides the preset:
 `debug_history` (`20MB`, `1GB`), `debug_events`, `debug_thinning=on|off`,
 `debug_repr_chars`, `debug_strip_items`, `debug_grid_size` and
-`debug_stats=watched|cpu|off`; `:set debug_history?` says what is in effect and
+`debug_stats=watched|cpu|off` (`cpu` adds stats for small arrays on the CPU);
+`:set debug_history?` says what is in effect and
 where it comes from. The footer shows `full · 1,240 steps · 3.1 MB / 200 MB`.
 In every preset tensors and arrays are summarised by type, shape, dtype and
-device (no GPU sync); watched ones also get mean, min, max and the NaN count.
+device (no GPU sync), also inside lists; their strips show the pointers but no
+values; watched ones also get their values, mean, min, max and the NaN count.
+pdb breakpoints (`e` then `b 12`) are underlined in the cell and stop `]`, `}`,
+`)` and stop-if too.
 Nothing is installed while no cell is paused, so a normal run costs nothing.
 
 ## Markdown cells

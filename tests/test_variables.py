@@ -217,8 +217,16 @@ def test_a_breakpoint_pauses_in_the_panel_and_steps_through_the_loop(tmp_path):
         assert [node.k for node in app.screen.roots] == [1, 2, 3]
         await pilot.press("escape")
         await pilot.pause()
+        await pilot.press("e")
+        await pilot.pause()
+        await pilot.press(*"b 5", "enter")
+        await until(pilot, lambda: c3.editor.debug_breaks == {4})
+        await pilot.press("right_parenthesis")
+        await stopped(app, pilot)
+        assert session.record["line"] == 5 and c3.editor.debug_line == 4
         await pilot.press("c")
         await until(pilot, lambda: app.pane.debug is None and c3.run_status == "ok")
+        assert c3.editor.debug_breaks == frozenset()
         assert "16" in c3.output_text and panel.mode == "vars" and c3.editor.debug_line is None
         assert not app.query_one("#side").has_class("-wide")
 
@@ -317,3 +325,15 @@ def test_set_debug_options_are_saved_and_explained(tmp_path):
         assert "one of: full, balanced, lean" in await ex("set debug_detail=huge")
 
     ui(tmp_path, test, kernel=False)
+
+
+def test_ctrl_v_after_a_run_lists_the_variables_at_once(tmp_path):
+    async def test(app, pilot):
+        await run(app, pilot, 1)
+        await until(pilot, lambda: app.pane._var_rows)
+        await pilot.press("ctrl+v")
+        panel = app.query_one(VariablesPanel)
+        await until(pilot, lambda: rows(panel) == ["label", "nums"])
+        assert "Variables" in str(panel.title.render()) and "g go to cell" in str(panel.footer.render())
+
+    ui(tmp_path, test)

@@ -77,6 +77,7 @@ class NotebookPane(Vertical):
         self._variables = None
         self.debug = None
         self._debug_line: tuple | None = None
+        self._debug_breaks: dict[str, list[int]] = {}
         self._debug_keep_view = False
         self._timeline_wanted = False
         self._input_screen = None
@@ -754,6 +755,17 @@ class NotebookPane(Vertical):
         self._variables_panel().show_debug(session)
         record = session.record
         self._highlight(record.get("cell"), record.get("line"))
+        self._draw_breaks(session.payload.get("breaks") or {})
+
+    def _draw_breaks(self, breaks: dict[str, list[int]]) -> None:
+        """Underline the lines that hold a pdb breakpoint, in the cells that have one."""
+        if breaks == self._debug_breaks:
+            return
+        for cid in set(self._debug_breaks) | set(breaks):
+            cell = self._cell_by_id(cid)
+            if cell is not None:
+                cell.editor.set_debug_breaks(line - 1 for line in breaks.get(cid, ()))
+        self._debug_breaks = breaks
 
     def _highlight(self, cid: str | None, line: int | None) -> None:
         """Mark the paused line in its cell's editor: one style on one line, no CSS classes."""
@@ -854,6 +866,7 @@ class NotebookPane(Vertical):
         self.debug = None
         self._timeline_wanted = False
         self._highlight(None, None)
+        self._draw_breaks({})
         if self._variables is not None:
             focused = self.app.focused
             inside = focused is not None and self._variables in focused.ancestors_with_self

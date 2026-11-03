@@ -129,7 +129,12 @@ class VariablesPanel(Vertical):
         yield self.footer
 
     def on_mount(self) -> None:
-        self.show_vars(self.rows)
+        self.call_after_refresh(self._first_draw)
+
+    def _first_draw(self) -> None:
+        """The rows known when the panel was built (`is_mounted` is still False in on_mount)."""
+        if self.mode == "vars":
+            self.show_vars(self.rows)
 
     @property
     def width(self) -> int:
@@ -461,6 +466,8 @@ class TimelineScreen(ModalScreen[int | None]):
         Binding("escape,q", "dismiss(None)", show=False),
         Binding("j", "cursor(1)", show=False),
         Binding("k", "cursor(-1)", show=False),
+        Binding("l,right", "fold(True)", show=False),
+        Binding("h,left", "fold(False)", show=False),
     ]
 
     def __init__(self, roots: list[debugview.Iteration], total: int) -> None:
@@ -501,6 +508,8 @@ class TimelineScreen(ModalScreen[int | None]):
         tree = self.query_one(Tree)
         tree.focus()
         marked = next((node for node in tree.root.children if "⚠" in str(node.label)), None)
+        if marked is None and tree.root.children:
+            marked = tree.root.children[0]
         if marked is not None:
             tree.move_cursor(marked)
 
@@ -510,6 +519,19 @@ class TimelineScreen(ModalScreen[int | None]):
             tree.action_cursor_down()
         else:
             tree.action_cursor_up()
+
+    def action_fold(self, expand: bool) -> None:
+        """l opens the iteration under the cursor (its inner loop's iterations), h closes it or goes to its parent."""
+        tree = self.query_one(Tree)
+        node = tree.cursor_node
+        if node is None:
+            return
+        if expand and node.allow_expand and not node.is_expanded:
+            node.expand()
+        elif not expand and node.is_expanded:
+            node.collapse()
+        elif not expand and node.parent is not None and node.parent is not tree.root:
+            tree.move_cursor(node.parent)
 
     def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
         event.stop()

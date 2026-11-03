@@ -10,7 +10,7 @@ Rules that hold in every preset: no hook is installed while nothing is being ste
 for or recorded; on Python 3.12+ the run-until modes use sys.monitoring LINE events for the
 cells' own code only; history goes to gpython in batches at stops; and a tensor or array is
 summarised by type, shape, dtype and device, never by repr(), .item(), .mean() or .tolist(),
-unless it is watched (or, in the full preset, small and on the CPU).
+unless it is watched (or `debug_stats=cpu` asks for stats of small CPU data).
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ MB = 1024 * 1024
 PRESETS = {
     "full": {
         "history": 200 * MB, "events": 2_000_000, "thinning": "off", "deltas": "off",
-        "repr_chars": 2000, "strip_items": 500, "grid_size": 50, "stats": "cpu",
+        "repr_chars": 2000, "strip_items": 500, "grid_size": 50, "stats": "watched",
     },
     "balanced": {
         "history": 20 * MB, "events": 200_000, "thinning": "on", "deltas": "on",
@@ -128,8 +128,18 @@ def limits() -> dict:
     return resolve(_state["settings"])[0]
 
 
+class _Shaper(reprlib.Repr):
+    """reprlib that never calls repr() on an array or tensor inside a container (a list of CUDA
+    losses would sync the GPU once per element): those are shown by their metadata."""
+
+    def repr1(self, x, level):
+        if _heavy(x):
+            return heavy_summary(x)
+        return super().repr1(x, level)
+
+
 def _repr(maxstring: int, maxother: int, items: int, level: int) -> reprlib.Repr:
-    shaper = reprlib.Repr()
+    shaper = _Shaper()
     shaper.maxstring, shaper.maxother, shaper.maxlevel = maxstring, maxother, level
     shaper.maxlist = shaper.maxtuple = shaper.maxset = shaper.maxfrozenset = shaper.maxdeque = items
     shaper.maxdict = max(2, items // 2)
@@ -313,7 +323,7 @@ def cell_text(value, width: int = 6) -> str:
         text = format(value, ".4g")
     elif isinstance(value, str):
         text = value if len(value) <= 1 else repr(value)
-    elif _heavy(value) and getattr(value, "ndim", 1) == 0 and on_cpu(value) and hasattr(value, "item"):
+    elif _root(value) == "numpy" and getattr(value, "ndim", 1) == 0 and hasattr(value, "item"):
         item = value.item()
         text = format(item, ".4g") if isinstance(item, float) else str(item)
     elif _heavy(value):
@@ -365,7 +375,10 @@ def _table(value):
     grid = _grid_shape(value)
     if grid is not None:
         rows, cols = grid
-        shown = [[cell_text(_at(value, r, c), 40) for c in range(min(cols, TABLE_COLS))] for r in range(min(rows, TABLE_ROWS))]
+        if _heavy(value):
+            shown = [[cell_text(x, 40) for x in row] for row in value[:TABLE_ROWS, :TABLE_COLS].tolist()]
+        else:
+            shown = [[cell_text(_at(value, r, c), 40) for c in range(min(cols, TABLE_COLS))] for r in range(min(rows, TABLE_ROWS))]
         return {
             "kind": "table", "columns": [str(c) for c in range(min(cols, TABLE_COLS))],
             "index": [str(r) for r in range(len(shown))], "rows": shown, "total": [rows, cols],
@@ -393,7 +406,7 @@ def _full_text(value) -> str:
 
 
 def _grid_shape(value):
-    if _heavy(value) and getattr(value, "ndim", None) == 2 and on_cpu(value):
+    if _heavy(value) and getattr(value, "ndim", None) == 2:
         return tuple(value.shape)
     if isinstance(value, (list, tuple)) and value and len(value) <= 100_000:
         first = value[0]
@@ -436,10 +449,14 @@ class CellInfo:
         self.pointers: dict[str, list[str]] = {}
         self.grids: dict[str, list[tuple[str, str]]] = {}
         self.scopes: set[int] = {0}
+        self.last_start = 0
         try:
             tree = ast.parse(source)
         except (SyntaxError, ValueError):
             return
+        if tree.body:
+            last = tree.body[-1]
+            self.last_start = min([d.lineno for d in getattr(last, "decorator_list", [])] + [last.lineno])
         self._visit(tree, 0)
 
     def _visit(self, node, scope: int) -> None:
@@ -622,11 +639,12 @@ def derived_position(loop: Loop, frame):
 
 
 def _seq_kind(value) -> str:
-    """seq, grid, map or '' for the views under the loop stack. Arrays and tensors only on the CPU."""
+    """seq, grid, map or '' for the views under the loop stack. An array or tensor on any device
+    qualifies: unless it is watched only its shape is used."""
     if isinstance(value, (dict, set, frozenset)):
         return "map"
     if _heavy(value):
-        if hasattr(value, "iloc") or _root(value) not in ("numpy", "torch", "jax", "jaxlib", "cupy") or not on_cpu(value):
+        if hasattr(value, "iloc") or _root(value) not in ("numpy", "torch", "jax", "jaxlib", "cupy"):
             return ""
         ndim = getattr(value, "ndim", None)
         if ndim == 1:
@@ -654,21 +672,31 @@ def _window(points: list[int], length: int, size: int) -> int:
     return start
 
 
-def _seq_view(name: str, value, pointers: list[list], size: int) -> dict:
+def _seq_view(name: str, value, pointers: list[list], size: int, watched: bool = False) -> dict:
+    """A window of a sequence around its pointers. An array or tensor that is not watched is drawn
+    from its length alone (its elements are never read); a watched one is read with one .tolist()."""
     length = len(value)
     start = _window([p for _, p in pointers], length, size)
     stop = min(length, start + size)
     if isinstance(value, str):
         items = list(value[start:stop])
+    elif _heavy(value):
+        items = [cell_text(x) for x in value[start:stop].tolist()] if watched else ["·"] * (stop - start)
     else:
         items = [cell_text(value[i]) for i in range(start, stop)]
     return {"name": name, "type": type(value).__name__, "len": length, "start": start, "items": items, "ptrs": pointers}
 
 
-def _grid_view(name: str, value, pointers: list[list], size: int) -> dict:
+def _grid_view(name: str, value, pointers: list[list], size: int, watched: bool = False) -> dict:
     rows, cols = _grid_shape(value)
     row0 = _window([p[2] for p in pointers], rows, size)
     col0 = _window([p[3] for p in pointers], cols, size)
+    if _heavy(value):
+        part = value[row0:row0 + size, col0:col0 + size].tolist() if watched else None
+        cells = [
+            [cell_text(x, 5) for x in line] for line in part
+        ] if part is not None else [["·"] * (min(cols, col0 + size) - col0) for _ in range(row0, min(rows, row0 + size))]
+        return {"name": name, "rows": rows, "cols": cols, "row0": row0, "col0": col0, "cells": cells, "ptrs": pointers}
     cells = []
     for r in range(row0, min(rows, row0 + size)):
         line = []
@@ -750,9 +778,9 @@ def snapshot(
                 if kind == "seq" and len(seqs) < 4:
                     pointers = _pointers(name, value, info, frame, seq_pointers.get(name, []), data, loops)
                     if pointers or isinstance(value, list) or _heavy(value):
-                        seqs.append(_seq_view(name, value, pointers, lim["strip_items"]))
+                        seqs.append(_seq_view(name, value, pointers, lim["strip_items"], name in watched))
                 elif kind == "grid" and len(grids) < 2:
-                    grids.append(_grid_view(name, value, _grid_pointers(name, info, frame), lim["grid_size"]))
+                    grids.append(_grid_view(name, value, _grid_pointers(name, info, frame), lim["grid_size"], name in watched))
                 elif kind == "map" and len(maps) < 3:
                     maps.append(_map_view(name, value))
             except Exception:
@@ -791,7 +819,7 @@ def _pointers(name: str, value, info, frame, extra: list[list], data: dict, loop
         for loop in loops:
             for target, _ in loop["vars"]:
                 candidate = data.get(target)
-                if isinstance(candidate, int) and not isinstance(candidate, bool) and 0 <= candidate <= length:
+                if isinstance(candidate, int) and not isinstance(candidate, bool) and 0 <= candidate < length:
                     found[target] = candidate
     return [[label, position] for label, position in list(found.items())[:5]]
 
@@ -1008,7 +1036,8 @@ class LineHook:
         events = monitoring.events
         monitoring.register_callback(tool, events.LINE, self._line)
         monitoring.register_callback(tool, events.RAISE, self._raise)
-        monitoring.set_events(tool, events.LINE | events.RAISE)
+        monitoring.register_callback(tool, events.PY_RETURN, self._return)
+        monitoring.set_events(tool, events.LINE | events.RAISE | events.PY_RETURN)
         return True
 
     def stop(self) -> None:
@@ -1019,6 +1048,7 @@ class LineHook:
         monitoring.set_events(tool, 0)
         monitoring.register_callback(tool, monitoring.events.LINE, None)
         monitoring.register_callback(tool, monitoring.events.RAISE, None)
+        monitoring.register_callback(tool, monitoring.events.PY_RETURN, None)
         monitoring.free_tool_id(tool)
         monitoring.restart_events()
 
@@ -1031,6 +1061,12 @@ class LineHook:
     def _raise(self, code, offset, exception):
         if code.co_filename in cell_files:
             self.debugger.hooked_raise(sys._getframe(1), exception)
+
+    def _return(self, code, offset, value):
+        if code.co_filename not in cell_files:
+            return sys.monitoring.DISABLE
+        self.debugger.hooked_return(sys._getframe(1))
+        return None
 
 
 def _make_debugger_class():
@@ -1103,6 +1139,17 @@ def _make_debugger_class():
                 caller = caller.f_back
             return True
 
+        def ends_run(self, frame) -> bool:
+            """Nothing of the cells runs after this frame returns: it is the outermost cell frame and
+            either a function or the cell's last top-level statement (IPython runs each statement as
+            its own code object, so another statement's first line would come next)."""
+            if not self.is_cell(frame) or not self.outermost(frame):
+                return False
+            if frame.f_code.co_name != "<module>":
+                return True
+            info = cell_info(frame.f_code.co_filename)
+            return info is None or frame.f_lineno >= info.last_start
+
         @property
         def watched(self) -> set[str]:
             return {expr for expr in self.watches if expr.isidentifier()}
@@ -1169,8 +1216,16 @@ def _make_debugger_class():
                 return
             previous = self.last_lines.get(id(frame))
             self.observe(frame, line)
-            if self.goal_met(frame, previous, line):
+            if self.goal_met(frame, previous, line) or (self.breaks and self.break_here(frame)):
                 self._arrive(frame, None)
+
+        def hooked_return(self, frame) -> None:
+            """LineHook: the frame a loop goal was set in returns before the goal was met (the loop
+            was the cell's last statement, say): pause on its way out, as pdb's r does."""
+            if self.goal is None or frame is not self.goal_frame or not self.ends_run(frame):
+                return
+            self.event = "return"
+            self._arrive(frame, None, "return")
 
         def hooked_raise(self, frame, exception) -> None:
             if self.goal is None:
@@ -1178,7 +1233,7 @@ def _make_debugger_class():
             self.exception = f"{type(exception).__name__}: {exception}"
             self._arrive(frame, exception)
 
-        def _arrive(self, frame, exception) -> None:
+        def _arrive(self, frame, exception, event: str = "line") -> None:
             """Leave the run-until mode: stop the hook, put pdb's trace back and pause here."""
             self.goal = self.goal_frame = None
             self.recording = True
@@ -1194,7 +1249,7 @@ def _make_debugger_class():
             self.set_step()
             sys.settrace(self.trace_dispatch)
             if exception is None:
-                self.event = "line"
+                self.event = event
                 self.interaction(frame, None)
             else:
                 self.event = "exception"
@@ -1207,7 +1262,7 @@ def _make_debugger_class():
             if self.is_cell(frame):
                 previous = self.last_lines.get(id(frame))
                 self.observe(frame)
-                if self.goal is not None and self.goal_met(frame, previous):
+                if self.goal is not None and (self.goal_met(frame, previous) or (self.breaks and self.break_here(frame))):
                     self.goal = self.goal_frame = None
                     self.recording = True
                     self.set_step()
@@ -1227,7 +1282,13 @@ def _make_debugger_class():
         def dispatch_return(self, frame, arg):
             if self.goal is not None and frame is self.goal_frame:
                 self.goal = self.goal_frame = None
+                self.recording = True
                 self.set_step()
+                if self.ends_run(frame):
+                    self.event = "return"
+                    self.interaction(frame, None)
+                    if self.quitting:
+                        raise bdb.BdbQuit
             try:
                 return super().dispatch_return(frame, arg)
             finally:
@@ -1334,6 +1395,9 @@ def _make_debugger_class():
                 "locals": [describe(n, space[n], min(lim["repr_chars"], 300), lim["stats"]) for n in names],
                 "watches": [[expr, self._watch(expr, frame)] for expr in self.watches],
                 "reply": reply, "output": output[-OUTPUT_CAP:], "history": history,
+                "breaks": {
+                    cell_files[name]: sorted(set(lines)) for name, lines in self.breaks.items() if name in cell_files and lines
+                },
             }
 
         def _watch(self, expr: str, frame) -> str:
@@ -1354,10 +1418,26 @@ def _make_debugger_class():
             self.recording = record
             if self.hook is not None and self.hook.start():
                 self.set_continue()
+                self._untrace()
                 self.goal, self.goal_frame = goal, frame
             else:
                 self._set_stopinfo(self.botframe, None, -1)
             return 1
+
+        def _untrace(self) -> None:
+            """Take pdb's trace off every frame, as set_continue does when there are no breakpoints:
+            with breakpoints set it keeps the trace, and the hook would see each line twice. The
+            hook checks the breakpoints itself."""
+            sys.settrace(None)
+            frame = sys._getframe().f_back
+            while frame is not None and frame is not self.botframe:
+                frame.f_trace = None
+                frame = frame.f_back
+            saved = getattr(self, "frame_trace_lines_opcodes", None)
+            if saved:
+                for frame, (trace_lines, trace_opcodes) in saved.items():
+                    frame.f_trace_lines, frame.f_trace_opcodes = trace_lines, trace_opcodes
+                self.frame_trace_lines_opcodes = {}
 
         def _refuse(self, text: str) -> int:
             self.reply = {"kind": "error", "text": text}
@@ -1486,6 +1566,8 @@ def breakpointhook(*args, **kwargs):
 
 def new_run(cid: str | None) -> None:
     """A gpython cell starts: the next breakpoint opens a fresh session, the old one stays for :debug."""
+    if cid and _state.get("armed") is not None:
+        _state["armed_ran"] = True
     if cid and _state["current"] is not None:
         _state["last"], _state["current"] = _state["current"], None
 
@@ -1496,11 +1578,13 @@ def arm(cid: str) -> None:
     def tracer(frame, event, arg):
         if event == "call" and cell_files.get(frame.f_code.co_filename) == cid:
             sys.settrace(None)
+            _state["armed"] = None
             current = debugger()
             current.set_trace(frame)
             return current.trace_dispatch
         return None
 
+    _state["armed"], _state["armed_ran"] = tracer, False
     sys.settrace(tracer)
 
 
@@ -1536,7 +1620,14 @@ def postmortem() -> None:
 
 
 def run_ended(result=None) -> None:
-    """A run is over: stop the hook and the trace, so the next runs pay nothing for the debugger."""
+    """A run is over: stop the hook and the trace, so the next runs pay nothing for the debugger.
+    An `arm` whose cell run is over without reaching the cell's code (a syntax error, say) is
+    dropped too; the run of `_gp_arm` itself is not a cell run and keeps it."""
+    armed = _state.get("armed")
+    if armed is not None and _state.get("armed_ran"):
+        _state["armed"] = None
+        if sys.gettrace() is armed:
+            sys.settrace(None)
     for current in (_state["current"], _state["last"]):
         if current is None:
             continue

@@ -169,7 +169,7 @@ KEYMAP: list[tuple[str, str, str]] = [
     ("debug", "b / B", "Stop if: run until an expression is true on a line of a cell (j == len(nums) - 1, loss != loss; :stop if EXPR); b records nothing on the way (fast), B records every line"),
     ("debug", "G", "Go to iteration N of the innermost loop (N L: of loop level L, 1 = outermost)"),
     ("debug", "h / l", "Back / forward through the recorded moments (time travel over what already ran); how much is kept: :set debug_detail=full|balanced|lean"),
-    ("debug", "T", "Timeline: one row per iteration, inner loops nested, changed values, ⚠ on out-of-range indexes; enter goes there"),
+    ("debug", "T", "Timeline: one row per iteration, inner loops nested (l / h open and close them), changed values, ⚠ on out-of-range indexes; enter goes there"),
     ("debug", "u / d", "Up / down the stack"),
     ("debug", "w", "Add a watch expression"),
     ("debug", "e", "Any pdb command (p expr, pp, !stmt)"),
