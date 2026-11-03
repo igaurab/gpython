@@ -10,6 +10,7 @@ import ast
 import builtins
 import symtable
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 _SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
 _BUILTINS = set(dir(builtins))
@@ -188,16 +189,25 @@ class Graph:
         return list(dict.fromkeys([*roots, *sorted(extra, key=self.order.index)]))
 
 
+@lru_cache(maxsize=4096)
+def _analyzed(source: str) -> tuple[frozenset[str], frozenset[str], frozenset[str], str]:
+    """(defs, refs, mutates, syntax error) of one cell, memoised by source: a rebuild after an
+    edit re-analyses only the edited cell. Frozen, so `build` hands out fresh sets."""
+    try:
+        defs, refs = analyze(source)
+        return frozenset(defs), frozenset(refs), frozenset(mutations(strip_magics(source)) & refs), ""
+    except SyntaxError as e:
+        return frozenset(), frozenset(), frozenset(), f"SyntaxError: {e.msg} (line {e.lineno})"
+
+
 def build(cells: dict[str, str]) -> Graph:
     """Build the graph for cells given as {cell_id: source} in display order."""
     g = Graph(order=list(cells))
     for cid, source in cells.items():
-        try:
-            g.defs[cid], g.refs[cid] = analyze(source)
-            g.mutates[cid] = mutations(strip_magics(source)) & g.refs[cid]
-        except SyntaxError as e:
-            g.defs[cid], g.refs[cid], g.mutates[cid] = set(), set(), set()
-            g.errors[cid] = f"SyntaxError: {e.msg} (line {e.lineno})"
+        defs, refs, changed, error = _analyzed(source)
+        g.defs[cid], g.refs[cid], g.mutates[cid] = set(defs), set(refs), set(changed)
+        if error:
+            g.errors[cid] = error
 
     owners: dict[str, list[str]] = {}
     for cid in g.order:

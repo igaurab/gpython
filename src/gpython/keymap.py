@@ -34,7 +34,7 @@ KEYMAP: list[tuple[str, str, str]] = [
     ("any", "alt+shift+up", "Move cell up"),
     ("any", "alt+shift+down", "Move cell down"),
     ("any", "f1", "Help (this screen)"),
-    ("any", "ctrl+o", "Outline panel on the right: each cell with what it defines, live types after a run, its dependency edges; enter jumps. Not in insert mode, where it is vim's one-shot normal command (:outline, :tags, :vars)"),
+    ("any", "ctrl+o", "Outline panel: cells, their definitions, live types, edges (:outline)"),
     ("any", "f3", "Toggle run mode, saved: lazy (default) runs the cell and the stale cells it uses, and only marks cells that use its variables stale; reactive re-runs those too (:lazy, :set lazy|nolazy)"),
     ("any", "ctrl+p", "Command palette"),
     ("any", "ctrl+q", "Quit (asks if unsaved)"),
