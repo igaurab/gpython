@@ -78,9 +78,27 @@ KeyCapture {
     padding: 0 1;
 }
 
-#vars {
+#outline {
     width: 42;
     max-width: 50%;
+    height: 1fr;
+}
+
+#outline Tree {
+    height: 1fr;
+    padding: 0 1;
+    border-left: vkey $panel;
+    overflow-x: hidden;
+    scrollbar-size-vertical: 1;
+}
+
+#outline Tree:focus {
+    border-left: vkey $accent;
+}
+
+.outline-edges {
+    height: auto;
+    padding: 0 1;
     border-left: vkey $panel;
 }
 
