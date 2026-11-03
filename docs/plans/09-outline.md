@@ -1,6 +1,6 @@
 # 09 – Outline panel: cells, their definitions and dependency edges (tagbar for the notebook)
 
-`ctrl+o` (`:outline`, `:tags`, `:vars`) opens a panel on the right, the mirror of the file explorer:
+`ctrl+o` (`:outline`, `:tags`) opens a panel on the right, the mirror of the file explorer:
 one node per cell, expandable to the names it defines, with the dependency edges of the current
 cell in a footer. It replaces the flat f2 variables table (f2 is retired); the live types and values move into
 the tree once a cell has run.
