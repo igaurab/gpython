@@ -14,7 +14,7 @@ def test_execute_outputs_variables_and_delete():
             assert ("stream", "hi\n") in [(kd, c.get("text")) for kd, c in outputs]
             assert any(kd == "execute_result" and c["data"]["text/plain"] == "42" for kd, c in outputs)
 
-            assert await k.variables({"x", "missing"}) == [["x", "int", "41"]]
+            assert await k.variables({"x", "missing"}) == [["x", "int", "41", "", "data"]]
             await k.delete({"x"})
             assert await k.variables({"x"}) == []
 

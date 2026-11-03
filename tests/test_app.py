@@ -181,12 +181,18 @@ def test_ex_commands(tmp_path, monkeypatch):
         async with app.run_test(size=(120, 40)) as pilot:
             assert not app.pane.outline_visible
             await pilot.press(":")
-            await pilot.press(*"variables", "enter")
+            await pilot.press(*"tags", "enter")
             await pilot.pause()
             assert app.pane.outline_visible
-            await pilot.press(":", *"vars", "enter")
+            await pilot.press(":", *"outline", "enter")
             await pilot.pause()
             assert not app.pane.outline_visible
+            await pilot.press(":", *"variables", "enter")
+            await pilot.pause()
+            assert app.pane.variables_visible and not app.pane.outline_visible
+            await pilot.press(":", *"vars", "enter")
+            await pilot.pause()
+            assert not app.pane.variables_visible
             await pilot.press(":", *"new", "enter")
             await pilot.pause()
             assert len(app.cells()) == 2

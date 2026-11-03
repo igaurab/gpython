@@ -119,6 +119,7 @@ RUN_LETTERS = {
     "k": _in_worker("restart_kernel", "kernel"),
     "R": _in_worker("restart_and_run_all", "kernel"),
     "i": _in_worker("interrupt", "kernel"),
+    "d": _in_worker("debug_cell"),
 }
 
 

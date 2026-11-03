@@ -55,6 +55,8 @@ _MODE_STYLES = {
     "cell": "bold black on cyan",
     "files": "bold black on magenta",
     "outline": "bold black on magenta",
+    "vars": "bold black on magenta",
+    "debug": "bold white on red",
     "visual": "bold black on bright_magenta",
     "v-line": "bold black on bright_magenta",
     "replace": "bold black on red",
@@ -88,6 +90,12 @@ _WINDOW_KEYS = {
     "=": "equal",
     "+": "taller", "-": "shorter", ">": "wider", "<": "narrower",
 }
+
+
+def _debug_value(key: str, value) -> str:
+    if key == "history":
+        return f"{value / 1048576:g} MB"
+    return str(value)
 
 
 class NotebookScreen(Screen):
@@ -170,6 +178,7 @@ class GPython(App):
         Binding("ctrl+l", "focus_right", "Window right", show=False, priority=True),
         Binding("f1", "help", "Help"),
         Binding("ctrl+o", "toggle_outline", "Outline", show=False, priority=True),
+        Binding("ctrl+v", "toggle_variables", "Variables", show=False, priority=True),
         Binding("f3", "toggle_lazy", "Lazy"),
         Binding("f4", "run_stale", "Run stale"),
         Binding("f5", "run_all", "Run all"),
@@ -399,7 +408,8 @@ class GPython(App):
 
     @property
     def ui_mode(self) -> str:
-        """"cell" when a cell itself is selected, "files" in the explorer, else the vim mode."""
+        """"cell" when a cell itself is selected, "files" in the explorer, "vars" or "debug" in the
+        variables panel, else the vim mode."""
         focused = self.focused
         if isinstance(focused, Cell):
             return "cell"
@@ -407,6 +417,10 @@ class GPython(App):
             return "files"
         if isinstance(focused, Tree):
             return "outline"
+        pane = self.pane if self.workspace.tabs else None
+        panel = pane._variables if pane is not None else None
+        if panel is not None and focused is not None and panel in focused.ancestors:
+            return "debug" if pane.debug is not None else "vars"
         if not VimTextArea.enabled or VimTextArea.mode == "insert":
             return "insert"
         if VimTextArea.mode == "replace":
@@ -474,21 +488,23 @@ class GPython(App):
             self._status.update(self._number_sequence.status(), layout=False)
             return
         mode = self.ui_mode
+        if pane.debug is not None and mode in ("normal", "cell"):
+            mode = "debug"
         name = pane.title
         key = (mode, VimTextArea.enabled, name, self.lazy, pane.kernel_state, self.theme, pane.kernel_label)
         if key == self._status_key:
             return
         self._status_key = key
-        show_mode = VimTextArea.enabled or mode in ("cell", "files", "outline")
+        show_mode = VimTextArea.enabled or mode in ("cell", "files", "outline", "vars", "debug")
         self.sub_title = name
         if self._kernel_chip is not None and pane.kernel_label != self._chip_label:
             self._chip_label = pane.kernel_label
             version, _, env = pane.kernel_label.partition(" · ")
             self._kernel_chip.update(Text.assemble((version, "dim"), (f" · {env}" if env else "", "bold"), (" ▾", "dim")))
-        chip_mode = mode if mode in ("cell", "files", "outline") or VimTextArea.enabled else "edit"
+        chip_mode = mode if mode in ("cell", "files", "outline", "vars", "debug") or VimTextArea.enabled else "edit"
         if self._mode_chip is not None and chip_mode != self._mode_chip_mode:
             self._mode_chip_mode = chip_mode
-            if chip_mode in ("cell", "files", "outline", "edit"):
+            if chip_mode in ("cell", "files", "outline", "edit", "vars", "debug"):
                 text = Text(f" {chip_mode.upper()} ", style=_MODE_STYLES.get(chip_mode, _MODE_STYLES["insert"]))
             else:
                 text = Text.assemble((" EDIT ", _MODE_STYLES["insert"]), (f" {chip_mode.upper()}", _CHIP_VIM_STYLES[chip_mode]))
@@ -643,13 +659,15 @@ class GPython(App):
         current = self.pane
         explorer_open = self.explorer_visible
         in_explorer = isinstance(self.focused, Explorer)
-        in_outline = not in_explorer and isinstance(self.focused, Tree)
+        in_side = not in_explorer and self.focused is not None and any(node.id == "side" for node in self.focused.ancestors)
         panes = self.workspace.tab_panes()
         if where in ("left", "right", "up", "down"):
             direction = {"left": "h", "right": "l", "up": "k", "down": "j"}[where]
-            if in_outline:
+            if in_side:
                 if direction == "h":
                     current.focus_pane()
+                elif direction in "jk":
+                    current.focus_side(below=direction == "j")
                 return
             if in_explorer:
                 if direction == "l" and panes:
@@ -662,8 +680,7 @@ class GPython(App):
             if target is None and direction == "h" and explorer_open:
                 self.explorer.focus()
                 return
-            if target is None and direction == "l" and current.outline_visible:
-                current.focus_outline()
+            if target is None and direction == "l" and current.focus_side():
                 return
         elif where in ("next", "prev"):
             ring: list = ([self.explorer] if explorer_open else []) + panes
@@ -1042,6 +1059,24 @@ class GPython(App):
     def action_toggle_outline(self) -> None:
         self.pane.toggle_outline()
 
+    def action_toggle_variables(self) -> None:
+        self.pane.toggle_variables()
+
+    def _ex_debug(self, arg: str = "") -> None:
+        """:debug: post-mortem where the current cell failed, else run it paused on its first line."""
+        pane = self.pane
+        pane.run_worker(pane.debug_cell(), group="run")
+
+    def _ex_stop(self, arg: str = "") -> None:
+        """:stop if EXPR: while paused, run until EXPR is true on a line of a cell."""
+        expr = arg.strip()
+        if expr.startswith("if "):
+            expr = expr[3:].strip()
+        if self.pane.debug is None:
+            self.notify(":stop if works while the debugger is paused (breakpoint(), r d, :debug)", severity="warning")
+        elif expr:
+            self.pane.debug_command(f"_gp_until {expr}")
+
     def action_toggle_lazy(self) -> None:
         self.set_lazy(not self.lazy)
 
@@ -1156,10 +1191,13 @@ class GPython(App):
             (("restart",), "Restart kernel", lambda arg="": self.action_restart_kernel()),
             (("clear",), "Clear all outputs", lambda arg="": self.pane.clear_outputs()),
             (("img", "image"), "View this cell's image full screen (v in cell mode; :img 2 the second); :img save [N] [file] saves this cell's image(s) as PNG next to the notebook, :img open [N] opens them in the browser; :img save all / :img open all take every cell's", self._ex_image),
-            (("set",), "Options: vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall cursor=bar|underline|block", self._ex_set),
+            (("set",), "Options: vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall cursor=bar|underline|block; debugger history: debug_detail=full|balanced|lean (full is the default), debug_history=200MB debug_events debug_thinning=on|off debug_repr_chars debug_strip_items debug_grid_size debug_stats=watched|cpu|off, debug_<key>? shows the value in effect", self._ex_set),
             (("copy", "yank"), "Copy to the system clipboard: :copy all the whole notebook as plain code, markdown as comments; :copy all metadata keeps the # %% cell lines (the file's text; a .ipynb as # %% code); :copy this cell", self._ex_copy),
             (("time", "timing"), "Show / hide each cell's run time in its header (t in cell mode; saved)", lambda arg="": self.set_timing(not Cell.show_timing)),
-            (("outline", "tags", "variables", "vars"), "Outline panel: each cell with what it defines, live types after a run, its edges; enter jumps (ctrl+o)", lambda arg="": self.action_toggle_outline()),
+            (("outline", "tags"), "Outline panel: each cell with what it defines, live types after a run, its edges; enter jumps (ctrl+o)", lambda arg="": self.action_toggle_outline()),
+            (("vars", "variables"), "Variables panel: name, type, shape, value, defining cell; enter shows the value, g goes to the cell, d deletes (ctrl+v)", lambda arg="": self.action_toggle_variables()),
+            (("debug",), "Debugger: post-mortem where this cell failed, else run it paused on its first line (r d; breakpoint() in code)", self._ex_debug),
+            (("stop",), "While paused: :stop if EXPR runs until EXPR is true (b in the debugger)", self._ex_stop),
             (("lazy",), "Toggle run mode: lazy (dependents only marked stale) / reactive (they re-run); saved (f3)", lambda arg="": self.action_toggle_lazy()),
             (("new",), "New cell below", lambda arg="": self.action_add_cell()),
             (("delete", "del"), "Delete current cell", lambda arg="": self.action_delete_cell()),
@@ -1301,8 +1339,50 @@ class GPython(App):
             self.set_autoinstall(option == "autoinstall")
         elif option.startswith("cursor"):
             self.set_insert_cursor(option.partition("=")[2].strip())
+        elif option.startswith("debug_"):
+            self.set_debug_option(option)
         else:
-            self.notify(f"Unknown option: {option or '(none)'}  (vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall cursor=bar|underline|block)", severity="error")
+            self.notify(f"Unknown option: {option or '(none)'}  (vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall cursor=bar|underline|block debug_detail=full|balanced|lean debug_<limit>=…)", severity="error")
+
+    def set_debug_option(self, option: str) -> None:
+        """:set debug_detail=full|balanced|lean picks the recorder's preset; :set debug_<limit>=value
+        overrides one limit (debug_history=20MB, debug_events, debug_thinning=on|off,
+        debug_repr_chars, debug_strip_items, debug_grid_size, debug_stats=watched|cpu|off; an empty
+        value goes back to the preset); :set debug_<key>? shows the value in effect and where it
+        comes from. Saved; the kernels use it from their next recording."""
+        from .kernel import debug_settings
+        from .kernel_side import PRESETS, SETTINGS, resolve
+
+        name, equals, value = option.partition("=")
+        asking = name.endswith("?")
+        name = name.rstrip("?").strip()
+        key = name[len("debug_"):]
+        if key != "detail" and key not in SETTINGS:
+            self.notify(f"Unknown option {name}: debug_detail, " + ", ".join(f"debug_{k}" for k in SETTINGS), severity="error")
+            return
+        settings = debug_settings()
+        if asking or not equals:
+            limits, sources = resolve(settings)
+            if key == "detail":
+                self.notify(f"debug_detail = {limits['detail']}" + ("" if "debug_detail" in settings else " (the default)"))
+            else:
+                where = "override" if sources[key] == "override" else f"from the {sources[key]} preset"
+                self.notify(f"debug_{key} = {_debug_value(key, limits[key])} ({where})")
+            return
+        value = value.strip()
+        if key == "detail" and value not in PRESETS:
+            self.notify(f"debug_detail is one of: {', '.join(PRESETS)}", severity="error")
+            return
+        if key != "detail" and value and resolve({name: value})[1][key] != "override":
+            self.notify(f"Not a value for {name}: {value}", severity="error")
+            return
+        config.save({name: value})
+        settings[name] = value
+        for pane in self.workspace.buffers:
+            pane.run_worker(pane.kernel.configure_debugger(settings), group="debug-settings")
+        limits = resolve(settings)[0]
+        shown = limits["detail"] if key == "detail" else _debug_value(key, limits[key])
+        self.notify(f"debug_{key} = {shown}: the next recording uses it", title="Debugger")
 
     @staticmethod
     def _insert_cursor_setting(value) -> str:
@@ -1458,13 +1538,14 @@ class GPython(App):
             return False
         if action in ("focus_left", "focus_right"):
             return self._window_keys_apply(action == "focus_left")
-        if action == "toggle_outline":
+        if action in ("toggle_outline", "toggle_variables"):
             return self._window_keys_apply(True)
         return True
 
     def _window_keys_apply(self, needs_backspace: bool) -> bool:
-        """ctrl+h, ctrl+l and ctrl+o act only on the notebook screen, never in a text field;
-        ctrl+h arrives as backspace and ctrl+o is vim's one-shot command, so insert mode keeps both."""
+        """ctrl+h, ctrl+l, ctrl+o and ctrl+v act only on the notebook screen, never in a text field;
+        ctrl+h arrives as backspace, ctrl+o is vim's one-shot command and ctrl+v the editor's
+        paste, so insert mode keeps them."""
         if not isinstance(self.screen, NotebookScreen) or isinstance(self.focused, Input):
             return False
         return not (needs_backspace and self.ui_mode in ("insert", "replace"))

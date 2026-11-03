@@ -78,6 +78,7 @@ Everywhere:
 | `ctrl+w` … | Window commands: `s` split, `v` vsplit, `h j k l` move, `q` close, `o` only, `z` zoom, `T` / `M` to tab and back, `space` window manager |
 | `f1` | Help |
 | `ctrl+o` | Toggle the outline panel: each cell with what it defines, live types after a run, dependency edges; `enter` jumps (not in insert mode, where it is vim's one-shot command; `:outline`) |
+| `ctrl+v` | Toggle the variables panel; it is also the debugger while a cell is paused (see [Variables and the debugger](#variables-and-the-debugger); not in insert mode; `:vars`) |
 | `f3` | Toggle run mode, saved: lazy (default, cells that use the variables are only marked stale) / reactive (they re-run) |
 | `ctrl+p` | Command palette: run all, restart kernel, … |
 | `ctrl+q` / `:q` | Quit (asks when there are unsaved changes; `:q!` does not) |
@@ -144,7 +145,7 @@ selected as a cell), deleting, undoing, searching or switching tabs keeps it; `e
 Ex commands: `:w [file]`, `:wa`, `:q`, `:q!`, `:wq`, `:qa`, `:wqa`, `:e file`,
 `:sp [file]`, `:vs [file]`, `:only`, `:tabnew [file]`, `:tabclose`, `:tabn`,
 `:tabp`, `:ls`, `:noh`, `:Ex`, `:run`, `:timeit [n]`, `:runabove`, `:runbelow`, `:stale`, `:restart`,
-`:clear`, `:set vim|novim|lazy|nolazy|nu|nonu|time|notime`, `:vars`, `:md`, `:code`,
+`:clear`, `:set vim|novim|lazy|nolazy|nu|nonu|time|notime`, `:set debug_detail=…`, `:vars`, `:debug`, `:stop if …`, `:md`, `:code`,
 `:theme [name]`, `:N` (go to cell N), `:help`. `:set novim`, line numbers, the
 run time display, the run mode and the theme are remembered in
 `~/.config/gpython/config.toml` (`vim`, `line_numbers`, `timing`, `run_mode`, `theme`).
@@ -172,6 +173,67 @@ With several images in one cell, `:img 2` views the second, `:img save 2 plot.pn
 saves it, and `:img save` / `:img open` without a number take all of the cell's.
 `:img save all` saves every image in the notebook (`nb-c3.png`, `nb-c5-1.png`, …)
 and `:img open all` opens them all.
+
+## Variables and the debugger
+
+**Variables** (`ctrl+v`, `:vars`). The outline's neighbour in the right column
+(when both are open, the outline is on top): one row per name the cells
+defined, with its type, shape / length / dtype (`(3, 4) float64`, `len 12`),
+a short value and the cell that bound it. `ctrl+w l` focuses it, then:
+
+| key | action |
+|---|---|
+| `j` / `k` | Move |
+| `enter` | The full value: scrollable text, or a table for a DataFrame or 2-D data (capped) |
+| `g` | Go to the line of the cell that defined it |
+| `d` | Delete it from the kernel (the cell becomes stale) |
+| `/` | Filter by name or type |
+| `a` | Show modules, functions and classes too |
+| `q`, `escape` | Hide the panel / back to the notebook |
+
+`input()` in a cell asks at the bottom of the screen (`escape` interrupts).
+
+**The debugger.** `breakpoint()` in a cell pauses it and the panel turns into
+the debugger (the bar says DEBUG, the paused line is lit in its cell). `r d` or
+`:debug` runs the current cell paused on its first line, or, when its last run
+failed, opens a post-mortem at the line that raised (the error output says so).
+The panel draws the loop stack (`for i in range(n)   i=3   4/10 ████░░`, nested
+loops under it), each list, tuple, string or 1-D array as a strip of boxes with
+an arrow for every index the code uses on it (`nums[j + 1]` gives the arrow
+`j + 1`; an index past the end is drawn after the strip in red with a warning),
+2-D lists and arrays as grids with the `[i][j]` cell lit, dicts and sets with
+added, removed and changed keys, and the locals with what changed since the
+last stop and their earlier values (`total: 0 → 1 → 4`).
+
+| key | action |
+|---|---|
+| `n` `s` `r` `c` `q` | Next line, step into, run to return, continue, quit (the cell stops) |
+| `]` / `}` / `)` | Next iteration of the innermost loop / of the outer loop / run to the end of the innermost loop |
+| `G` | Go to iteration N (`N L` for loop level L) |
+| `b` / `B` | Stop if an expression is true (`j == len(nums) - 1`, `loss != loss`); `B` records every line on the way (`:stop if …`) |
+| `h` / `l` | Back / forward through the recorded moments: time travel over what already ran |
+| `T` | Timeline: one row per iteration, inner loops nested (`l` / `h` open and close them), changed values, ⚠ where an index was out of range |
+| `u` / `d` | Up / down the stack |
+| `w`, `e`, `enter` | Watch an expression, any pdb command, the full value of a local |
+
+How much is recorded is one setting, `debug_detail`, saved in the config and
+set with `:set debug_detail=…` (it applies to the next recording):
+`full` (the default) keeps every step with every value, up to 200 MB; `balanced`
+keeps changes only, with a keyframe every 100 steps, and thins old iterations
+(every line of the last three, one moment per older iteration, then every 10th
+and every 100th), up to 20 MB; `lean` keeps only the loop positions and watched
+names, up to 5 MB. Each limit has its own key that overrides the preset:
+`debug_history` (`20MB`, `1GB`), `debug_events`, `debug_thinning=on|off`,
+`debug_repr_chars`, `debug_strip_items`, `debug_grid_size` and
+`debug_stats=watched|cpu|off` (`cpu` adds stats for small arrays on the CPU);
+`:set debug_history?` says what is in effect and
+where it comes from. The footer shows `full · 1,240 steps · 3.1 MB / 200 MB`.
+In every preset tensors and arrays are summarised by type, shape, dtype and
+device (no GPU sync), also inside lists; their strips show the pointers but no
+values; watched ones also get their values, mean, min, max and the NaN count.
+pdb breakpoints (`e` then `b 12`) are underlined in the cell and stop `]`, `}`,
+`)` and stop-if too.
+Nothing is installed while no cell is paused, so a normal run costs nothing.
 
 ## Markdown cells
 
@@ -419,6 +481,7 @@ via jupyter_client · `notebook.py` file formats (`# %%`, scripts, marimo,
 `pane.py` one notebook window · `windows.py` tabs and split layout ·
 `explorer.py` file tree · `themes.py` / `themepicker.py` / `config.py` ·
 `outputs.py` rich outputs · `images.py` kitty graphics placements · `keymap.py` the key table (help and this README) ·
+`variables.py` / `debugview.py` the variables panel and the debugger's pictures · `kernel_side.py` the debugger inside the kernel ·
 `app.py` + `app.tcss` the Textual app.
 
 ```sh

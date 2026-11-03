@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from jupyter_client.manager import AsyncKernelManager
 
 OutputCallback = Callable[[str, dict], None]
+InputCallback = Callable[[str, bool], None]
 
 _HELPERS = r"""
 def _gp_delete(names):
@@ -29,17 +30,38 @@ def _gp_delete(names):
         g.pop(n, None)
 
 def _gp_vars(names):
+    import sys
+    return sys.modules["_gpython_debug"].variables(globals(), names)
+
+def _gp_full(name):
+    import json, sys
     g = globals()
-    out = []
-    for n in names:
-        if n in g:
-            v = g[n]
-            try:
-                r = repr(v)
-            except Exception as e:
-                r = f"<repr failed: {e!r}>"
-            out.append([n, type(v).__name__, r.replace("\n", " ")[:80]])
-    return out
+    found = sys.modules["_gpython_debug"].full(g[name]) if name in g else {"kind": "text", "text": f"{name} is not defined"}
+    print(json.dumps(found, default=str))
+
+def _gp_configure(settings):
+    import sys
+    sys.modules["_gpython_debug"].configure(settings)
+
+def _gp_postmortem():
+    import sys
+    sys.modules["_gpython_debug"].postmortem()
+
+def _gp_arm(cid):
+    import sys
+    sys.modules["_gpython_debug"].arm(cid)
+
+def _gp_install(path):
+    import sys, types
+    mod = types.ModuleType("_gpython_debug")
+    with open(path, encoding="utf-8") as source:
+        exec(compile(source.read(), "<gpython-debug>", "exec"), mod.__dict__)
+    sys.modules["_gpython_debug"] = mod
+    try:
+        shell = get_ipython()
+    except NameError:
+        shell = None
+    mod.install(shell)
 
 def _gp_setup(file):
     import os, sys
@@ -161,12 +183,23 @@ _gp_uv_magics()
 
 
 def _helpers() -> str:
-    """_HELPERS plus the shim's mo.Html conversion: the same one the static preview of a marimo cell uses."""
+    """_HELPERS plus the shim's mo.Html conversion (the same one the static preview of a marimo cell
+    uses), then the debugger's kernel half, read by the kernel from kernel_side.py's path so IPython
+    does not transform a 60 kB cell at every start."""
     import inspect
 
     from .markdown import html_to_markdown
 
-    return _HELPERS + inspect.getsource(html_to_markdown).replace("def html_to_markdown", "def _gp_html_to_md", 1)
+    side = str(Path(__file__).with_name("kernel_side.py"))
+    shim = inspect.getsource(html_to_markdown).replace("def html_to_markdown", "def _gp_html_to_md", 1)
+    return _HELPERS + shim + f"\n_gp_install({side!r})\n"
+
+
+def debug_settings() -> dict:
+    """The `debug_*` keys of the config: the debugger's preset and its limits."""
+    from . import config
+
+    return {key: value for key, value in config.load().items() if key.startswith("debug_")}
 
 
 class Kernel:
@@ -178,6 +211,7 @@ class Kernel:
         self.file = file
         self.ready = asyncio.Event()
         self._lock = asyncio.Lock()
+        self._generation = 0
 
     def _manager(self) -> AsyncKernelManager:
         from jupyter_client.manager import AsyncKernelManager
@@ -207,6 +241,7 @@ class Kernel:
     async def switch(self, env: envs.Env) -> None:
         """Replace the kernel process with one running in `env`. All variables are lost."""
         self.ready.clear()
+        self._generation += 1
         old_env = self.env
         if self.manager is not None and await self.manager.is_alive():
             await self.manager.shutdown_kernel(now=True)
@@ -224,16 +259,27 @@ class Kernel:
             raise
 
     async def restart(self) -> None:
+        """A fresh kernel process with fresh channels: a run that was waiting (paused in the
+        debugger, say) ends as soon as it sees the new generation, and no stale socket state
+        from the old process is read by the new one."""
         if self.manager is None:
             return await self.start()
         self.ready.clear()
+        self._generation += 1
         await self.manager.restart_kernel(now=True)
+        async with self._lock:
+            self.client.stop_channels()
+            self.client = self.manager.client()
+            self.client.start_channels()
         await self._prepare()
 
     async def _prepare(self) -> None:
         await self.client.wait_for_ready(timeout=60)
         await self._execute(_helpers(), None, store_history=False)
         await self.set_file(self.file)
+        settings = debug_settings()
+        if settings:
+            await self._execute(f"_gp_configure({settings!r})", None, store_history=False)
         self.ready.set()
 
     async def set_file(self, file: Path | None) -> None:
@@ -252,10 +298,50 @@ class Kernel:
         if self.manager is not None:
             await self.manager.interrupt_kernel()
 
-    async def execute(self, code: str, on_output: OutputCallback | None = None) -> bool:
-        """Run code, streaming iopub messages to on_output. Returns True on success."""
+    async def execute(
+        self, code: str, on_output: OutputCallback | None = None, cell_id: str | None = None,
+        on_input: InputCallback | None = None, store_history: bool = True,
+    ) -> bool:
+        """Run code, streaming iopub messages to on_output. Returns True on success.
+
+        `cell_id` goes in the request's metadata (ipykernel hands it to the pre_run_cell hook, which
+        maps the cell's code filename to it for the debugger). With `on_input`, input() and the
+        debugger's prompts reach it as (prompt, password); answer with `reply`."""
         await self.ready.wait()
-        return await self._execute(code, on_output, store_history=True)
+        return await self._execute(code, on_output, store_history=store_history, cell_id=cell_id, on_input=on_input)
+
+    def reply(self, text: str) -> None:
+        """Answer the kernel's pending input request (input(), getpass, the debugger's prompt)."""
+        if self.client is not None:
+            self.client.input(text)
+
+    async def full_value(self, name: str) -> dict:
+        """The whole value of a global for the value viewer: text, or a table (capped in the kernel)."""
+        return await self._print_json(f"_gp_full({name!r})") or {"kind": "text", "text": ""}
+
+    async def configure_debugger(self, settings: dict) -> None:
+        """The `debug_*` settings (preset and limits) for the kernel's next recording."""
+        await self.ready.wait()
+        await self._execute(f"_gp_configure({settings!r})", None, store_history=False)
+
+    async def arm(self, cid: str) -> None:
+        """Make the next run of cell `cid` pause on its first line."""
+        await self.ready.wait()
+        await self._execute(f"_gp_arm({cid!r})", None, store_history=False)
+
+    async def _print_json(self, code: str):
+        out: list[str] = []
+
+        def collect(kind: str, content: dict) -> None:
+            if kind == "stream":
+                out.append(content["text"])
+
+        await self.ready.wait()
+        await self._execute(code, collect, store_history=False)
+        try:
+            return json.loads("".join(out))
+        except json.JSONDecodeError:
+            return None
 
     async def delete(self, names: set[str]) -> None:
         if names:
@@ -263,19 +349,9 @@ class Kernel:
             await self._execute(f"_gp_delete({sorted(names)!r})", None, store_history=False)
 
     async def variables(self, names: set[str]) -> list[list[str]]:
-        out: list[str] = []
-
-        def collect(kind: str, content: dict) -> None:
-            if kind == "stream":
-                out.append(content["text"])
-
-        code = f"print(__import__('json').dumps(_gp_vars({sorted(names)!r})))"
-        await self.ready.wait()
-        await self._execute(code, collect, store_history=False)
-        try:
-            return json.loads("".join(out))
-        except json.JSONDecodeError:
-            return []
+        """Rows [name, type, value, shape/len/dtype, category] for the names that exist in the kernel."""
+        rows = await self._print_json(f"print(__import__('json').dumps(_gp_vars({sorted(names)!r})))")
+        return rows if isinstance(rows, list) else []
 
     async def complete(self, code: str, cursor_pos: int) -> tuple[list[str], int, int]:
         """Return (matches, start, end) offsets into code, via the kernel's completer."""
@@ -297,29 +373,67 @@ class Kernel:
             if reply["parent_header"].get("msg_id") == msg_id:
                 return reply
 
-    async def _execute(self, code: str, on_output: OutputCallback | None, store_history: bool) -> bool:
+    def _send(self, code: str, store_history: bool, cell_id: str | None, allow_stdin: bool) -> str:
+        content = {
+            "code": code, "silent": False, "store_history": store_history, "user_expressions": {},
+            "allow_stdin": allow_stdin, "stop_on_error": True,
+        }
+        msg = self.client.session.msg("execute_request", content, metadata={"cellId": cell_id} if cell_id else {})
+        self.client.shell_channel.send(msg)
+        return msg["header"]["msg_id"]
+
+    async def _listen_stdin(self, msg_id: str, on_input: InputCallback) -> None:
+        while True:
+            try:
+                msg = await self.client.get_stdin_msg(timeout=1)
+            except queue.Empty:
+                continue
+            if msg["msg_type"] == "input_request" and msg["parent_header"].get("msg_id") == msg_id:
+                content = msg["content"]
+                on_input(content.get("prompt", ""), bool(content.get("password")))
+
+    async def _execute(
+        self, code: str, on_output: OutputCallback | None, store_history: bool,
+        cell_id: str | None = None, on_input: InputCallback | None = None,
+    ) -> bool:
         async with self._lock:
-            msg_id = self.client.execute(code, store_history=store_history)
-            ok = True
-            while True:
-                try:
-                    msg = await self.client.get_iopub_msg(timeout=0.5)
-                except queue.Empty:
-                    if not await self.manager.is_alive():
-                        if on_output:
-                            on_output("error", {"traceback": ["Kernel died. Restart it from the command palette (ctrl+p)."]})
-                        return False
-                    continue
-                if msg["parent_header"].get("msg_id") != msg_id:
-                    continue
-                kind, content = msg["msg_type"], msg["content"]
-                if kind == "status" and content["execution_state"] == "idle":
-                    break
-                if kind == "error":
-                    ok = False
-                if on_output and kind in ("stream", "execute_result", "display_data", "error", "clear_output"):
-                    on_output(kind, content)
-            reply = await self._shell_reply(msg_id, timeout=5)
-            if reply is not None:
-                ok = ok and reply["content"].get("status") == "ok"
-            return ok
+            if self.client is None or not self.client.channels_running:
+                return False
+            generation = self._generation
+            msg_id = self._send(code, store_history, cell_id, on_input is not None)
+            listener = asyncio.create_task(self._listen_stdin(msg_id, on_input)) if on_input is not None else None
+            try:
+                return await self._collect(msg_id, generation, on_output)
+            finally:
+                if listener is not None:
+                    listener.cancel()
+
+    async def _collect(self, msg_id: str, generation: int, on_output: OutputCallback | None) -> bool:
+        """Stream the run's iopub messages until the kernel is idle; a restart or a dead kernel ends it."""
+        ok = True
+        while True:
+            if generation != self._generation:
+                if on_output:
+                    on_output("error", {"ename": "KernelRestarted", "evalue": "", "traceback": ["The kernel was restarted while this cell ran."]})
+                return False
+            try:
+                msg = await self.client.get_iopub_msg(timeout=0.5)
+            except queue.Empty:
+                if not await self.manager.is_alive():
+                    if on_output:
+                        on_output("error", {"traceback": ["Kernel died. Restart it from the command palette (ctrl+p)."]})
+                    return False
+                continue
+            if msg["parent_header"].get("msg_id") != msg_id:
+                continue
+            kind, content = msg["msg_type"], msg["content"]
+            if kind == "status" and content["execution_state"] == "idle":
+                break
+            if kind == "error":
+                ok = False
+            if on_output and kind in ("stream", "execute_result", "display_data", "error", "clear_output"):
+                on_output(kind, content)
+        reply = await self._shell_reply(msg_id, timeout=5)
+        if reply is not None:
+            ok = ok and reply["content"].get("status") == "ok"
+        return ok

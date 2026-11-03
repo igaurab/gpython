@@ -79,8 +79,6 @@ KeyCapture {
 }
 
 #outline {
-    width: 42;
-    max-width: 50%;
     height: 1fr;
 }
 

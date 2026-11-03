@@ -32,6 +32,10 @@ from .vim import VimTextArea, search_regex
 MIN_INITIAL_CELLS = 4
 MOUNT_BATCH = 10
 MAX_UNDO = 50
+DEBUGGABLE_ERRORS = {
+    "IndexError", "KeyError", "ZeroDivisionError", "AssertionError", "ValueError", "TypeError",
+    "AttributeError", "RecursionError", "StopIteration", "OverflowError", "UnboundLocalError",
+}
 
 
 def needs_run(cell: Cell) -> bool:
@@ -68,6 +72,15 @@ class NotebookPane(Vertical):
         self._outline: Outline | None = None
         self._outline_timer: Timer | None = None
         self._values: dict[str, Value] = {}
+        self._var_rows: dict[str, list] = {}
+        self._side = None
+        self._variables = None
+        self.debug = None
+        self._debug_line: tuple | None = None
+        self._debug_breaks: dict[str, list[int]] = {}
+        self._debug_keep_view = False
+        self._timeline_wanted = False
+        self._input_screen = None
         self._status: Static | None = None
         self.zoomed = False
         self._status_key: tuple | None = None
@@ -269,6 +282,8 @@ class NotebookPane(Vertical):
                 cell, row = self._cursor_position(widget)
                 self._outline.follow(cell.cid if cell else None, row)
         self.app.pane_focused(self)
+        if self.debug is not None:
+            self.app.update_status()
 
 
     def set_active(self, active: bool) -> None:
@@ -357,15 +372,19 @@ class NotebookPane(Vertical):
         """name → (type, repr) for the names the cells define, as of the last run."""
         return self._values
 
-    def _cell_values(self, cells: list[Cell]) -> Values:
-        """The kernel's values keyed by (cell, name): a name belongs to the cell that bound it
-        last, so a second cell defining the same name does not show the first one's value."""
+    def _owners(self, cells: list[Cell]) -> dict[str, Cell]:
+        """name → the cell that bound it last (the highest run number among the cells defining it)."""
         owners: dict[str, Cell] = {}
         for cell in cells:
             for name in cell.last_defs:
                 if name in self._values and (name not in owners or cell.exec_count > owners[name].exec_count):
                     owners[name] = cell
-        return {(cell.cid, name): self._values[name] for name, cell in owners.items()}
+        return owners
+
+    def _cell_values(self, cells: list[Cell]) -> Values:
+        """The kernel's values keyed by (cell, name): a name belongs to the cell that bound it
+        last, so a second cell defining the same name does not show the first one's value."""
+        return {(cell.cid, name): self._values[name] for name, cell in self._owners(cells).items()}
 
     def _cursor_position(self, widget: Widget | None = None) -> tuple[Cell | None, int | None]:
         """The cell under the cursor and the editor's row, None when the cell itself has the focus."""
@@ -376,16 +395,143 @@ class NotebookPane(Vertical):
             return widget, None
         return self.current_cell(), None
 
+    def _side_column(self):
+        """The right column that holds the outline and the variables panel, built on first use."""
+        if self._side is None:
+            from .variables import SideColumn
+
+            self._side = SideColumn()
+            self._cells_box.parent.mount(self._side)
+        return self._side
+
     def toggle_outline(self) -> None:
         """ctrl+o, :outline: show or hide the outline panel; it is built the first time."""
         if self._outline is None:
             self._outline = Outline()
-            self._cells_box.parent.mount(self._outline)
+            side = self._side_column()
+            if self._variables is not None:
+                side.mount(self._outline, before=self._variables)
+            else:
+                side.mount(self._outline)
+            side.display = True
             self.call_after_refresh(self._refresh_outline)
             return
         self._outline.display = not self._outline.display
+        self._side.sync()
         if self._outline.display:
             self._refresh_outline()
+
+    @property
+    def variables_visible(self) -> bool:
+        return self._variables is not None and self._variables.display
+
+    def _variables_panel(self):
+        if self._variables is None:
+            from .variables import VariablesPanel
+
+            self._variables = VariablesPanel(self)
+            self._variables.rows = self._variable_rows()
+            side = self._side_column()
+            side.mount(self._variables)
+            side.display = True
+        return self._variables
+
+    def toggle_variables(self) -> None:
+        """ctrl+v, :vars: show or hide the variables panel (the debugger while a cell is paused)."""
+        if self._variables is None:
+            self._variables_panel()
+            return
+        self._variables.display = not self._variables.display
+        self._side.sync()
+        if self._variables.display:
+            if self.debug is not None:
+                self._draw_debug()
+            else:
+                self._refresh_variables()
+
+    def show_variables(self) -> None:
+        panel = self._variables_panel()
+        if not panel.display:
+            panel.display = True
+            self._side.sync()
+
+    def hide_variables(self) -> None:
+        if self._variables is not None:
+            self._variables.display = False
+            self._side.sync()
+        self.focus_pane()
+
+    def focus_variables(self) -> None:
+        if self.variables_visible:
+            self._variables.table.focus()
+
+    def focus_side(self, below: bool | None = None) -> bool:
+        """ctrl+w l into the right column: the debugger while paused, else the outline first;
+        ctrl+w j / k move between the two when both are open."""
+        shown = [w for w in (self._outline, self._variables) if w is not None and w.display]
+        if not shown:
+            return False
+        if below is None:
+            target = self._variables if self.debug is not None and self.variables_visible else shown[0]
+        else:
+            target = shown[-1] if below else shown[0]
+        if target is self._outline:
+            self.focus_outline()
+        else:
+            self.focus_variables()
+        return True
+
+    def _variable_rows(self) -> list[tuple]:
+        owners = self._owners(self.cells())
+        rows = []
+        for name, (kind, shown, info, category) in sorted(self._var_rows.items()):
+            cell = owners.get(name)
+            rows.append((name, kind, shown, info, category, cell.label if cell is not None else ""))
+        return rows
+
+    def _refresh_variables(self) -> None:
+        if self.variables_visible and self.debug is None:
+            self._variables.show_vars(self._variable_rows())
+
+    def jump_to_definition(self, name: str) -> None:
+        """g in the variables panel: the editor of the cell that bound `name`, on its line."""
+        from .outline import symbols
+
+        cell = self._owners(self.cells()).get(name)
+        if cell is None:
+            self.notify(f"No cell defines {name}", severity="warning")
+            return
+        line = next((symbol.line for symbol in symbols(cell.source) if symbol.name == name), 0)
+        if cell.editor_hidden:
+            self.select(cell, "cell")
+        else:
+            self.select(cell, "normal", row=line)
+            self.call_after_refresh(self._reveal_row, cell, line)
+
+    async def delete_variable(self, name: str) -> None:
+        """d in the variables panel: remove the name from the kernel; the cells that bound it become stale."""
+        if self.debug is not None:
+            self.notify("Not while the debugger is paused", severity="warning")
+            return
+        await self.kernel.delete({name})
+        self._values.pop(name, None)
+        self._var_rows.pop(name, None)
+        for cell in self.cells():
+            if name in cell.last_defs:
+                cell.mark_inputs_stale()
+        self._refresh_variables()
+        if self.outline_visible:
+            self._outline.set_values(self._cell_values(self.cells()))
+        self.notify(f"Deleted {name} from the kernel")
+
+    async def show_value(self, name: str) -> None:
+        """enter in the variables panel: the whole value, fetched from the kernel on demand."""
+        from .variables import ValueScreen
+
+        if self.kernel._lock.locked():
+            self.notify("The kernel is busy; the value shows once the cell finishes", severity="information")
+        value = await self.kernel.full_value(name)
+        self.app.push_screen(ValueScreen(name, value))
 
     def focus_outline(self) -> None:
         if self.outline_visible:
@@ -424,12 +570,15 @@ class NotebookPane(Vertical):
             self._outline.display = False
         self.focus_pane()
 
-    async def run_cells(self, roots: list[str], downstream: bool | None = None, after_install: bool = False) -> None:
+    async def run_cells(
+        self, roots: list[str], downstream: bool | None = None, after_install: bool = False, debug: str | None = None,
+    ) -> None:
         """Run roots in dependency order, stale ancestors first.
 
         `downstream` None follows the app's run mode: lazy (the default) only marks the cells
         downstream stale, reactive runs them too. `after_install` marks the re-run that follows
-        a package install, so a module that still fails is not offered again at once.
+        a package install, so a module that still fails is not offered again at once. `debug`
+        names a cell that pauses in the debugger on its first line.
         """
         await self.loaded.wait()
         async with self._run_lock:
@@ -472,7 +621,13 @@ class NotebookPane(Vertical):
                 cell.add_output("clear_output", {"wait": True})
                 self.exec_counter += 1
                 cell.begin_run(self.exec_counter)
-                ok = await self.kernel.execute(source, cell.add_output)
+                if cid == debug:
+                    await self.kernel.arm(cid)
+                ok = await self.kernel.execute(
+                    source, cell.add_output, cell_id=cid,
+                    on_input=lambda prompt, password, cell=cell: self._input_requested(cell, prompt, password),
+                )
+                self._debug_end()
                 if cell.output_clear_pending:
                     cell.clear_output()
                 cell.ran_source = source
@@ -480,6 +635,8 @@ class NotebookPane(Vertical):
                 cell.end_run("ok" if ok and cell.source == source else "error" if not ok else "stale")
                 self.outputs_changed()
                 cell.missing = self._note_missing(cell) if not ok else None
+                if not ok and not cell.missing:
+                    self._offer_debugger(cell)
                 if not ok:
                     failed.add(cid)
                 if cell.missing:
@@ -528,9 +685,223 @@ class NotebookPane(Vertical):
     async def refresh_vars(self, graph: Graph) -> None:
         names = set().union(*graph.defs.values()) if graph.defs else set()
         rows = await self.kernel.variables(names)
-        self._values = {name: Value(kind, value) for name, kind, value in rows}
+        self._values = {row[0]: Value(row[1], row[2]) for row in rows}
+        self._var_rows = {row[0]: list(row[1:5]) for row in rows if len(row) >= 5}
         if self.outline_visible:
             self._outline.set_values(self._cell_values(self.cells()))
+        self._refresh_variables()
+
+    def _offer_debugger(self, cell: Cell) -> None:
+        """Under a traceback raised in the cell's own code: how to open the debugger where it failed."""
+        error = cell.last_error or {}
+        if error.get("ename") in DEBUGGABLE_ERRORS:
+            cell.show_hint(":debug or r d opens the debugger where it failed: the loops, the indexes, the values")
+
+    def _input_requested(self, cell: Cell, prompt: str, password: bool) -> None:
+        """The kernel waits for input: the debugger's state (drawn in the panel) or input()."""
+        from .kernel_side import MARKER
+
+        if prompt.startswith(MARKER):
+            import json
+
+            try:
+                payload = json.loads(prompt[len(MARKER):])
+            except ValueError:
+                payload = {}
+            self._debug_stop(payload)
+            return
+        from .variables import InputPrompt
+
+        screen = InputPrompt(prompt, password, cell.label)
+        self._input_screen = screen
+
+        def answered(value: str | None) -> None:
+            self._input_screen = None
+            if value is None:
+                self.run_worker(self.kernel.interrupt(), group="kernel")
+            else:
+                self.kernel.reply(value)
+
+        self.app.push_screen(screen, answered)
+
+    def _debug_stop(self, payload: dict) -> None:
+        """A stop (or the answer to a private command): draw it, highlight the line, say DEBUG."""
+        from .debugview import DebugSession
+
+        first = self.debug is None
+        if first:
+            self.debug = DebugSession()
+        keep, self._debug_keep_view = self._debug_keep_view, False
+        self.debug.update(payload, keep_view=keep and not first)
+        self.show_variables()
+        self._draw_debug()
+        if first:
+            self.focus_variables()
+            self.app.update_status()
+        reply = payload.get("reply") or {}
+        if reply.get("kind") == "full":
+            from .variables import ValueScreen
+
+            self.app.push_screen(ValueScreen(reply.get("name", ""), reply.get("value") or {}))
+        elif reply.get("kind") == "error":
+            self.notify(reply.get("text", ""), severity="warning")
+        if self._timeline_wanted:
+            self.debug_timeline()
+
+    def _draw_debug(self) -> None:
+        session = self.debug
+        if session is None:
+            return
+        self._variables_panel().show_debug(session)
+        record = session.record
+        self._highlight(record.get("cell"), record.get("line"))
+        self._draw_breaks(session.payload.get("breaks") or {})
+
+    def _draw_breaks(self, breaks: dict[str, list[int]]) -> None:
+        """Underline the lines that hold a pdb breakpoint, in the cells that have one."""
+        if breaks == self._debug_breaks:
+            return
+        for cid in set(self._debug_breaks) | set(breaks):
+            cell = self._cell_by_id(cid)
+            if cell is not None:
+                cell.editor.set_debug_breaks(line - 1 for line in breaks.get(cid, ()))
+        self._debug_breaks = breaks
+
+    def _highlight(self, cid: str | None, line: int | None) -> None:
+        """Mark the paused line in its cell's editor: one style on one line, no CSS classes."""
+        target = (cid, line) if cid and line else None
+        if target == self._debug_line:
+            return
+        if self._debug_line is not None:
+            old = self._cell_by_id(self._debug_line[0])
+            if old is not None:
+                old.editor.set_debug_line(None)
+        self._debug_line = target
+        if target is None:
+            return
+        cell = self._cell_by_id(cid)
+        if cell is not None:
+            cell.editor.set_debug_line(line - 1)
+            self.call_after_refresh(self._reveal_row, cell, line - 1)
+
+    def _cell_by_id(self, cid: str | None) -> Cell | None:
+        return next((c for c in self.cells() if c.cid == cid), None) if cid else None
+
+    def place_of(self, where: dict) -> str:
+        """`c3 line 5 in f()` for a frame in a cell, `file.py:12 in g()` elsewhere."""
+        func = where.get("func", "")
+        suffix = "" if func in ("<module>", "") else f" in {func}()"
+        cell = self._cell_by_id(where.get("cell"))
+        if cell is not None:
+            return f"{cell.label} line {where.get('line')}{suffix}"
+        name = str(where.get("file", "?")).rsplit("/", 1)[-1]
+        return f"{name}:{where.get('line')}{suffix}"
+
+    def jump_to_record(self, record: dict) -> None:
+        cell = self._cell_by_id(record.get("cell"))
+        if cell is None:
+            self.notify("This line is not in a cell of this notebook", severity="warning")
+            return
+        self.select(cell, "normal", row=max(0, (record.get("line") or 1) - 1))
+
+    def debug_command(self, command: str, keep_view: bool = False) -> None:
+        """Send one pdb command (or a private _gp_* one) to the paused kernel."""
+        if self.debug is None:
+            return
+        self._debug_keep_view = keep_view
+        if not keep_view:
+            self.debug.running = True
+            self._draw_debug()
+        self.kernel.reply(command)
+
+    def debug_travel(self, step: int) -> None:
+        """h / l: back and forward through the recorded moments; the program does not run."""
+        session = self.debug
+        if session is None:
+            return
+        if not session.total:
+            self.notify("Nothing recorded yet: step with n, ], ) or b first", severity="information")
+            return
+        fetch = session.travel(step)
+        if fetch is not None:
+            self.debug_command(f"_gp_history {fetch}", keep_view=True)
+            return
+        self._draw_debug()
+
+    def debug_timeline(self) -> None:
+        """T: the recorded iterations as a table; missing records are fetched first."""
+        from .debugview import timeline
+        from .variables import TimelineScreen
+
+        session = self.debug
+        if session is None:
+            return
+        gap = session.missing()
+        if gap is not None:
+            self._timeline_wanted = True
+            self.debug_command(f"_gp_history {gap}", keep_view=True)
+            return
+        self._timeline_wanted = False
+        roots = timeline(session.records())
+        if not roots:
+            self.notify("No loop iterations recorded yet: step through a loop first", severity="information")
+            return
+
+        def chosen(index: int | None) -> None:
+            if index is not None and self.debug is not None:
+                live = self.debug.payload.get("index")
+                self.debug.view = None if index == live else index
+                self._draw_debug()
+
+        self.app.push_screen(TimelineScreen(roots, session.total), chosen)
+
+    def _debug_end(self) -> None:
+        """The run is over (finished, failed, quit, interrupted or restarted): back to variables."""
+        if self._input_screen is not None:
+            screen, self._input_screen = self._input_screen, None
+            if screen.is_attached:
+                screen.dismiss(None)
+        if self.debug is None:
+            return
+        self.debug = None
+        self._timeline_wanted = False
+        self._highlight(None, None)
+        self._draw_breaks({})
+        if self._variables is not None:
+            focused = self.app.focused
+            inside = focused is not None and self._variables in focused.ancestors_with_self
+            self._variables.set_mode("vars")
+            self._refresh_variables()
+            if inside:
+                self.focus_pane()
+        self.app.update_status()
+
+    async def debug_cell(self, cell: Cell | None = None) -> None:
+        """r d, :debug: post-mortem where the cell's last run failed, else run it paused on its first line."""
+        cell = cell or self.current_cell()
+        if cell is None or cell.kind != "code":
+            return
+        if cell.run_status == "error" and cell.last_error is not None and cell.ran_source == cell.source:
+            await self.postmortem(cell)
+        else:
+            await self.run_cells([cell.cid], debug=cell.cid)
+
+    async def postmortem(self, cell: Cell) -> None:
+        """Open the debugger at the frame where the cell's last run raised."""
+        notes: list[str] = []
+
+        def output(kind: str, content: dict) -> None:
+            if kind == "stream":
+                notes.append(content.get("text", ""))
+
+        async with self._run_lock:
+            await self.kernel.execute(
+                "_gp_postmortem()", output, store_history=False,
+                on_input=lambda prompt, password: self._input_requested(cell, prompt, password),
+            )
+            self._debug_end()
+        if "".join(notes).strip():
+            self.notify("".join(notes).strip(), severity="warning")
 
     def all_specs(self) -> list[notebook.CellSpec]:
         return [self._spec_of(c) for c in self.cells()] + self._pending_sources
@@ -989,8 +1360,10 @@ class NotebookPane(Vertical):
             if cell.ran_source is not None:
                 cell.mark_inputs_stale()
         self._values = {}
+        self._var_rows = {}
         if self.outline_visible:
             self._outline.set_values({})
+        self._refresh_variables()
 
     def clear_outputs(self) -> None:
         for cell in self.cells():
