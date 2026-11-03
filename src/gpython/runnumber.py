@@ -85,7 +85,7 @@ class RunByNumber(CellNumberSequence):
     badge = "RUN"
     badge_style = "bold black on green"
     verb = "run"
-    letters_hint = "r/c this · C to here · a after · A all · s stale · t time · k restart · R restart+all · i stop"
+    letters_hint = "r last · c this · C to here · a after · A all · s stale · t time · k restart · R restart+all · i stop"
     finish_hint = "enter runs"
 
     def letter(self, key: str) -> bool:
@@ -109,7 +109,7 @@ def _in_worker(method_name: str, group: str = "run"):
 
 
 RUN_LETTERS = {
-    "r": _in_worker("run_cell"),
+    "r": _in_worker("run_last"),
     "c": _in_worker("run_cell"),
     "t": lambda pane: pane.app.start_time_runs(pane),
     "C": lambda pane: pane.run_relative(False, inclusive=True),

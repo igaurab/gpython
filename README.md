@@ -8,7 +8,7 @@ since, or their inputs changed), then the cell. What happens to the cells
 *below* it, the ones that use its variables, is the **run mode** (`f3`, saved):
 
 - **lazy** (the default): they are only marked stale. You run what you want,
-  when you want, without moving: `r 6` runs cell c6, `r r` this cell, `r C` the
+  when you want, without moving: `r 6` runs cell c6, `r c` this cell, `r r` the cell you ran last, `r C` the
   cells down to this one, `r a` the cells after it, `r A` all, `r s` the stale
   ones (`f4`); `r k` restarts the kernel, `r R` restarts and runs all, `r i`
   interrupts; `r t 5` times this cell over five runs and prints a bordered table

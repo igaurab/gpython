@@ -74,7 +74,7 @@ def test_status_bar_while_pending(tmp_path):
         await pilot.press("r")
         await pilot.pause()
         text = status(app)
-        assert "run cell: c_" in text and "number · r/c this · C to here · a after · A all · s stale" in text
+        assert "run cell: c_" in text and "number · r last · c this · C to here · a after · A all · s stale" in text
 
     ui(tmp_path, test, cells=many_cells(12))
 
@@ -466,3 +466,24 @@ def test_time_summary():
     assert len({len(line) for line in table[1:]}) == 1
     assert "5.7ms²" in time_summary([0.003, 0.004, 0.004, 0.009, 0.006]).splitlines()[4]
     assert time_brief([1.0, 2.0, 6.0]) == "3 runs: mean 3.00s · median 2.00s · p90 5.20s"
+
+
+def test_r_r_reruns_the_cell_run_last_and_r_c_runs_this_one(tmp_path):
+    async def test(app, pilot):
+        first, _, show, last = app.cells()
+        last.focus()
+        await pilot.press("r", "r")
+        await settle(app, pilot)
+        assert last.exec_count > 0
+        await pilot.press("r", "3")
+        await settle(app, pilot)
+        count = show.exec_count
+        await pilot.press("r", "r")
+        await settle(app, pilot)
+        assert show.exec_count > count and app.focused is last
+        before = last.exec_count
+        await pilot.press("r", "c")
+        await settle(app, pilot)
+        assert last.exec_count > before
+
+    ui(tmp_path, test, kernel=True)

@@ -67,7 +67,7 @@ KEYMAP: list[tuple[str, str, str]] = [
     ("normal", ":", "Ex command (:help lists them)"),
     ("normal", "gt / gT / 2gt", "Next / previous / second tab"),
     ("normal", "r 6 (or space r 6)", "Run cell c6 (any number; stale cells it uses run first; enter runs, esc cancels; :run 6)"),
-    ("normal", "r r / c / C / a / A / s", "Run this cell / this cell / the cells down to here / the cells after it / all / the stale ones, staying here"),
+    ("normal", "r r / c / C / a / A / s", "Run the cell run last / this cell / the cells down to here / the cells after it / all / the stale ones, staying here"),
     ("normal", "r k / R / i", "Restart the kernel / restart it and run all / interrupt running code"),
     ("normal", "r d", "Debug this cell: post-mortem where its last run failed, else run it paused on its first line (:debug; breakpoint() in code pauses too)"),
     ("normal", "r t / r t 5", "Time this cell: run it once, or 5 times, and print a table under it: mean, median, std, variance, p50 / p90 / p99, min, max (:timeit 5)"),

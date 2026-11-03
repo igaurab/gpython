@@ -43,7 +43,7 @@ async def until(pilot, condition, seconds=20):
 async def run(app, pilot, n):
     cell = app.cells()[n - 1]
     app.pane.select(cell, "cell")
-    await pilot.press("r", "r")
+    await pilot.press("r", "c")
     return cell
 
 

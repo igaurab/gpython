@@ -61,6 +61,7 @@ class NotebookPane(Vertical):
         self._shutting_down = False
         self._booted = asyncio.Event()
         self._run_lock = asyncio.Lock()
+        self._last_run_cid: str | None = None
         self.tried: set[str] = set()
         self.loaded = asyncio.Event()
         self._specs: list[notebook.CellSpec] = []
@@ -1078,7 +1079,16 @@ class NotebookPane(Vertical):
         if cell.kind == "markdown":
             await cell.show_rendered()
         else:
+            self._last_run_cid = cell.cid
             self.run_worker(self.run_cells([cell.cid]), group="run")
+
+    async def run_last(self) -> None:
+        """r r: run again the cell run last, wherever the cursor is; the current cell if none ran yet."""
+        cell = next((c for c in self.cells() if c.cid == self._last_run_cid), None)
+        if cell is None:
+            await self.run_cell()
+        else:
+            await self._run_one(cell)
 
     def cell_count(self) -> int:
         """Cells in the notebook, counting the ones not mounted yet."""
