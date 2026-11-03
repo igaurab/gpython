@@ -29,8 +29,9 @@ def register(source: str, cid: str) -> str:
 
 
 def run_cell(source: str, commands: list[str], cid: str = "c1", namespace: dict | None = None):
-    """Run `source` as cell `cid`; every debugger prompt takes the next command. Returns the
-    payloads of the stops and the exception the cell raised (or None)."""
+    """Run `source` as cell `cid`; every debugger prompt takes the next command (a callable gets
+    the payload and returns the command). Returns the payloads of the stops and the exception
+    the cell raised (or None)."""
     name = register(source, cid)
     tree = ast.parse(source)
     codes = [compile(ast.Module([node], []), name, "exec") for node in tree.body]
@@ -39,7 +40,8 @@ def run_cell(source: str, commands: list[str], cid: str = "c1", namespace: dict 
     def answer(prompt=""):
         assert prompt.startswith(MARKER), prompt
         stops.append(json.loads(prompt[len(MARKER):]))
-        return next(script)
+        command = next(script)
+        return command(stops[-1]) if callable(command) else command
 
     saved_input, saved_hook = builtins.input, sys.breakpointhook
     builtins.input, sys.breakpointhook = answer, kernel_side.breakpointhook
@@ -226,13 +228,18 @@ def test_changed_elements_grids_and_maps_are_highlighted():
     assert (added, removed, modified) == (["2"], ["1"], ["0"])
 
 
+def session_of(stops, keep=()):
+    session = debugview.DebugSession()
+    for index, stop in enumerate(stops):
+        session.update(stop, keep_view=index in keep)
+    return session
+
+
 def test_history_is_recorded_and_travelled_back_and_forward():
     stops, _ = run_cell(NESTED, ["n", "n", "n", "_gp_next 0", "_gp_next 0", "c"])
-    session = debugview.DebugSession()
-    for stop in stops:
-        session.update(stop)
-    assert session.total == stops[-1]["history"]["total"] >= 6
-    assert set(session.records) == set(range(session.total))
+    session = session_of(stops)
+    assert session.total == stops[-1]["history"]["steps"] >= 6
+    assert session.order == list(range(session.total))
     live = session.record
     assert session.travel(-1) is None and session.view == session.payload["index"] - 1
     back = session.record
@@ -244,34 +251,214 @@ def test_history_is_recorded_and_travelled_back_and_forward():
     assert session.history_of("total")[-1] == dict(live["vars"])["total"]
 
 
+LONG = "breakpoint()\nacc = 0\nfor k in range({n}):\n    acc += k\nend = acc\n"
+
+
+def fetch_all(session):
+    """A command for run_cell: fetch what the mirror lacks, then continue."""
+
+    def command(payload):
+        session.update(payload, keep_view=session.session is not None)
+        gap = session.missing()
+        return f"_gp_history {gap}" if gap is not None else "c"
+
+    return command
+
+
 def test_history_is_sent_in_batches_and_gaps_are_fetched():
-    source = "breakpoint()\nacc = 0\nfor k in range(400):\n    acc += k\nend = acc\n"
-    stops, _ = run_cell(source, ["n", "n", "n", "_gp_end", "_gp_history 0 300", "c"])
     session = debugview.DebugSession()
-    for stop in stops[:5]:
-        session.update(stop)
-    assert session.total > 800 and len(session.records) == kernel_side.BATCH + 4
-    assert session.missing() is not None
-    session.update(stops[5], keep_view=True)
-    assert all(i in session.records for i in range(300))
+    fetch = fetch_all(session)
+    stops, _ = run_cell(LONG.format(n=400), ["n", "n", "n", "_gp_end"] + [fetch] * 20)
+    first = session_of(stops[:5])
+    assert first.total > 800 and len(first.order) == kernel_side.BATCH + 4
+    assert first.missing() is not None
+    assert len(stops) > 6 and session.missing() is None
+    assert session.order == list(range(session.total))
+
+
+def test_replay_rebuilds_the_locals_from_the_keyframe_before():
+    kernel_side.configure({"debug_detail": "balanced"})
+    try:
+        stops, _ = run_cell(LONG.format(n=300), ["n", "n", "n", "_gp_end", "c"])
+    finally:
+        kernel_side.configure({})
+    session = session_of(stops)
+    entries = session.entries
+    assert stops[-1]["history"]["detail"] == "balanced"
+    assert any(not entry["key"] for entry in entries.values()) and entries[min(entries)]["key"]
+    live = session.payload["index"]
+    assert dict(session.full(live)["vars"]) == dict(session.payload["now"]["vars"])
+    deltas = sorted(i for i, entry in entries.items() if not entry["key"])
+    middle = deltas[len(deltas) // 2]
+    rebuilt = session.full(middle)
+    assert set(dict(rebuilt["vars"])) == {"acc", "k"}
+    position = int(dict(rebuilt["vars"])["k"])
+    assert int(dict(rebuilt["vars"])["acc"]) in (sum(range(position)), sum(range(position + 1)))
 
 
 def test_the_timeline_groups_iterations_and_marks_warnings():
     stops, _ = run_cell(OFF_BY_ONE, ["n", "n", "_gp_end", "c"])
-    session = debugview.DebugSession()
-    for stop in stops:
-        session.update(stop)
-    roots = debugview.timeline([session.records[i] for i in sorted(session.records)])
+    roots = debugview.timeline(session_of(stops).records())
     assert [node.k for node in roots] == [1, 2, 3, 4, 5]
     assert [node.warnings for node in roots[:4]] == [[], [], [], []]
     assert roots[4].warnings == ["i = 4 is past the end of nums (len 4)"]
     assert "i=4" in roots[4].label().plain and "⚠" in roots[4].label().plain
     assert "total: 1→4" in roots[1].label().plain
-    nested, _ = run_cell(NESTED + "finish = done\n", ["_gp_until done", "c"])
-    session = debugview.DebugSession()
-    session.update(nested[1])
-    tree = debugview.timeline([session.records[i] for i in sorted(session.records)])
+    nested, _ = run_cell(NESTED + "finish = done\n", ["_gp_until_rec done", "c"])
+    tree = debugview.timeline(session_of(nested).records())
     assert [len(node.children) for node in tree] == [4, 3, 2, 1, 0]
+
+
+def test_stop_if_does_not_record_on_the_way_unless_asked():
+    quiet, _ = run_cell(LONG.format(n=50), ["_gp_until k == 40", "c"])
+    loud, _ = run_cell(LONG.format(n=50), ["_gp_until_rec k == 40", "c"])
+    assert quiet[1]["history"]["steps"] <= 3 and loud[1]["history"]["steps"] > 80
+    assert dict(quiet[1]["now"]["vars"])["k"] == "40"
+
+
+def test_stop_if_finds_a_nan_and_a_step():
+    source = "breakpoint()\nloss = 1.0\nfor step in range(2000):\n    loss = float('nan') if step == 1500 else loss * 0.999\n"
+    stops, _ = run_cell(source, ["_gp_until step == 1200", "_gp_until loss != loss", "c"])
+    assert dict(stops[1]["now"]["vars"])["step"] == "1200"
+    assert dict(stops[2]["now"]["vars"])["step"] == "1500" and dict(stops[2]["now"]["vars"])["loss"] == "nan"
+
+
+def test_presets_and_overrides():
+    limits, sources = kernel_side.resolve({})
+    assert limits["detail"] == "full" and limits["history"] == 200 * kernel_side.MB and limits["thinning"] == "off"
+    assert set(sources.values()) == {"full"}
+    lean, _ = kernel_side.resolve({"debug_detail": "lean"})
+    assert (lean["history"], lean["repr_chars"], lean["deltas"]) == (5 * kernel_side.MB, 40, "watched")
+    balanced, sources = kernel_side.resolve({"debug_detail": "balanced", "debug_history": "1GB", "debug_stats": "off", "debug_strip_items": "x"})
+    assert balanced["history"] == 1024 * kernel_side.MB and sources["history"] == "override"
+    assert balanced["stats"] == "off" and balanced["strip_items"] == 40 and sources["strip_items"] == "balanced"
+    assert kernel_side.parse_bytes("512kb") == 512 * 1024 and kernel_side.parse_bytes("20MB") == 20 * kernel_side.MB
+    assert kernel_side.resolve({"debug_detail": "nonsense"})[0]["detail"] == "full"
+
+
+def test_settings_apply_to_the_next_recording():
+    before, _ = run_cell(NESTED, ["n", "c"])
+    kernel_side.configure({"debug_detail": "lean", "debug_history": "2MB"})
+    try:
+        after, _ = run_cell(NESTED, ["n", "n", "n", "n", "c"])
+    finally:
+        kernel_side.configure({})
+    assert before[0]["history"]["detail"] == "full"
+    assert after[0]["history"]["detail"] == "lean" and after[0]["history"]["cap"] == 2 * kernel_side.MB
+    session = session_of(after)
+    assert all(not entry["seqs"] for entry in session.entries.values())
+
+
+def test_full_keeps_every_step_of_a_thousand_iterations():
+    stops, _ = run_cell(LONG.format(n=1000), ["n", "n", "n", "_gp_end", "c"])
+    history = stops[-1]["history"]
+    assert history["detail"] == "full" and history["thinned"] == 0 and history["dropped"] == 0
+    assert history["steps"] >= 2000
+
+
+def test_thinning_keeps_the_newest_iterations_in_full_detail():
+    recorder = kernel_side.Recorder(kernel_side.resolve({"debug_detail": "balanced"})[0])
+    loop = {"line": 2, "header": "for k in range(500)", "kind": "for", "vars": [], "n": 500}
+    for k in range(1, 501):
+        for line in (3, 4):
+            recorder.add({"cell": "c1", "line": line, "func": "<module>", "loops": [dict(loop, k=k)], "vars": [["k", str(k)], ["line", str(line)]]})
+    recorder.thin()
+    by_k: dict[int, list] = {}
+    for entry in recorder.entries:
+        by_k.setdefault(entry["loops"][0]["k"], []).append(entry["line"])
+    assert by_k[500] == [3, 4] and by_k[499] == [3, 4] and by_k[498] == [3, 4]
+    assert by_k[497] == [4] and by_k[420] == [4]
+    assert 393 not in by_k and 390 in by_k and recorder.thinned > 0
+    session = debugview.DebugSession()
+    session.update({"session": 1, "history": dict(recorder.summary(), batches=[recorder.fresh()])})
+    state = dict(session.full(max(session.order))["vars"])
+    assert state == {"k": "500", "line": "4"}
+
+
+def test_the_byte_cap_holds_over_a_hundred_thousand_iterations():
+    kernel_side.configure({"debug_detail": "lean", "debug_history": "100KB"})
+    try:
+        stops, _ = run_cell(LONG.format(n=100_000), ["n", "n", "n", "_gp_end", "c"])
+    finally:
+        kernel_side.configure({})
+    history = stops[-1]["history"]
+    assert history["bytes"] <= 100 * 1024 and history["dropped"] > 0
+    assert "history full" in debugview.history_warning(history)
+
+
+class FakeTensor:
+    """Looks like a CUDA tensor; any call that would read its data counts and fails."""
+
+    __module__ = "torch"
+
+    def __init__(self):
+        self.shape, self.dtype, self.device, self.touched = (1000, 512), "torch.float32", "cuda:0", []
+
+    def _touch(self, name):
+        self.touched.append(name)
+        raise RuntimeError(f"{name} would sync the GPU")
+
+    def mean(self):
+        self._touch("mean")
+
+    def item(self):
+        self._touch("item")
+
+    def tolist(self):
+        self._touch("tolist")
+
+    def __repr__(self):
+        self._touch("repr")
+        return "x"
+
+    def __len__(self):
+        return 1000
+
+    def __getitem__(self, index):
+        self._touch("getitem")
+
+
+def test_a_tensor_is_summarised_from_its_metadata_unless_watched():
+    tensor = FakeTensor()
+    source = "breakpoint()\nfor step in range(3):\n    weights = tensor\n    step2 = step\n"
+    stops, _ = run_cell(source, ["n", "n", "n", "n", "_gp_watch weights", "c"], namespace={"__name__": "__main__", "tensor": tensor})
+    assert tensor.touched == ["mean", "min", "max"] or set(tensor.touched) <= {"mean"}
+    shown = dict(stops[4]["now"]["vars"])["weights"]
+    assert shown.startswith("FakeTensor(1000, 512) torch.float32 cuda:0")
+    assert stops[5]["watches"][0][1].startswith("FakeTensor(1000, 512)")
+    tensor.touched.clear()
+    assert kernel_side.short(tensor).startswith("FakeTensor(1000, 512)") and tensor.touched == []
+    assert kernel_side.full(tensor)["kind"] == "text" and tensor.touched == []
+
+
+def test_no_hook_stays_installed_when_idle():
+    run_cell(NESTED, ["_gp_until total > 5", "c"])
+    assert sys.gettrace() is None
+    if hasattr(sys, "monitoring"):
+        assert all(sys.monitoring.get_tool(tool) is None for tool in (3, 4, 5))
+
+
+def test_a_loop_runs_as_fast_after_a_debugging_session():
+    import time
+
+    def loop():
+        total = 0
+        for k in range(100_000):
+            total += k
+        return total
+
+    def best():
+        times = []
+        for _ in range(5):
+            start = time.perf_counter()
+            loop()
+            times.append(time.perf_counter() - start)
+        return min(times)
+
+    plain = best()
+    run_cell(NESTED, ["n", "_gp_next 0", "c"])
+    after = best()
+    assert after < plain * 1.5 + 0.002
 
 
 def test_post_mortem_opens_at_the_failing_line_with_the_pointer_past_the_end():
@@ -287,16 +474,20 @@ def test_post_mortem_opens_at_the_failing_line_with_the_pointer_past_the_end():
 
 
 def test_post_mortem_keeps_the_history_of_a_recorded_run():
-    _, raised = run_cell(OFF_BY_ONE, ["_gp_until i == 3", "c"], cid="c7")
+    _, raised = run_cell(OFF_BY_ONE, ["_gp_until_rec i == 3", "c"], cid="c7")
     assert isinstance(raised, IndexError)
     stops = postmortem(["q"])
-    assert stops[0]["history"]["total"] > 5 and stops[0]["now"]["cell"] == "c7"
+    assert stops[0]["history"]["steps"] > 5 and stops[0]["now"]["cell"] == "c7"
 
 
 def test_quit_aborts_the_cell_and_tracing_stops():
     stops, raised = run_cell(NESTED, ["n", "q"])
     assert len(stops) == 2 and raised is not None and type(raised).__name__ == "BdbQuit"
     assert sys.gettrace() is None
+    stops, raised = run_cell(NESTED, ["n", "n", "n", "_gp_next 0", "q"])
+    assert len(stops) == 5 and type(raised).__name__ == "BdbQuit" and sys.gettrace() is None
+    if hasattr(sys, "monitoring"):
+        assert all(sys.monitoring.get_tool(tool) is None for tool in (3, 4, 5))
 
 
 def test_values_of_a_local_and_watches():

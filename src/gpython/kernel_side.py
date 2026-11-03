@@ -1,9 +1,16 @@
 """The half of the variables panel and the debugger that runs inside the kernel process.
 
 gpython reads this file and executes it in the kernel as the module `_gpython_debug` (see
-`kernel._helpers`), so it uses the standard library only and never imports gpython. The tests
-import it directly and drive the debugger in process. The record format and the caps are
-described in docs/plans/10-variables-debugger.md.
+`kernel._helpers`), so it uses the standard library only and never imports gpython (gpython
+imports it for PRESETS and `resolve`). The tests import it directly and drive the debugger in
+process. The record format, the presets and the caps are described in
+docs/plans/10-variables-debugger.md.
+
+Rules that hold in every preset: no hook is installed while nothing is being stepped, stopped
+for or recorded; on Python 3.12+ the run-until modes use sys.monitoring LINE events for the
+cells' own code only; history goes to gpython in batches at stops; and a tensor or array is
+summarised by type, shape, dtype and device, never by repr(), .item(), .mean() or .tolist(),
+unless it is watched (or, in the full preset, small and on the CPU).
 """
 
 from __future__ import annotations
@@ -14,32 +21,111 @@ import json
 import linecache
 import reprlib
 import sys
+import time
 import types
 from collections import deque
 
 MARKER = "\x1egpython-debug\x1e"
-HISTORY_CAP = 5000
 BATCH = 300
-SEQ_WINDOW = 40
-GRID_WINDOW = 10
+KEYFRAME_EVERY = 100
 MAP_ITEMS = 30
 LOCALS_CAP = 60
 TABLE_ROWS = 1000
 TABLE_COLS = 50
 TEXT_CAP = 200_000
 OUTPUT_CAP = 4000
+HUGE_LEN = 100_000
+SLOW_REPR = 0.01
+STATS_SIZE = 100_000
 SKIP = [
     "IPython", "IPython.*", "ipykernel", "ipykernel.*", "asyncio", "asyncio.*", "tornado.*", "zmq.*",
     "traitlets.*", "jupyter_client.*", "concurrent.*", "contextlib", "threading", "selectors", "runpy",
     "codeop", "bdb", "pdb", "cmd", "_gpython_debug", "gpython.kernel_side",
 ]
 HIDDEN = {"In", "Out", "get_ipython", "exit", "quit", "open"}
-HEAVY = {"numpy", "pandas", "polars", "torch", "jax", "tensorflow", "xarray", "scipy", "pyarrow"}
+HEAVY = {"numpy", "pandas", "polars", "torch", "jax", "jaxlib", "tensorflow", "xarray", "scipy", "pyarrow", "cupy"}
 ROUTINES = (types.FunctionType, types.BuiltinFunctionType, types.MethodType, types.BuiltinMethodType)
+SCALARS = (int, float, complex, str, bytes, bool, type(None))
+
+MB = 1024 * 1024
+PRESETS = {
+    "full": {
+        "history": 200 * MB, "events": 2_000_000, "thinning": "off", "deltas": "off",
+        "repr_chars": 2000, "strip_items": 500, "grid_size": 50, "stats": "cpu",
+    },
+    "balanced": {
+        "history": 20 * MB, "events": 200_000, "thinning": "on", "deltas": "on",
+        "repr_chars": 80, "strip_items": 40, "grid_size": 20, "stats": "watched",
+    },
+    "lean": {
+        "history": 5 * MB, "events": 50_000, "thinning": "aggressive", "deltas": "watched",
+        "repr_chars": 40, "strip_items": 20, "grid_size": 10, "stats": "watched",
+    },
+}
+DEFAULT_PRESET = "full"
+SETTINGS = ("history", "events", "thinning", "repr_chars", "strip_items", "grid_size", "stats")
+THINNING = {"on": (3, 100, 1000), "aggressive": (1, 20, 200)}
 
 cell_files: dict[str, str] = {}
 _infos: dict[str, CellInfo | None] = {}
-_state = {"current": None, "last": None, "session": 0}
+_state: dict = {"current": None, "last": None, "session": 0, "settings": {}}
+_slow_types: set[type] = set()
+
+
+def parse_bytes(text) -> int:
+    """`20MB`, `1GB`, `512kb` or a plain number of bytes."""
+    if isinstance(text, int):
+        return text
+    cleaned = str(text).strip().lower().replace(" ", "").rstrip("b")
+    scale = {"k": 1024, "m": MB, "g": 1024 * MB}.get(cleaned[-1:], 1)
+    number = cleaned[:-1] if scale != 1 else cleaned
+    return int(float(number) * scale)
+
+
+def _parse(key: str, value):
+    if key == "history":
+        return parse_bytes(value)
+    if key in ("events", "repr_chars", "strip_items", "grid_size"):
+        return max(1, int(value))
+    if key == "thinning":
+        value = {True: "on", False: "off"}.get(value, str(value).lower())
+        if value not in ("on", "off", "aggressive"):
+            raise ValueError("thinning is on, off or aggressive")
+        return value
+    if key == "stats":
+        if value not in ("watched", "cpu", "off"):
+            raise ValueError("stats is watched, cpu or off")
+        return value
+    raise KeyError(key)
+
+
+def resolve(settings: dict) -> tuple[dict, dict]:
+    """The limits in effect for config keys `debug_detail` and `debug_<limit>`, and where each came
+    from: the preset's name, or "override". An unknown preset or a bad value falls back to the preset."""
+    detail = str(settings.get("debug_detail", DEFAULT_PRESET)).lower()
+    if detail not in PRESETS:
+        detail = DEFAULT_PRESET
+    limits = dict(PRESETS[detail], detail=detail)
+    sources = {key: detail for key in SETTINGS}
+    for key in SETTINGS:
+        value = settings.get(f"debug_{key}")
+        if value is None or value == "":
+            continue
+        try:
+            limits[key] = _parse(key, value)
+            sources[key] = "override"
+        except (ValueError, KeyError):
+            continue
+    return limits, sources
+
+
+def configure(settings: dict) -> None:
+    """gpython sends the `debug_*` config keys at start and on :set; the next recording uses them."""
+    _state["settings"] = dict(settings)
+
+
+def limits() -> dict:
+    return resolve(_state["settings"])[0]
 
 
 def _repr(maxstring: int, maxother: int, items: int, level: int) -> reprlib.Repr:
@@ -51,12 +137,50 @@ def _repr(maxstring: int, maxother: int, items: int, level: int) -> reprlib.Repr
     return shaper
 
 
-_SHORT = _repr(60, 60, 10, 2)
 _TINY = _repr(14, 14, 3, 1)
+_shapers: dict[int, reprlib.Repr] = {}
+
+
+def _shaper(width: int) -> reprlib.Repr:
+    shaper = _shapers.get(width)
+    if shaper is None:
+        items = max(4, min(200, width // 4))
+        shaper = _shapers[width] = _repr(width, width, items, 2 if width < 200 else 4)
+    return shaper
+
+
+def _root(value) -> str:
+    return type(value).__module__.partition(".")[0]
 
 
 def _heavy(value) -> bool:
-    return type(value).__module__.partition(".")[0] in HEAVY
+    """numpy, pandas, torch, jax and friends, told apart by the type's module: nothing is imported."""
+    return _root(value) in HEAVY
+
+
+def device_of(value) -> str:
+    """`cpu`, `cuda:0`, …; numpy and pandas are always on the CPU; '' when unknown."""
+    if _root(value) in ("numpy", "pandas", "polars", "pyarrow", "scipy", "xarray"):
+        return "cpu"
+    device = getattr(value, "device", None)
+    if device is None or callable(device):
+        return ""
+    return str(device)
+
+
+def on_cpu(value) -> bool:
+    return device_of(value).startswith(("cpu", "TFRT_CPU"))
+
+
+def _numel(value):
+    count = getattr(value, "numel", None)
+    if callable(count):
+        try:
+            return int(count())
+        except Exception:
+            return None
+    size = getattr(value, "size", None)
+    return size if isinstance(size, int) else None
 
 
 def category(value) -> str:
@@ -71,7 +195,8 @@ def category(value) -> str:
 
 
 def shape_info(value) -> str:
-    """`(3, 4) float64` for arrays and frames, `len 5` for sized containers and strings."""
+    """`(3, 4) float64` for arrays and frames (plus the device when not the CPU), `len 5` for
+    sized containers and strings. Reads metadata only."""
     if _heavy(value):
         shape = getattr(value, "shape", None)
         if isinstance(shape, tuple):
@@ -82,7 +207,10 @@ def shape_info(value) -> str:
                 except Exception:
                     kinds = []
                 dtype = ", ".join(kinds[:3]) + (" …" if len(kinds) > 3 else "")
-            return f"{shape} {dtype}".strip() if dtype is not None else str(shape)
+            text = f"{tuple(shape)} {dtype}".strip() if dtype is not None else str(tuple(shape))
+            device = device_of(value)
+            return text + (f" {device}" if device and not on_cpu(value) else "")
+        return ""
     if isinstance(value, (type, types.ModuleType)) or isinstance(value, ROUTINES):
         return ""
     if isinstance(value, (str, bytes, list, tuple, dict, set, frozenset, range, deque)):
@@ -95,34 +223,88 @@ def shape_info(value) -> str:
     return ""
 
 
-def short(value, width: int = 60) -> str:
-    """A one-line repr that never formats a huge object in full."""
+def stats(value) -> str:
+    """mean, min, max and NaN count of an array or tensor; each one is skipped when it fails."""
+    parts = []
+    for label in ("mean", "min", "max"):
+        try:
+            parts.append(f"{label}={float(getattr(value, label)()):.4g}")
+        except Exception:
+            if label == "mean" and hasattr(value, "float"):
+                try:
+                    parts.append(f"mean={float(value.float().mean()):.4g}")
+                except Exception:
+                    pass
+    try:
+        nan = int((value != value).sum())
+        if nan:
+            parts.append(f"nan={nan}")
+    except Exception:
+        pass
+    return " ".join(parts)
+
+
+def heavy_summary(value, stats_mode: str = "off", watched: bool = False) -> str:
+    """`Tensor(3, 4) float32 cuda:0`: type, shape, dtype and device, read from metadata only.
+    Stats are added for a watched name, or with stats_mode "cpu" for small data on the CPU."""
+    name = type(value).__name__
+    if hasattr(value, "columns") and hasattr(value, "iloc"):
+        try:
+            names = [str(c) for c in list(value.columns[:8])]
+            return f"{name}{tuple(value.shape)} columns: " + ", ".join(names) + (" …" if len(value.columns) > 8 else "")
+        except Exception:
+            return name
+    shape = getattr(value, "shape", None)
+    if not isinstance(shape, tuple):
+        return name
+    dtype = getattr(value, "dtype", None)
+    text = f"{name}{tuple(shape)}" + (f" {dtype}" if dtype is not None else "")
+    device = device_of(value)
+    if device and not on_cpu(value):
+        text += f" {device}"
+    count = _numel(value)
+    small = count is not None and count <= STATS_SIZE
+    if stats_mode != "off" and (watched or (stats_mode == "cpu" and small and on_cpu(value))):
+        extra = stats(value)
+        if extra:
+            text += " " + extra
+    return text
+
+
+def short(value, width: int = 60, stats_mode: str = "off", watched: bool = False) -> str:
+    """A one-line repr capped in length and time: heavy data by its metadata, an object whose len()
+    is huge by its type and length, and a type whose repr was once slow by its name from then on."""
+    kind = type(value)
     try:
         if _heavy(value):
-            text = _heavy_text(value)
+            text = heavy_summary(value, stats_mode, watched)
         elif isinstance(value, types.ModuleType):
             text = ""
+        elif kind in _slow_types:
+            text = f"<{kind.__name__}: slow repr skipped>"
+        elif not isinstance(value, (str, bytes, list, tuple, dict, set, frozenset, range, deque)) and hasattr(kind, "__len__") and _length(value) > HUGE_LEN:
+            text = f"<{kind.__name__} of {_length(value)} items>"
         else:
-            text = _SHORT.repr(value)
+            start = time.perf_counter()
+            text = _shaper(width).repr(value)
+            if time.perf_counter() - start > SLOW_REPR and not isinstance(value, SCALARS):
+                _slow_types.add(kind)
     except Exception as error:
-        text = f"<repr failed: {error!r}>"
+        text = f"<repr failed: {type(error).__name__}>"
     text = text.replace("\n", " ")
     return text if len(text) <= width else text[: width - 1] + "…"
 
 
-def _heavy_text(value) -> str:
-    if hasattr(value, "columns") and hasattr(value, "iloc"):
-        names = [str(c) for c in list(value.columns[:8])]
-        return "columns: " + ", ".join(names) + (" …" if len(value.columns) > 8 else "")
-    if hasattr(value, "iloc") and hasattr(value, "tolist"):
-        return _SHORT.repr(value.iloc[:10].tolist())
-    if getattr(value, "ndim", None) is not None and getattr(value, "size", 0) > 10_000:
-        return f"{type(value).__name__} of {value.size} items"
-    return " ".join(repr(value).split())
+def _length(value) -> int:
+    try:
+        return len(value)
+    except Exception:
+        return 0
 
 
 def cell_text(value, width: int = 6) -> str:
-    """An element inside a strip or a grid box: numbers compact, strings bare."""
+    """An element inside a strip or a grid box: numbers compact, strings bare. A 0-d array
+    element is read with .item() only on the CPU."""
     if isinstance(value, bool) or value is None:
         text = str(value)
     elif isinstance(value, int):
@@ -131,16 +313,19 @@ def cell_text(value, width: int = 6) -> str:
         text = format(value, ".4g")
     elif isinstance(value, str):
         text = value if len(value) <= 1 else repr(value)
-    elif _heavy(value) and getattr(value, "ndim", 1) == 0:
-        text = str(value.item()) if hasattr(value, "item") else str(value)
+    elif _heavy(value) and getattr(value, "ndim", 1) == 0 and on_cpu(value) and hasattr(value, "item"):
+        item = value.item()
+        text = format(item, ".4g") if isinstance(item, float) else str(item)
+    elif _heavy(value):
+        text = type(value).__name__
     else:
         text = _TINY.repr(value)
     text = text.replace("\n", " ")
     return text if len(text) <= width else text[: width - 1] + "…"
 
 
-def describe(name: str, value) -> list:
-    return [name, type(value).__name__, short(value), shape_info(value), category(value)]
+def describe(name: str, value, width: int = 60, stats_mode: str = "off") -> list:
+    return [name, type(value).__name__, short(value, width, stats_mode), shape_info(value), category(value)]
 
 
 def variables(namespace: dict, names) -> list:
@@ -149,8 +334,11 @@ def variables(namespace: dict, names) -> list:
 
 
 def full(value) -> dict:
-    """The whole value for the viewer, capped: a table for frames and 2-D data, else text."""
+    """The whole value for the viewer, capped: a table for frames and 2-D data, else text. Data
+    on a GPU is described, not copied."""
     try:
+        if _heavy(value) and not on_cpu(value) and _root(value) not in ("pandas",):
+            return {"kind": "text", "text": heavy_summary(value) + "\n\n(on " + (device_of(value) or "a device") + ": not copied to the CPU; watch it with w for its stats)"}
         table = _table(value)
         if table is not None:
             return table
@@ -188,7 +376,7 @@ def _table(value):
 def _full_text(value) -> str:
     import pprint
 
-    if _heavy(value) and getattr(value, "ndim", None) is not None and type(value).__module__.startswith("numpy"):
+    if _root(value) == "numpy" and getattr(value, "ndim", None) is not None:
         numpy = sys.modules["numpy"]
         text = numpy.array2string(value, threshold=5000, max_line_width=100)
     elif isinstance(value, (list, tuple)) and len(value) > 2000:
@@ -205,7 +393,7 @@ def _full_text(value) -> str:
 
 
 def _grid_shape(value):
-    if _heavy(value) and getattr(value, "ndim", None) == 2:
+    if _heavy(value) and getattr(value, "ndim", None) == 2 and on_cpu(value):
         return tuple(value.shape)
     if isinstance(value, (list, tuple)) and value and len(value) <= 100_000:
         first = value[0]
@@ -432,15 +620,18 @@ def derived_position(loop: Loop, frame):
     return None
 
 
+
 def _seq_kind(value) -> str:
-    """seq, grid, map or '' for the views under the loop stack."""
+    """seq, grid, map or '' for the views under the loop stack. Arrays and tensors only on the CPU."""
     if isinstance(value, (dict, set, frozenset)):
         return "map"
     if _heavy(value):
+        if hasattr(value, "iloc") or _root(value) not in ("numpy", "torch", "jax", "jaxlib", "cupy") or not on_cpu(value):
+            return ""
         ndim = getattr(value, "ndim", None)
-        if ndim == 1 and not hasattr(value, "iloc"):
+        if ndim == 1:
             return "seq"
-        if ndim == 2 and not hasattr(value, "iloc"):
+        if ndim == 2:
             return "grid"
         return ""
     if isinstance(value, (list, tuple)):
@@ -463,10 +654,10 @@ def _window(points: list[int], length: int, size: int) -> int:
     return start
 
 
-def _seq_view(name: str, value, pointers: list[list]) -> dict:
+def _seq_view(name: str, value, pointers: list[list], size: int) -> dict:
     length = len(value)
-    start = _window([p for _, p in pointers], length, SEQ_WINDOW)
-    stop = min(length, start + SEQ_WINDOW)
+    start = _window([p for _, p in pointers], length, size)
+    stop = min(length, start + size)
     if isinstance(value, str):
         items = list(value[start:stop])
     else:
@@ -474,14 +665,14 @@ def _seq_view(name: str, value, pointers: list[list]) -> dict:
     return {"name": name, "type": type(value).__name__, "len": length, "start": start, "items": items, "ptrs": pointers}
 
 
-def _grid_view(name: str, value, pointers: list[list]) -> dict:
+def _grid_view(name: str, value, pointers: list[list], size: int) -> dict:
     rows, cols = _grid_shape(value)
-    row0 = _window([p[2] for p in pointers], rows, GRID_WINDOW)
-    col0 = _window([p[3] for p in pointers], cols, GRID_WINDOW)
+    row0 = _window([p[2] for p in pointers], rows, size)
+    col0 = _window([p[3] for p in pointers], cols, size)
     cells = []
-    for r in range(row0, min(rows, row0 + GRID_WINDOW)):
+    for r in range(row0, min(rows, row0 + size)):
         line = []
-        for c in range(col0, min(cols, col0 + GRID_WINDOW)):
+        for c in range(col0, min(cols, col0 + size)):
             try:
                 line.append(cell_text(_at(value, r, c), 5))
             except Exception:
@@ -508,16 +699,25 @@ def frame_names(frame, info: CellInfo | None) -> list[str]:
     return [n for n in names if not n.startswith("_") and n not in HIDDEN][:LOCALS_CAP]
 
 
-def snapshot(frame, line: int, positions: dict | None = None) -> dict:
+def snapshot(
+    frame, line: int, positions: dict | None = None, lim: dict | None = None, watched=(), cache: dict | None = None,
+    views: bool = True,
+) -> dict:
     """Everything the panel draws for one moment: loops, sequences, grids, maps and locals.
 
     On a loop's header line the next iteration has not started (its variable still holds the
-    last value), so the header shows the iteration that just ended: 0 before the first."""
+    last value), so the header shows the iteration that just ended: 0 before the first.
+    `views` False keeps only the loops and the watched names (the lean preset). `cache` maps a
+    name to (id, text) so an unchanged int or string is not summarised again."""
+    lim = lim or PRESETS[DEFAULT_PRESET]
+    width, stats_mode = lim["repr_chars"], lim["stats"]
     filename = frame.f_code.co_filename
     info = cell_info(filename)
     space = frame.f_locals
     data = {}
     for name in frame_names(frame, info):
+        if not views and name not in watched:
+            continue
         try:
             value = space[name]
         except KeyError:
@@ -538,29 +738,41 @@ def snapshot(frame, line: int, positions: dict | None = None) -> dict:
             node = loop.iter
             if _call_name(node) == "enumerate" and node.args:
                 node = node.args[0]
-            if isinstance(node, ast.Name) and k is not None and loop.targets and loop.iter is node:
+            if isinstance(node, ast.Name) and k is not None and loop.targets:
                 seq_pointers.setdefault(node.id, []).append([loop.targets[0], k - 1])
     seqs, grids, maps = [], [], []
+    if views:
+        for name, value in data.items():
+            kind = _seq_kind(value)
+            if not kind:
+                continue
+            try:
+                if kind == "seq" and len(seqs) < 4:
+                    pointers = _pointers(name, value, info, frame, seq_pointers.get(name, []), data, loops)
+                    if pointers or isinstance(value, list) or _heavy(value):
+                        seqs.append(_seq_view(name, value, pointers, lim["strip_items"]))
+                elif kind == "grid" and len(grids) < 2:
+                    grids.append(_grid_view(name, value, _grid_pointers(name, info, frame), lim["grid_size"]))
+                elif kind == "map" and len(maps) < 3:
+                    maps.append(_map_view(name, value))
+            except Exception:
+                continue
+        seqs.sort(key=lambda s: not s["ptrs"])
+    shown = []
     for name, value in data.items():
-        kind = _seq_kind(value)
-        if not kind:
-            continue
-        try:
-            if kind == "seq" and len(seqs) < 4:
-                pointers = _pointers(name, value, info, frame, seq_pointers.get(name, []), data, loops)
-                if pointers or isinstance(value, list) or _heavy(value):
-                    seqs.append(_seq_view(name, value, pointers))
-            elif kind == "grid" and len(grids) < 2:
-                grids.append(_grid_view(name, value, _grid_pointers(name, info, frame)))
-            elif kind == "map" and len(maps) < 3:
-                maps.append(_map_view(name, value))
-        except Exception:
-            continue
-    seqs.sort(key=lambda s: not s["ptrs"])
+        if cache is not None and isinstance(value, SCALARS):
+            known = cache.get(name)
+            if known is not None and known[0] == id(value):
+                shown.append([name, known[1]])
+                continue
+            text = short(value, width)
+            cache[name] = (id(value), text)
+        else:
+            text = short(value, width, stats_mode, name in watched)
+        shown.append([name, text])
     return {
         "cell": cell_files.get(filename), "file": filename, "line": line, "func": frame.f_code.co_name,
-        "loops": loops, "seqs": seqs, "grids": grids, "maps": maps,
-        "vars": [[n, short(v, 40)] for n, v in data.items()],
+        "loops": loops, "seqs": seqs, "grids": grids, "maps": maps, "vars": shown,
     }
 
 
@@ -594,11 +806,239 @@ def _grid_pointers(name: str, info, frame) -> list[list]:
     return found[:3]
 
 
+FIELDS = ("vars", "seqs", "grids", "maps")
+
+
+def _size(entry: dict) -> int:
+    return len(json.dumps(entry, separators=(",", ":"), default=str))
+
+
+def _path(entry: dict) -> tuple:
+    return tuple((loop["line"], loop.get("k")) for loop in entry.get("loops", []) if loop.get("k"))
+
+
+def merge(later: dict, earlier: dict) -> dict:
+    """`later` with the changes of the dropped `earlier` folded in, so the chain from the last
+    keyframe still rebuilds the same state. A keyframe folded in makes the result a keyframe."""
+    merged = dict(later)
+    gone = set(later.get("gone", ()))
+    present = set()
+    for field in FIELDS:
+        values = {name: value for name, value in earlier.get(field, {}).items() if name not in gone}
+        values.update(later.get(field, {}))
+        merged[field] = values
+        present |= set(values)
+    merged["gone"] = sorted((set(earlier.get("gone", ())) - present) | gone) if not (earlier.get("key") or later.get("key")) else []
+    merged["key"] = bool(earlier.get("key") or later.get("key"))
+    return merged
+
+
+class Recorder:
+    """The moments of one debugging session, oldest first, capped by bytes and by count.
+
+    An entry is a keyframe (every name) or a delta (the names whose summary changed, and the
+    names that went away), plus the line and the loop positions. With deltas on, a keyframe comes
+    every KEYFRAME_EVERY entries; the full preset makes every entry a keyframe. When a cap is hit
+    the oldest entries go first and the next one absorbs them (`merge`), so the oldest entry is
+    always a keyframe. Thinning keeps every moment of the newest iterations of the innermost loop,
+    one end-of-iteration moment of older ones, then every 10th, then every 100th iteration; it
+    runs when the entries have doubled since the last pass, so its cost stays linear."""
+
+    def __init__(self, lim: dict) -> None:
+        self.limits = lim
+        self.entries: deque = deque()
+        self.sizes: deque = deque()
+        self.bytes = 0
+        self.count = 0
+        self.dropped = 0
+        self.thinned = 0
+        self.state = {field: {} for field in FIELDS}
+        self.since_key = KEYFRAME_EVERY
+        self.sent = -1
+        self.next_thin = 512
+        self.last_path: tuple = ()
+
+    def add(self, record: dict) -> dict:
+        fields = {
+            "vars": dict(record.get("vars", [])),
+            "seqs": {view["name"]: view for view in record.get("seqs", [])},
+            "grids": {view["name"]: view for view in record.get("grids", [])},
+            "maps": {view["name"]: view for view in record.get("maps", [])},
+        }
+        entry = {key: record.get(key) for key in ("cell", "line", "func", "loops")}
+        entry["i"] = self.count
+        key = self.limits["deltas"] == "off" or self.since_key >= KEYFRAME_EVERY
+        if key:
+            entry.update(fields, key=True, gone=[])
+            self.since_key = 0
+        else:
+            entry["key"] = False
+            for field in FIELDS:
+                old = self.state[field]
+                entry[field] = {name: value for name, value in fields[field].items() if old.get(name) != value}
+            entry["gone"] = sorted({name for field in FIELDS for name in self.state[field] if name not in fields[field]})
+            self.since_key += 1
+        self.state = fields
+        size = _size(entry)
+        self.entries.append(entry)
+        self.sizes.append(size)
+        self.bytes += size
+        self.count += 1
+        path = _path(entry)
+        if path and path != self.last_path and self.limits["thinning"] != "off" and len(self.entries) >= self.next_thin:
+            self.thin()
+            self.next_thin = 2 * len(self.entries) + 512
+        self.last_path = path
+        self._cap()
+        return entry
+
+    def _cap(self) -> None:
+        cap, events = self.limits["history"], self.limits["events"]
+        while len(self.entries) > 1 and (self.bytes > cap or len(self.entries) > events):
+            oldest = self.entries.popleft()
+            self.bytes -= self.sizes.popleft()
+            self.dropped += 1
+            following = self.entries[0]
+            if not following.get("key"):
+                merged = merge(following, oldest)
+                self.entries[0] = merged
+                self.bytes -= self.sizes[0]
+                self.sizes[0] = _size(merged)
+                self.bytes += self.sizes[0]
+
+    def thin(self) -> None:
+        """Logarithmic thinning of old iterations (see the class docstring)."""
+        keep_full, tens, hundreds = THINNING.get(self.limits["thinning"], THINNING["on"])
+        groups: list[tuple[tuple, list[dict]]] = []
+        for entry in self.entries:
+            path = _path(entry)
+            if groups and groups[-1][0] == path:
+                groups[-1][1].append(entry)
+            else:
+                groups.append((path, [entry]))
+        looped = [index for index, (path, _) in enumerate(groups) if path]
+        age = {index: len(looped) - 1 - rank for rank, index in enumerate(looped)}
+        kept: deque = deque()
+        pending = None
+        for index, (path, items) in enumerate(groups):
+            years = age.get(index, -1)
+            k = path[-1][1] if path else 0
+            if not path or years < keep_full:
+                keep = items
+            elif (years >= hundreds and k % 100) or (years >= tens and k % 10):
+                keep = []
+                self.thinned += 1
+            else:
+                keep = items[-1:]
+            kept_ids = {id(entry) for entry in keep}
+            for entry in items:
+                if id(entry) in kept_ids:
+                    if pending is not None:
+                        entry = merge(entry, pending)
+                        pending = None
+                    if path and years >= keep_full:
+                        entry["thinned"] = True
+                    kept.append(entry)
+                else:
+                    pending = entry if pending is None else merge(entry, pending)
+        if pending is not None:
+            kept.append(pending)
+        self.entries = kept
+        self.sizes = deque(_size(entry) for entry in kept)
+        self.bytes = sum(self.sizes)
+
+    def _extend_to_key(self, items: list[dict], before: list[dict]) -> list[dict]:
+        while items and not items[0].get("key") and before:
+            items.insert(0, before.pop())
+        return items
+
+    def fresh(self) -> dict:
+        """The entries made since the last batch (the newest BATCH of them, from a keyframe)."""
+        entries = list(self.entries)
+        new = [entry for entry in entries if entry["i"] > self.sent]
+        older = [entry for entry in entries if entry["i"] <= self.sent]
+        if len(new) > BATCH:
+            older += new[:-BATCH]
+            new = self._extend_to_key(new[-BATCH:], older)
+        if self.entries:
+            self.sent = self.entries[-1]["i"]
+        return self._batch(new, entries)
+
+    def before(self, index: int, count: int = BATCH) -> dict:
+        """Up to `count` entries older than `index`, starting at a keyframe."""
+        entries = list(self.entries)
+        older = [entry for entry in entries if entry["i"] < index]
+        items = self._extend_to_key(older[-count:], older[:-count] if len(older) > count else [])
+        return self._batch(items, entries)
+
+    @staticmethod
+    def _batch(items: list[dict], entries: list[dict]) -> dict:
+        if not items:
+            return {"prev": None, "records": []}
+        position = next(n for n, entry in enumerate(entries) if entry["i"] == items[0]["i"])
+        return {"prev": entries[position - 1]["i"] if position else None, "records": items}
+
+    def summary(self) -> dict:
+        return {
+            "detail": self.limits.get("detail", DEFAULT_PRESET), "steps": len(self.entries), "bytes": self.bytes,
+            "cap": self.limits["history"], "dropped": self.dropped, "thinned": self.thinned,
+            "first": self.entries[0]["i"] if self.entries else 0, "total": self.count,
+        }
+
+
+class LineHook:
+    """sys.monitoring (Python 3.12+) LINE and RAISE events for the run-until modes: LINE reaches the
+    debugger for the cells' own code only, every other line is disabled after its first event."""
+
+    def __init__(self, debugger) -> None:
+        self.debugger = debugger
+        self.tool: int | None = None
+
+    @staticmethod
+    def available() -> bool:
+        return hasattr(sys, "monitoring")
+
+    def start(self) -> bool:
+        monitoring = sys.monitoring
+        tool = next((t for t in (4, 3, 5) if monitoring.get_tool(t) is None), None)
+        if tool is None:
+            return False
+        monitoring.use_tool_id(tool, "gpython-debug")
+        self.tool = tool
+        events = monitoring.events
+        monitoring.register_callback(tool, events.LINE, self._line)
+        monitoring.register_callback(tool, events.RAISE, self._raise)
+        monitoring.set_events(tool, events.LINE | events.RAISE)
+        return True
+
+    def stop(self) -> None:
+        if self.tool is None:
+            return
+        monitoring, tool = sys.monitoring, self.tool
+        self.tool = None
+        monitoring.set_events(tool, 0)
+        monitoring.register_callback(tool, monitoring.events.LINE, None)
+        monitoring.register_callback(tool, monitoring.events.RAISE, None)
+        monitoring.free_tool_id(tool)
+        monitoring.restart_events()
+
+    def _line(self, code, line):
+        if code.co_filename not in cell_files:
+            return sys.monitoring.DISABLE
+        self.debugger.hooked_line(sys._getframe(1), line)
+        return None
+
+    def _raise(self, code, offset, exception):
+        if code.co_filename in cell_files:
+            self.debugger.hooked_raise(sys._getframe(1), exception)
+
+
 def _make_debugger_class():
     """The pdb.Pdb subclass, built on the first breakpoint so a kernel that never debugs pays nothing.
 
     ipykernel puts IPython's own debugger in `pdb.Pdb`; the standard library's class is the one
     in its MRO whose module is `pdb`."""
+    import bdb
     import io
     import pdb
 
@@ -606,7 +1046,12 @@ def _make_debugger_class():
 
     class Debugger(standard):
         """pdb that answers in JSON: every prompt carries the stop's state after MARKER, and gpython
-        draws it in the variables panel. Commands come back as pdb commands plus the `_gp_*` ones."""
+        draws it in the variables panel. Commands come back as pdb commands plus the `_gp_*` ones.
+
+        n, s and r step with pdb's own sys.settrace machinery and record every line of the cells'
+        frames. The run-until modes (`_gp_next`, `_gp_end`, `_gp_goto`, `_gp_until`) drop the trace
+        and use LineHook on Python 3.12+, so only the cells' lines cost anything; older Pythons
+        keep the trace and check the goal in dispatch_line."""
 
         def __init__(self) -> None:
             self.buffer = io.StringIO()
@@ -614,12 +1059,14 @@ def _make_debugger_class():
             self.use_rawinput = 1
             _state["session"] += 1
             self.session = _state["session"]
-            self.history: deque = deque(maxlen=HISTORY_CAP)
-            self.total = 0
-            self.sent = 0
+            self.limits = limits()
+            self.recorder = Recorder(self.limits)
+            self.recording = True
+            self.hook = LineHook(self) if LineHook.available() else None
             self.batches: list[dict] = []
             self.counts: dict[int, dict[int, int | None]] = {}
             self.last_lines: dict[int, int] = {}
+            self.summaries: dict[str, tuple] = {}
             self.goal = None
             self.goal_frame = None
             self.watches: list[str] = []
@@ -656,16 +1103,21 @@ def _make_debugger_class():
                 caller = caller.f_back
             return True
 
-        def observe(self, frame) -> None:
-            """A line event in a cell's frame: count loop iterations and record a snapshot."""
+        @property
+        def watched(self) -> set[str]:
+            return {expr for expr in self.watches if expr.isidentifier()}
+
+        def observe(self, frame, line: int | None = None) -> None:
+            """A line event in a cell's frame: count loop iterations, and record the moment."""
             info = cell_info(frame.f_code.co_filename)
             if info is None:
                 return
-            key, line = id(frame), frame.f_lineno
+            key = id(frame)
+            line = frame.f_lineno if line is None else line
             previous = self.last_lines.get(key)
             self.last_lines[key] = line
             counts = self.counts.setdefault(key, {})
-            for loop in info.active_loops(frame, line):
+            for loop in info.loops:
                 if loop.line != line:
                     continue
                 if previous is None or not loop.line <= previous <= loop.end:
@@ -677,17 +1129,17 @@ def _make_debugger_class():
                     counts[loop.line] = known + 1 if known else None
             if self.cell is None:
                 self.cell = cell_files.get(frame.f_code.co_filename)
-            self.pending = (frame, line, self.record(frame, line))
+            if self.recording:
+                self.pending = (frame, line, self.record(frame, line))
 
         def record(self, frame, line: int) -> dict:
-            entry = snapshot(frame, line, self.counts.get(id(frame)))
-            entry["i"] = self.total
-            self.history.append(entry)
-            self.total += 1
-            return entry
+            views = self.limits["deltas"] != "watched"
+            moment = snapshot(frame, line, self.counts.get(id(frame)), self.limits, self.watched, self.summaries, views)
+            return self.recorder.add(moment)
 
-        def goal_met(self, frame, previous) -> bool:
-            goal, line = self.goal, frame.f_lineno
+        def goal_met(self, frame, previous, line: int | None = None) -> bool:
+            goal = self.goal
+            line = frame.f_lineno if line is None else line
             kind = goal[0]
             if kind == "cond":
                 try:
@@ -695,7 +1147,10 @@ def _make_debugger_class():
                 except Exception:
                     return False
             if frame is not self.goal_frame:
-                return False
+                caller = frame.f_back
+                while caller is not None and caller is not self.goal_frame:
+                    caller = caller.f_back
+                return caller is None
             loop_line, loop_end = goal[1], goal[2]
             if kind == "end":
                 return not loop_line <= line <= loop_end
@@ -708,16 +1163,57 @@ def _make_debugger_class():
             reached = self.counts.get(id(frame), {}).get(loop_line)
             return reached is not None and reached >= goal[3]
 
+        def hooked_line(self, frame, line: int) -> None:
+            """LineHook: a line of a cell while running to a goal."""
+            if self.goal is None:
+                return
+            previous = self.last_lines.get(id(frame))
+            self.observe(frame, line)
+            if self.goal_met(frame, previous, line):
+                self._arrive(frame, None)
+
+        def hooked_raise(self, frame, exception) -> None:
+            if self.goal is None:
+                return
+            self.exception = f"{type(exception).__name__}: {exception}"
+            self._arrive(frame, exception)
+
+        def _arrive(self, frame, exception) -> None:
+            """Leave the run-until mode: stop the hook, put pdb's trace back and pause here."""
+            self.goal = self.goal_frame = None
+            self.recording = True
+            if self.hook is not None:
+                self.hook.stop()
+            walk = frame
+            while walk is not None:
+                walk.f_trace = self.trace_dispatch
+                walk.f_trace_lines = True
+                if walk is self.botframe:
+                    break
+                walk = walk.f_back
+            self.set_step()
+            sys.settrace(self.trace_dispatch)
+            if exception is None:
+                self.event = "line"
+                self.interaction(frame, None)
+            else:
+                self.event = "exception"
+                frame.f_locals["__exception__"] = type(exception), exception
+                self.interaction(frame, exception.__traceback__)
+            if self.quitting:
+                raise bdb.BdbQuit
+
         def dispatch_line(self, frame):
             if self.is_cell(frame):
                 previous = self.last_lines.get(id(frame))
                 self.observe(frame)
                 if self.goal is not None and self.goal_met(frame, previous):
                     self.goal = self.goal_frame = None
+                    self.recording = True
                     self.set_step()
                     self.user_line(frame)
                     if self.quitting:
-                        raise __import__("bdb").BdbQuit
+                        raise bdb.BdbQuit
                     return self.trace_dispatch
                 if self.goal is not None:
                     return self.trace_dispatch
@@ -741,16 +1237,13 @@ def _make_debugger_class():
         def dispatch_exception(self, frame, arg):
             if self.goal is not None and self.is_cell(frame) and not self.stop_here(frame):
                 self.goal = self.goal_frame = None
+                self.recording = True
                 self.set_step()
                 self.user_exception(frame, arg)
                 if self.quitting:
-                    raise __import__("bdb").BdbQuit
+                    raise bdb.BdbQuit
                 return self.trace_dispatch
             return super().dispatch_exception(frame, arg)
-
-        def user_line(self, frame):
-            self.event = "line"
-            super().user_line(frame)
 
         def stop_here(self, frame):
             if not self.is_cell(frame) and self.outermost(frame):
@@ -759,6 +1252,10 @@ def _make_debugger_class():
 
         def user_call(self, frame, argument_list):
             return
+
+        def user_line(self, frame):
+            self.event = "line"
+            super().user_line(frame)
 
         def user_return(self, frame, return_value):
             if self.is_cell(frame) and self.outermost(frame):
@@ -794,6 +1291,11 @@ def _make_debugger_class():
                 self.set_quit()
                 raise
 
+        def set_quit(self):
+            if self.hook is not None:
+                self.hook.stop()
+            super().set_quit()
+
         def user_frames(self) -> list[int]:
             """Indexes into self.stack of the frames worth showing: from the first cell frame on."""
             shown = [i for i, (f, _) in enumerate(self.stack) if not self.is_skipped_module(f.f_globals.get("__name__"))]
@@ -804,11 +1306,10 @@ def _make_debugger_class():
             frame, line = self.stack[self.curindex]
             info = cell_info(frame.f_code.co_filename)
             frames = self.user_frames()
-            if self.curindex == len(self.stack) - 1 and self.stop_index is not None and not self.postmortem:
-                now = self.history[self.stop_index - (self.total - len(self.history))] if self.stop_index >= self.total - len(self.history) else snapshot(frame, line)
-            else:
-                now = snapshot(frame, line, self.counts.get(id(frame)))
-                now["i"] = None
+            lim = self.limits
+            now = snapshot(frame, line, self.counts.get(id(frame)), lim, self.watched)
+            live = self.curindex == len(self.stack) - 1 and not self.postmortem
+            now["i"] = self.stop_index if live else None
             space = frame.f_locals
             names = [n for n in frame_names(frame, info) if n in space]
             output = "\n".join(
@@ -818,10 +1319,10 @@ def _make_debugger_class():
             self.buffer.seek(0)
             self.buffer.truncate()
             reply, self.reply = self.reply, None
-            first = self.total - len(self.history)
-            start = max(self.sent, self.total - BATCH, first)
-            batches = self.batches + [{"start": start, "records": list(itertools.islice(self.history, start - first, None))}]
-            self.batches, self.sent = [], self.total
+            batches = self.batches + [self.recorder.fresh()]
+            self.batches = []
+            history = self.recorder.summary()
+            history["batches"] = batches
             return {
                 "session": self.session, "event": self.event, "postmortem": self.postmortem, "exception": self.exception,
                 "now": now, "index": now.get("i"),
@@ -830,26 +1331,32 @@ def _make_debugger_class():
                     for f, n in (self.stack[i] for i in frames)
                 ],
                 "frame": frames.index(self.curindex) if self.curindex in frames else len(frames) - 1,
-                "locals": [describe(n, space[n]) for n in names],
+                "locals": [describe(n, space[n], min(lim["repr_chars"], 300), lim["stats"]) for n in names],
                 "watches": [[expr, self._watch(expr, frame)] for expr in self.watches],
-                "reply": reply, "output": output[-OUTPUT_CAP:],
-                "history": {"total": self.total, "first": first, "batches": batches},
+                "reply": reply, "output": output[-OUTPUT_CAP:], "history": history,
             }
 
         def _watch(self, expr: str, frame) -> str:
             try:
-                return short(eval(expr, frame.f_globals, self.curframe_locals), 50)
+                value = eval(expr, frame.f_globals, self.curframe_locals)
             except Exception as error:
                 return f"error: {type(error).__name__}"
+            return short(value, 120, self.limits["stats"], watched=True)
 
         def _loops_here(self):
             frame, line = self.stack[self.curindex]
             info = cell_info(frame.f_code.co_filename)
             return frame, (info.active_loops(frame, line) if info is not None else [])
 
-        def _run_to(self, goal, frame) -> int:
+        def _run_to(self, goal, frame, record: bool = True) -> int:
+            """Run until `goal`; with the hook (3.12+) pdb's trace is removed until then."""
             self.goal, self.goal_frame = goal, frame
-            self._set_stopinfo(self.botframe, None, -1)
+            self.recording = record
+            if self.hook is not None and self.hook.start():
+                self.set_continue()
+                self.goal, self.goal_frame = goal, frame
+            else:
+                self._set_stopinfo(self.botframe, None, -1)
             return 1
 
         def _refuse(self, text: str) -> int:
@@ -894,15 +1401,22 @@ def _make_debugger_class():
                 return self._refuse(f"iteration {target} already ran (now {current})")
             return self._run_to(("goto", loop.line, loop.end, target), frame)
 
-        def do__gp_until(self, arg):
-            """_gp_until EXPR: run until EXPR is true on a line of a cell."""
+        def _until(self, arg: str, record: bool) -> int:
             if self.postmortem:
                 return self._refuse("the program has ended: this is a post-mortem")
             try:
                 code = compile(arg, "<stop if>", "eval")
             except SyntaxError as error:
                 return self._refuse(f"stop if: {error.msg}")
-            return self._run_to(("cond", code, arg), None)
+            return self._run_to(("cond", code, arg), None, record)
+
+        def do__gp_until(self, arg):
+            """_gp_until EXPR: run until EXPR is true on a line of a cell; nothing is recorded on the way."""
+            return self._until(arg, False)
+
+        def do__gp_until_rec(self, arg):
+            """_gp_until_rec EXPR: the same, recording every line on the way."""
+            return self._until(arg, True)
 
         def do__gp_full(self, arg):
             """_gp_full EXPR: the whole value of EXPR, for the value viewer."""
@@ -925,15 +1439,13 @@ def _make_debugger_class():
             return 0
 
         def do__gp_history(self, arg):
-            """_gp_history START STOP: send recorded snapshots again (the panel asks for gaps)."""
-            first = self.total - len(self.history)
+            """_gp_history BEFORE: send up to BATCH recorded moments older than BEFORE (the panel
+            asks for what it lacks), starting at a keyframe."""
             try:
-                start, stop = (int(part) for part in arg.split())
-            except ValueError:
+                before = int(arg.split()[0])
+            except (ValueError, IndexError):
                 return 0
-            start, stop = max(start, first), min(stop, self.total, max(start, first) + BATCH)
-            if start < stop:
-                self.batches.append({"start": start, "records": list(itertools.islice(self.history, start - first, stop - first))})
+            self.batches.append(self.recorder.before(before))
             return 0
 
         def do__gp_frame(self, arg):
@@ -952,14 +1464,18 @@ def _make_debugger_class():
     return Debugger
 
 
+def _debugger_class():
+    cls = _state.get("class")
+    if cls is None:
+        cls = _state["class"] = _make_debugger_class()
+    return cls
+
+
 def debugger():
     """The debugger of the current run, made on first use and kept for the run's later breakpoints."""
     current = _state["current"]
     if current is None:
-        cls = _state.get("class")
-        if cls is None:
-            cls = _state["class"] = _make_debugger_class()
-        current = _state["current"] = cls()
+        current = _state["current"] = _debugger_class()()
     return current
 
 
@@ -1004,9 +1520,7 @@ def postmortem() -> None:
     last = _state["current"] or _state["last"]
     current = last if last is not None and last.cell == failing else None
     if current is None:
-        cls = _state.get("class") or _make_debugger_class()
-        _state["class"] = cls
-        current = cls()
+        current = _debugger_class()()
         current.cell = failing
     current.postmortem, current.event = True, "postmortem"
     current.exception = f"{type(error).__name__}: {error}" if error is not None else ""
@@ -1016,14 +1530,21 @@ def postmortem() -> None:
         current.interaction(None, tb)
     finally:
         current.postmortem = False
+        if current.hook is not None:
+            current.hook.stop()
+        sys.settrace(None)
 
 
 def run_ended(result=None) -> None:
-    """A run is over: stop tracing, so the next runs pay nothing for the debugger."""
-    current = _state["current"]
-    if current is not None and sys.gettrace() == current.trace_dispatch:
+    """A run is over: stop the hook and the trace, so the next runs pay nothing for the debugger."""
+    for current in (_state["current"], _state["last"]):
+        if current is None:
+            continue
         current.goal = current.goal_frame = None
-        sys.settrace(None)
+        if current.hook is not None:
+            current.hook.stop()
+        if sys.gettrace() == current.trace_dispatch:
+            sys.settrace(None)
 
 
 def install(shell) -> None:

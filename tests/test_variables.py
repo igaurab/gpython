@@ -203,6 +203,7 @@ def test_a_breakpoint_pauses_in_the_panel_and_steps_through_the_loop(tmp_path):
         assert "4" in str(panel.table.get_row("total")[2])
         picture = str(panel.picture.render())
         assert "for i in range(len(nums))" in picture and "3/4" in picture and "↑i" in picture
+        assert "full · " in str(panel.footer.render()) and "MB / 200 MB" in str(panel.footer.render())
         name_cell = panel.table.get_row("total")[0]
         assert name_cell.style == "bold black on yellow"
         await pilot.press("h")
@@ -295,3 +296,24 @@ def test_r_d_runs_a_clean_cell_paused_on_its_first_line(tmp_path):
         await until(pilot, lambda: app.pane.debug is None and c2.run_status == "ok")
 
     ui(tmp_path, test)
+
+
+def test_set_debug_options_are_saved_and_explained(tmp_path):
+    async def test(app, pilot):
+        from gpython import config
+
+        async def ex(command):
+            await app._run_ex(command)
+            await pilot.pause()
+            return [n.message for n in app._notifications][-1]
+
+        assert await ex("set debug_history?") == "debug_history = 200 MB (from the full preset)"
+        assert "next recording" in await ex("set debug_detail=balanced")
+        assert config.load()["debug_detail"] == "balanced"
+        assert await ex("set debug_history?") == "debug_history = 20 MB (from the balanced preset)"
+        await ex("set debug_history=1GB")
+        assert await ex("set debug_history?") == "debug_history = 1024 MB (override)"
+        assert "Not a value" in await ex("set debug_thinning=sideways")
+        assert "one of: full, balanced, lean" in await ex("set debug_detail=huge")
+
+    ui(tmp_path, test, kernel=False)

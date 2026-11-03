@@ -10,6 +10,8 @@ so the tests check it without a terminal. Imported on the first stop only.
 
 from __future__ import annotations
 
+import bisect
+
 from rich.text import Text
 
 BAR = 8
@@ -18,25 +20,28 @@ POINTED = "bold reverse"
 WARN = "bold red"
 ADDED = "bold green"
 REMOVED = "red strike"
+FIELDS = ("vars", "seqs", "grids", "maps")
 
 
 class DebugSession:
-    """One debugging session as gpython sees it: the last payload, the mirrored records, the
-    position of h / l time travel, and each local's values at the previous stops."""
+    """One debugging session as gpython sees it: the last payload, the mirror of the recorded
+    entries (keyframes and deltas, see kernel_side.Recorder), the position of h / l time travel,
+    and each local's values at the previous stops."""
 
     def __init__(self) -> None:
         self.session = None
         self.payload: dict = {}
-        self.records: dict[int, dict] = {}
-        self.total = 0
-        self.first = 0
+        self.entries: dict[int, dict] = {}
+        self.links: dict[int, int | None] = {}
+        self.history: dict = {}
         self.view: int | None = None
         self.previous_now: dict | None = None
         self.values: dict[tuple[str, str], list[str]] = {}
         self.running = False
+        self._order: list[int] | None = None
 
     def update(self, payload: dict, keep_view: bool = False) -> None:
-        """A new stop: merge its records, remember the previous stop, extend each local's history.
+        """A new stop: merge its entries, remember the previous stop, extend each local's history.
         `keep_view` is for answers that did not run the program (a value, more history)."""
         if payload.get("session") != self.session:
             self.__init__()
@@ -45,71 +50,168 @@ class DebugSession:
             self.previous_now = (self.payload or {}).get("now")
         self.payload = payload
         self.running = False
-        history = payload.get("history") or {}
-        self.total = history.get("total", self.total)
-        self.first = history.get("first", self.first)
-        for batch in history.get("batches", []):
-            for offset, record in enumerate(batch.get("records", [])):
-                self.records[batch["start"] + offset] = record
-        for index in [i for i in self.records if i < self.first]:
-            del self.records[index]
-        now = payload.get("now") or {}
+        self.history = {key: value for key, value in (payload.get("history") or {}).items() if key != "batches"}
+        for batch in (payload.get("history") or {}).get("batches", []):
+            records = batch.get("records", [])
+            if not records:
+                continue
+            self.links[records[0]["i"]] = batch.get("prev")
+            for entry in records:
+                self.entries[entry["i"]] = entry
+        self._order = None
         if not keep_view:
             self.view = None
-        func = now.get("func", "")
-        if keep_view:
-            return
-        for name, _, shown, *_ in payload.get("locals", []):
-            seen = self.values.setdefault((func, name), [])
-            if not seen or seen[-1] != shown:
-                seen.append(shown)
-                del seen[:-12]
+            func = (payload.get("now") or {}).get("func", "")
+            for name, _, shown, *_ in payload.get("locals", []):
+                seen = self.values.setdefault((func, name), [])
+                if not seen or seen[-1] != shown:
+                    seen.append(shown)
+                    del seen[:-12]
+
+    @property
+    def total(self) -> int:
+        """Moments the kernel holds now."""
+        return self.history.get("steps", 0)
+
+    @property
+    def order(self) -> list[int]:
+        if self._order is None:
+            self._order = sorted(self.entries)
+        return self._order
 
     @property
     def live(self) -> bool:
         return self.view is None
+
+    def full(self, index: int) -> dict:
+        """The whole record at `index`, rebuilt from the keyframe before it through the deltas."""
+        order = self.order
+        position = bisect.bisect_left(order, index)
+        start = min(position, len(order) - 1)
+        while start > 0 and not self.entries[order[start]].get("key"):
+            start -= 1
+        state = None
+        for i in order[start:position + 1]:
+            state = _apply(state, self.entries[i])
+        return _as_record(state) if state is not None else {}
+
+    def records(self) -> list[dict]:
+        """Every mirrored moment as a whole record, oldest first (for the timeline)."""
+        found, state = [], None
+        for i in self.order:
+            state = _apply(state, self.entries[i])
+            found.append(_as_record(state))
+        return found
 
     @property
     def record(self) -> dict:
         """The record on screen: the stop, or the one h / l travelled to."""
         if self.view is None:
             return self.payload.get("now") or {}
-        return self.records.get(self.view) or {}
+        return self.full(self.view)
 
     @property
     def before(self) -> dict | None:
         """What `record` is compared with for the change highlights."""
         if self.view is None:
             return self.previous_now
-        return self.records.get(self.view - 1)
+        position = bisect.bisect_left(self.order, self.view)
+        return self.full(self.order[position - 1]) if position > 0 else None
 
-    def travel(self, step: int) -> tuple[int, int] | None:
-        """Move through the recorded history; returns a (start, stop) range to fetch when the
-        mirror lacks the record, else None. Moving forward past the stop is live again."""
-        if not self.total:
+    def position(self) -> int:
+        """1-based place of the view among the moments the kernel holds (for the title)."""
+        first = self.history.get("first", 0)
+        known = [i for i in self.order if i >= first]
+        if self.view is None or not known:
+            return self.total
+        return max(1, self.total - (len(known) - bisect.bisect_left(known, self.view)) + 1)
+
+    def travel(self, step: int) -> int | None:
+        """Move through the recorded moments. Returns an index whose older moments must be fetched
+        (the mirror has a gap there, or ends before the kernel's oldest), else None. Moving
+        forward past the stop is live again."""
+        order = self.order
+        if not order:
             return None
         live = self.payload.get("index")
-        end = live if live is not None else self.total
-        target = (self.view if self.view is not None else end) + step
-        if target >= end:
+        if self.view is None:
+            here = bisect.bisect_left(order, live) if live is not None else len(order)
+        else:
+            here = bisect.bisect_left(order, self.view)
+        target = here + step
+        if step > 0 and (target >= len(order) or (live is not None and order[target] >= live)):
             self.view = None
             return None
-        self.view = target = max(self.first, target)
-        if target not in self.records:
-            return max(self.first, target - 299), target + 1
+        if target < 0:
+            if order[0] > self.history.get("first", 0):
+                self.view = order[0]
+                return order[0]
+            target = 0
+        for position in range(min(here, len(order) - 1), target, -1):
+            if self._gap_before(order[position]):
+                self.view = order[position]
+                return order[position]
+        self.view = order[target]
         return None
 
-    def missing(self) -> tuple[int, int] | None:
-        """The newest range of records the mirror lacks, for the timeline."""
-        gaps = [i for i in range(self.first, self.total) if i not in self.records]
-        if not gaps:
-            return None
-        stop = gaps[-1] + 1
-        return max(self.first, stop - 300), stop
+    def _gap_before(self, index: int) -> bool:
+        prev = self.links.get(index)
+        return prev is not None and prev not in self.entries and prev >= self.history.get("first", 0)
+
+    def missing(self) -> int | None:
+        """An index whose older moments the mirror lacks, for the timeline; None when complete."""
+        for start in sorted(self.links, reverse=True):
+            if self._gap_before(start):
+                return start
+        if self.order and self.order[0] > self.history.get("first", 0):
+            return self.order[0]
+        return None
 
     def history_of(self, name: str) -> list[str]:
         func = (self.payload.get("now") or {}).get("func", "")
         return self.values.get((func, name), [])
+
+
+def _apply(state: dict | None, entry: dict) -> dict:
+    """The state after `entry`: a keyframe replaces it, a delta updates it."""
+    if state is None or entry.get("key"):
+        state = {field: {} for field in FIELDS}
+    else:
+        state = {field: dict(state[field]) for field in FIELDS}
+    for field in FIELDS:
+        state[field].update(entry.get(field, {}))
+    for name in entry.get("gone", ()):
+        for field in FIELDS:
+            state[field].pop(name, None)
+    for key in ("i", "cell", "line", "func", "loops"):
+        state[key] = entry.get(key)
+    return state
+
+
+def _as_record(state: dict) -> dict:
+    return {
+        "i": state.get("i"), "cell": state.get("cell"), "line": state.get("line"), "func": state.get("func"),
+        "loops": state.get("loops") or [], "vars": [[name, value] for name, value in state["vars"].items()],
+        "seqs": list(state["seqs"].values()), "grids": list(state["grids"].values()), "maps": list(state["maps"].values()),
+    }
+
+
+def history_line(history: dict) -> str:
+    """`full · 1,240 steps · 3.1 MB / 200 MB` for the panel's footer."""
+    if not history:
+        return ""
+    used, cap = history.get("bytes", 0) / 1048576, history.get("cap", 0) / 1048576
+    text = f"{history.get('detail', 'full')} · {history.get('steps', 0):,} steps · {used:.1f} MB / {cap:.0f} MB"
+    if history.get("thinned"):
+        text += f" · {history['thinned']:,} iterations thinned"
+    return text
+
+
+def history_warning(history: dict) -> str:
+    if not history.get("dropped"):
+        return ""
+    cap = history.get("cap", 0) / 1048576
+    return f"history full ({cap:.0f} MB): oldest steps dropped · :set debug_detail=balanced for long runs"
 
 
 def bar(k: int | None, n: int | None, width: int = BAR) -> str:

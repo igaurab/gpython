@@ -92,6 +92,12 @@ _WINDOW_KEYS = {
 }
 
 
+def _debug_value(key: str, value) -> str:
+    if key == "history":
+        return f"{value / 1048576:g} MB"
+    return str(value)
+
+
 class NotebookScreen(Screen):
     """The main screen. Textual's Screen repaints *everything* whenever the focus moves
     (its `focused` reactive has repaint=True); the widgets that gain and lose focus already
@@ -1185,7 +1191,7 @@ class GPython(App):
             (("restart",), "Restart kernel", lambda arg="": self.action_restart_kernel()),
             (("clear",), "Clear all outputs", lambda arg="": self.pane.clear_outputs()),
             (("img", "image"), "View this cell's image full screen (v in cell mode; :img 2 the second); :img save [N] [file] saves this cell's image(s) as PNG next to the notebook, :img open [N] opens them in the browser; :img save all / :img open all take every cell's", self._ex_image),
-            (("set",), "Options: vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall cursor=bar|underline|block", self._ex_set),
+            (("set",), "Options: vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall cursor=bar|underline|block; debugger history: debug_detail=full|balanced|lean (full is the default), debug_history=200MB debug_events debug_thinning=on|off debug_repr_chars debug_strip_items debug_grid_size debug_stats=watched|cpu|off, debug_<key>? shows the value in effect", self._ex_set),
             (("copy", "yank"), "Copy to the system clipboard: :copy all the whole notebook as plain code, markdown as comments; :copy all metadata keeps the # %% cell lines (the file's text; a .ipynb as # %% code); :copy this cell", self._ex_copy),
             (("time", "timing"), "Show / hide each cell's run time in its header (t in cell mode; saved)", lambda arg="": self.set_timing(not Cell.show_timing)),
             (("outline", "tags"), "Outline panel: each cell with what it defines, live types after a run, its edges; enter jumps (ctrl+o)", lambda arg="": self.action_toggle_outline()),
@@ -1333,8 +1339,50 @@ class GPython(App):
             self.set_autoinstall(option == "autoinstall")
         elif option.startswith("cursor"):
             self.set_insert_cursor(option.partition("=")[2].strip())
+        elif option.startswith("debug_"):
+            self.set_debug_option(option)
         else:
-            self.notify(f"Unknown option: {option or '(none)'}  (vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall cursor=bar|underline|block)", severity="error")
+            self.notify(f"Unknown option: {option or '(none)'}  (vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall cursor=bar|underline|block debug_detail=full|balanced|lean debug_<limit>=…)", severity="error")
+
+    def set_debug_option(self, option: str) -> None:
+        """:set debug_detail=full|balanced|lean picks the recorder's preset; :set debug_<limit>=value
+        overrides one limit (debug_history=20MB, debug_events, debug_thinning=on|off,
+        debug_repr_chars, debug_strip_items, debug_grid_size, debug_stats=watched|cpu|off; an empty
+        value goes back to the preset); :set debug_<key>? shows the value in effect and where it
+        comes from. Saved; the kernels use it from their next recording."""
+        from .kernel import debug_settings
+        from .kernel_side import PRESETS, SETTINGS, resolve
+
+        name, equals, value = option.partition("=")
+        asking = name.endswith("?")
+        name = name.rstrip("?").strip()
+        key = name[len("debug_"):]
+        if key != "detail" and key not in SETTINGS:
+            self.notify(f"Unknown option {name}: debug_detail, " + ", ".join(f"debug_{k}" for k in SETTINGS), severity="error")
+            return
+        settings = debug_settings()
+        if asking or not equals:
+            limits, sources = resolve(settings)
+            if key == "detail":
+                self.notify(f"debug_detail = {limits['detail']}" + ("" if "debug_detail" in settings else " (the default)"))
+            else:
+                where = "override" if sources[key] == "override" else f"from the {sources[key]} preset"
+                self.notify(f"debug_{key} = {_debug_value(key, limits[key])} ({where})")
+            return
+        value = value.strip()
+        if key == "detail" and value not in PRESETS:
+            self.notify(f"debug_detail is one of: {', '.join(PRESETS)}", severity="error")
+            return
+        if key != "detail" and value and resolve({name: value})[1][key] != "override":
+            self.notify(f"Not a value for {name}: {value}", severity="error")
+            return
+        config.save({name: value})
+        settings[name] = value
+        for pane in self.workspace.buffers:
+            pane.run_worker(pane.kernel.configure_debugger(settings), group="debug-settings")
+        limits = resolve(settings)[0]
+        shown = limits["detail"] if key == "detail" else _debug_value(key, limits[key])
+        self.notify(f"debug_{key} = {shown}: the next recording uses it", title="Debugger")
 
     @staticmethod
     def _insert_cursor_setting(value) -> str:

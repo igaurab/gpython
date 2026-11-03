@@ -25,7 +25,7 @@ from . import debugview
 VARS_KEYS = "enter value · g go to cell · d delete · / filter · a all · q close"
 DEBUG_KEYS = (
     "n next · s step · r return · c continue · q quit · ] next iteration · } outer · ) loop end · "
-    "b stop if · G iteration · h/l back/forward · T timeline · u/d stack · w watch · e pdb · enter value"
+    "b / B stop if (B records) · G iteration · h/l back/forward · T timeline · u/d stack · w watch · e pdb · enter value"
 )
 POSTMORTEM_KEYS = "h/l back/forward · T timeline · u/d stack · w watch · e pdb · enter value · q done"
 
@@ -100,7 +100,7 @@ class VariablesPanel(Vertical):
     ] + [
         Binding(key, f"press({key!r})", show=False)
         for key in (
-            "n", "s", "r", "c", "q", "u", "d", "w", "g", "G", "a", "b", "e", "h", "l", "T", "slash",
+            "n", "s", "r", "c", "q", "u", "d", "w", "g", "G", "a", "b", "B", "e", "h", "l", "T", "slash",
             "right_square_bracket", "right_curly_bracket", "right_parenthesis",
         )
     ]
@@ -242,9 +242,7 @@ class VariablesPanel(Vertical):
                 title.append("returning  ", style="dim")
         title.append(place, style="bold")
         if not session.live:
-            title.append(f"   ⏪ {session.view + 1} of {session.total}", style="bold yellow")
-        elif session.total:
-            title.append(f"   {session.total} recorded", style="dim")
+            title.append(f"   ⏪ {session.position():,} of {session.total:,}", style="bold yellow")
         if session.running:
             title.append("   running…", style="bold yellow")
         return title
@@ -265,6 +263,12 @@ class VariablesPanel(Vertical):
             parts.append(Text(reply.get("text", ""), style="bold red"))
         if payload.get("output"):
             parts.append(Text(payload["output"].strip()[-600:]))
+        history = session.history
+        if history:
+            parts.append(Text(debugview.history_line(history), style="cyan"))
+            warning = debugview.history_warning(history)
+            if warning:
+                parts.append(Text(warning, style="bold yellow"))
         parts.append(Text(POSTMORTEM_KEYS if payload.get("postmortem") else DEBUG_KEYS, style="dim"))
         return Text("\n").join(parts)
 
@@ -332,9 +336,11 @@ class VariablesPanel(Vertical):
             pane.debug_timeline()
         elif key == "w":
             self._ask("watch: ", "", lambda text: text and pane.debug_command(f"_gp_watch {text.strip()}", keep_view=True))
-        elif key == "b":
+        elif key in ("b", "B"):
+            command = "_gp_until" if key == "b" else "_gp_until_rec"
+            label = "stop if: " if key == "b" else "stop if (recording every line on the way): "
             if not postmortem:
-                self._ask("stop if: ", "", lambda text: text and pane.debug_command(f"_gp_until {text.strip()}"))
+                self._ask(label, "", lambda text: text and pane.debug_command(f"{command} {text.strip()}"))
         elif key == "G":
             if not postmortem:
                 self._ask("go to iteration (N, or N of loop L counted from the outermost, as N L): ", "", self._goto)
@@ -463,15 +469,14 @@ class TimelineScreen(ModalScreen[int | None]):
 
     def compose(self) -> ComposeResult:
         marked = sum(1 for node in self.roots if node.warnings)
-        title = Text.assemble(("Timeline", "bold"), (f"  {self.total} moments recorded", "dim"))
+        title = Text.assemble(("Timeline", "bold"), (f"  {self.total:,} moments recorded", "dim"))
         if marked:
             title.append(f"  ⚠ {marked} iterations with warnings", style="bold red")
         title.append("  ·  enter goes there · l/h expand/collapse · q closes", style="dim")
         tree: Tree = Tree("loops")
         tree.show_root = False
         tree.guide_depth = 2
-        for node in self.roots:
-            self._add(tree.root, node)
+        self._add_all(tree.root, self.roots)
         with Vertical():
             yield Label(title, classes="timeline-title")
             yield tree
@@ -479,10 +484,18 @@ class TimelineScreen(ModalScreen[int | None]):
     def _add(self, parent, node: debugview.Iteration) -> None:
         if node.children:
             branch = parent.add(node.label(), data=node.index, expand=bool(node.warnings))
-            for child in node.children:
-                self._add(branch, child)
+            self._add_all(branch, node.children)
         else:
             parent.add_leaf(node.label(), data=node.index)
+
+    def _add_all(self, parent, nodes: list[debugview.Iteration]) -> None:
+        """The rows of one loop, with a note where thinning left out iterations."""
+        previous = None
+        for node in nodes:
+            if previous is not None and previous.k is not None and node.k is not None and node.k - previous.k > 1:
+                parent.add_leaf(Text(f"     … {node.k - previous.k - 1:,} iterations thinned", style="dim italic"))
+            self._add(parent, node)
+            previous = node
 
     def on_mount(self) -> None:
         tree = self.query_one(Tree)

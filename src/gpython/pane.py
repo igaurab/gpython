@@ -812,7 +812,7 @@ class NotebookPane(Vertical):
             return
         fetch = session.travel(step)
         if fetch is not None:
-            self.debug_command(f"_gp_history {fetch[0]} {fetch[1]}", keep_view=True)
+            self.debug_command(f"_gp_history {fetch}", keep_view=True)
             return
         self._draw_debug()
 
@@ -827,11 +827,10 @@ class NotebookPane(Vertical):
         gap = session.missing()
         if gap is not None:
             self._timeline_wanted = True
-            self.debug_command(f"_gp_history {gap[0]} {gap[1]}", keep_view=True)
+            self.debug_command(f"_gp_history {gap}", keep_view=True)
             return
         self._timeline_wanted = False
-        records = [session.records[i] for i in sorted(session.records)]
-        roots = timeline(records)
+        roots = timeline(session.records())
         if not roots:
             self.notify("No loop iterations recorded yet: step through a loop first", severity="information")
             return

@@ -39,6 +39,10 @@ def _gp_full(name):
     found = sys.modules["_gpython_debug"].full(g[name]) if name in g else {"kind": "text", "text": f"{name} is not defined"}
     print(json.dumps(found, default=str))
 
+def _gp_configure(settings):
+    import sys
+    sys.modules["_gpython_debug"].configure(settings)
+
 def _gp_postmortem():
     import sys
     sys.modules["_gpython_debug"].postmortem()
@@ -47,10 +51,11 @@ def _gp_arm(cid):
     import sys
     sys.modules["_gpython_debug"].arm(cid)
 
-def _gp_install(source):
+def _gp_install(path):
     import sys, types
     mod = types.ModuleType("_gpython_debug")
-    exec(compile(source, "<gpython-debug>", "exec"), mod.__dict__)
+    with open(path, encoding="utf-8") as source:
+        exec(compile(source.read(), "<gpython-debug>", "exec"), mod.__dict__)
     sys.modules["_gpython_debug"] = mod
     try:
         shell = get_ipython()
@@ -178,14 +183,23 @@ _gp_uv_magics()
 
 
 def _helpers() -> str:
-    """_HELPERS plus the shim's mo.Html conversion: the same one the static preview of a marimo cell uses."""
+    """_HELPERS plus the shim's mo.Html conversion (the same one the static preview of a marimo cell
+    uses), then the debugger's kernel half, read by the kernel from kernel_side.py's path so IPython
+    does not transform a 60 kB cell at every start."""
     import inspect
 
     from .markdown import html_to_markdown
 
-    side = (Path(__file__).with_name("kernel_side.py")).read_text()
+    side = str(Path(__file__).with_name("kernel_side.py"))
     shim = inspect.getsource(html_to_markdown).replace("def html_to_markdown", "def _gp_html_to_md", 1)
     return _HELPERS + shim + f"\n_gp_install({side!r})\n"
+
+
+def debug_settings() -> dict:
+    """The `debug_*` keys of the config: the debugger's preset and its limits."""
+    from . import config
+
+    return {key: value for key, value in config.load().items() if key.startswith("debug_")}
 
 
 class Kernel:
@@ -263,6 +277,9 @@ class Kernel:
         await self.client.wait_for_ready(timeout=60)
         await self._execute(_helpers(), None, store_history=False)
         await self.set_file(self.file)
+        settings = debug_settings()
+        if settings:
+            await self._execute(f"_gp_configure({settings!r})", None, store_history=False)
         self.ready.set()
 
     async def set_file(self, file: Path | None) -> None:
@@ -301,6 +318,11 @@ class Kernel:
     async def full_value(self, name: str) -> dict:
         """The whole value of a global for the value viewer: text, or a table (capped in the kernel)."""
         return await self._print_json(f"_gp_full({name!r})") or {"kind": "text", "text": ""}
+
+    async def configure_debugger(self, settings: dict) -> None:
+        """The `debug_*` settings (preset and limits) for the kernel's next recording."""
+        await self.ready.wait()
+        await self._execute(f"_gp_configure({settings!r})", None, store_history=False)
 
     async def arm(self, cid: str) -> None:
         """Make the next run of cell `cid` pause on its first line."""
