@@ -47,6 +47,14 @@ class Tab:
     root: Node
     active: NotebookPane | None = None
     rects: dict[NotebookPane, Region] = field(default_factory=dict)
+    zoom: NotebookPane | None = None
+
+    def shown_root(self) -> Node:
+        """The tree that is drawn: the zoomed window alone, or every window."""
+        if self.zoom is not None and find(self.root, self.zoom) is not None:
+            return Leaf(self.zoom)
+        self.zoom = None
+        return self.root
 
 
 def leaves(node: Node) -> list[Leaf]:
@@ -158,7 +166,7 @@ class WindowLayout(Layout):
         if tab is None:
             return placements
         rects: dict[NotebookPane, Region] = {}
-        arrange(tab.root, Region(0, 0, size.width, size.height), rects)
+        arrange(tab.shown_root(), Region(0, 0, size.width, size.height), rects)
         tab.rects = rects
         for widget in children:
             region = rects.get(widget)
@@ -182,7 +190,8 @@ class TabBar(Static):
             pane = tab.active if tab.active in panes else panes[0]
             dirty = any(p.dirty for p in panes)
             count = f"{len(panes)} " if len(panes) > 1 else ""
-            label = f" {i + 1}: {count}{pane.name}{' •' if dirty else ''} "
+            zoom = " ⤢" if tab.zoom is not None else ""
+            label = f" {i + 1}: {count}{pane.name}{' •' if dirty else ''}{zoom} "
             start = len(text)
             text.append(label, "bold reverse" if i == current else "dim")
             self._ranges.append((start, len(text), "tab", i))
@@ -214,6 +223,7 @@ class Workspace(Widget):
         self.tabs: list[Tab] = []
         self.index = 0
         self.buffers: list[NotebookPane] = []
+        self.origins: dict[NotebookPane, tuple[Tab, NotebookPane, bool, bool]] = {}
         self._layout = WindowLayout()
         self.can_focus = False
 
@@ -263,6 +273,16 @@ class Workspace(Widget):
     def tab_panes(self) -> list[NotebookPane]:
         return panes_of(self.tab.root) if self.tab else []
 
+    def shown_panes(self) -> list[NotebookPane]:
+        """The windows drawn right now: all of the tab's, or only the zoomed one."""
+        return panes_of(self.tab.shown_root()) if self.tab else []
+
+    def layout_rects(self, tab: Tab) -> dict[NotebookPane, Region]:
+        """Where every window of `tab` sits when nothing is zoomed."""
+        rects: dict[NotebookPane, Region] = {}
+        arrange(tab.root, Region(0, 0, max(self.size.width, 2), max(self.size.height, 2)), rects)
+        return rects
+
     def tab_of(self, pane: NotebookPane) -> int | None:
         for i, tab in enumerate(self.tabs):
             if pane in panes_of(tab.root):
@@ -291,6 +311,7 @@ class Workspace(Widget):
             return
         tab = self.tabs[self.tab_of(anchor)]
         row = how == "vsplit"
+        tab.zoom = None
         tab.root = split_leaf(tab.root, anchor, pane, row, after=True)
         await self._adopt(pane)
         self.set_active(pane)
@@ -319,6 +340,7 @@ class Workspace(Widget):
         self._changed()
 
     async def _drop(self, pane: NotebookPane) -> None:
+        self.origins.pop(pane, None)
         if pane in self.buffers:
             self.buffers.remove(pane)
         await pane.close()
@@ -333,6 +355,8 @@ class Workspace(Widget):
         neighbour = None
         if index is not None:
             tab = self.tabs[index]
+            tab.rects = self.layout_rects(tab)
+            tab.zoom = None
             root = remove_leaf(tab.root, pane)
             if root is None:
                 del self.tabs[index]
@@ -394,16 +418,170 @@ class Workspace(Widget):
             await self.close(pane)
 
     async def to_new_tab(self, pane: NotebookPane) -> None:
-        """vim's ctrl+w T: move the window into a tab of its own."""
+        """vim's ctrl+w T: move the window into a tab of its own; ctrl+w M brings it back."""
         index = self.tab_of(pane)
-        if index is None or len(self.tab_panes()) < 2:
+        if index is None or len(panes_of(self.tabs[index].root)) < 2:
             return
         tab = self.tabs[index]
+        leaf, parent = find(tab.root, pane)
+        position = parent.children.index(leaf)
+        if position > 0:
+            anchor, after = leaves(parent.children[position - 1])[-1].pane, True
+        else:
+            anchor, after = leaves(parent.children[1])[0].pane, False
+        self.origins[pane] = (tab, anchor, parent.row, after)
+        tab.zoom = None
         tab.root = remove_leaf(tab.root, pane)
         if tab.active is pane:
-            tab.active = panes_of(tab.root)[0]
+            tab.active = anchor
         self.tabs.insert(index + 1, Tab(Leaf(pane), pane))
         self.switch(index + 1)
+
+    def _take_out(self, pane: NotebookPane) -> None:
+        """Remove `pane`'s window from its tab (the tab goes when it was its last window)."""
+        index = self.tab_of(pane)
+        if index is None:
+            return
+        tab = self.tabs[index]
+        tab.zoom = None
+        root = remove_leaf(tab.root, pane)
+        if root is None:
+            del self.tabs[index]
+            if self.index > index or self.index >= len(self.tabs):
+                self.index = max(0, self.index - 1)
+            return
+        tab.root = root
+        if tab.active is pane:
+            tab.active = panes_of(root)[0]
+
+    async def place(self, pane: NotebookPane, anchor: NotebookPane, row: bool, after: bool = True) -> bool:
+        """Show `pane` in a split beside `anchor`, moving its window from wherever it is
+        (another tab, the same tab, or a hidden buffer). False when there is nothing to do."""
+        if pane is anchor or self.tab_of(anchor) is None:
+            return False
+        self._take_out(pane)
+        tab = self.tabs[self.tab_of(anchor)]
+        tab.zoom = None
+        tab.root = split_leaf(tab.root, anchor, pane, row, after)
+        await self._adopt(pane)
+        self.index = self.tabs.index(tab)
+        tab.active = pane
+        self.switch(self.index)
+        return True
+
+    async def merge(self, pane: NotebookPane) -> bool:
+        """ctrl+w M, the reverse of ctrl+w T: put the window back where T took it from;
+        otherwise into the previous tab, side by side with that tab's active window."""
+        index = self.tab_of(pane)
+        if index is None or len(self.tabs) < 2:
+            return False
+        origin = self.origins.pop(pane, None)
+        if origin is not None:
+            tab, anchor, row, after = origin
+            if tab in self.tabs and tab is not self.tabs[index] and find(tab.root, anchor) is not None:
+                return await self.place(pane, anchor, row, after)
+        target = self.tabs[index - 1 if index > 0 else 1]
+        anchor = target.active if target.active in panes_of(target.root) else panes_of(target.root)[0]
+        return await self.place(pane, anchor, True)
+
+    def toggle_zoom(self, pane: NotebookPane) -> bool:
+        """ctrl+w z (tmux's prefix z): the window fills the tab; again to restore the splits.
+        Returns whether the window is zoomed now."""
+        index = self.tab_of(pane)
+        if index is None:
+            return False
+        tab = self.tabs[index]
+        if tab.zoom is pane or len(panes_of(tab.root)) < 2:
+            tab.zoom = None
+        else:
+            tab.zoom = pane
+        tab.active = pane
+        self.switch(index)
+        return tab.zoom is pane
+
+    def unzoom(self) -> bool:
+        tab = self.tab
+        if tab is None or tab.zoom is None:
+            return False
+        tab.zoom = None
+        self._changed()
+        return True
+
+    def exchange(self, pane: NotebookPane) -> bool:
+        """ctrl+w x: swap the window with the next one in its row or column (the previous
+        one when it is the last); the sizes stay where they were."""
+        found = self._sibling_of(pane)
+        if found is None:
+            return False
+        leaf, parent = found
+        i = parent.children.index(leaf)
+        j = i + 1 if i + 1 < len(parent.children) else i - 1
+        a, b = parent.children[i], parent.children[j]
+        a.weight, b.weight = b.weight, a.weight
+        parent.children[i], parent.children[j] = b, a
+        self._changed()
+        return True
+
+    def rotate(self, pane: NotebookPane, step: int) -> bool:
+        """ctrl+w r / R: rotate the windows of this row or column down/right (or up/left)."""
+        found = self._sibling_of(pane)
+        if found is None:
+            return False
+        _, parent = found
+        weights = [c.weight for c in parent.children]
+        step %= len(parent.children)
+        parent.children[:] = parent.children[-step:] + parent.children[:-step]
+        for child, weight in zip(parent.children, weights):
+            child.weight = weight
+        self._changed()
+        return True
+
+    def _sibling_of(self, pane: NotebookPane) -> tuple[Leaf, Branch] | None:
+        index = self.tab_of(pane)
+        if index is None:
+            return None
+        tab = self.tabs[index]
+        found = find(tab.root, pane)
+        if found is None or found[1] is None:
+            return None
+        tab.zoom = None
+        return found
+
+    def move_to_edge(self, pane: NotebookPane, side: str) -> bool:
+        """ctrl+w H / J / K / L: the window moves to the far left / bottom / top / right,
+        full height or full width. This is how a side-by-side split becomes a stacked one."""
+        index = self.tab_of(pane)
+        if index is None:
+            return False
+        tab = self.tabs[index]
+        rest = remove_leaf(tab.root, pane)
+        if rest is None:
+            return False
+        tab.zoom = None
+        row, first = side in "HL", side in "HK"
+        leaf = Leaf(pane)
+        if isinstance(rest, Branch) and rest.row == row:
+            leaf.weight = sum(c.weight for c in rest.children) / len(rest.children)
+            rest.children.insert(0 if first else len(rest.children), leaf)
+            tab.root = rest
+        else:
+            rest.weight = 1.0
+            tab.root = Branch(row, [leaf, rest] if first else [rest, leaf])
+        tab.active = pane
+        self._changed()
+        return True
+
+    def move_tab(self, index: int, to: int) -> int:
+        """:tabmove: put tab `index` at position `to` (both 0-based, clamped). Returns where it went."""
+        if not 0 <= index < len(self.tabs):
+            return index
+        to = max(0, min(len(self.tabs) - 1, to))
+        current = self.tab
+        tab = self.tabs.pop(index)
+        self.tabs.insert(to, tab)
+        self.index = self.tabs.index(current)
+        self._changed()
+        return to
 
     def resize(self, pane: NotebookPane, row: bool, delta: float) -> None:
         """ctrl+w < > - +: change the weight of the nearest ancestor split in that direction."""
@@ -420,6 +598,7 @@ class Workspace(Widget):
             node, parent = parent, _parent_of(tab.root, parent)
         if parent is None:
             return
+        tab.zoom = None
         total = sum(c.weight for c in parent.children)
         node.weight = max(0.1, node.weight + delta * total)
         self._changed()
@@ -432,6 +611,7 @@ class Workspace(Widget):
                     walk(child)
 
         if self.tab:
+            self.tab.zoom = None
             walk(self.tab.root)
             self._changed()
 
@@ -441,9 +621,7 @@ class Workspace(Widget):
         if not self.tabs:
             return
         self.index = max(0, min(len(self.tabs) - 1, index))
-        shown = set(panes_of(self.tab.root))
-        for pane in self.buffers:
-            pane.display = pane in shown
+        self._sync_display()
         active = self.active
         if active is not None:
             self.set_active(active)
@@ -462,10 +640,19 @@ class Workspace(Widget):
             other.set_active(other is pane)
         self.app.workspace_changed()
 
+    def _sync_display(self) -> None:
+        shown = set(self.shown_panes())
+        for pane in self.buffers:
+            pane.display = pane in shown
+
     def _changed(self) -> None:
+        self._sync_display()
+        tab = self.tab
         multi = len(self.tab_panes()) > 1
         for pane in self.tab_panes():
             pane.show_status(multi)
+            pane.set_zoomed(tab is not None and tab.zoom is pane)
+        self._clear_arrangement_cache()
         self.refresh(layout=True)
         self.app.workspace_changed()
 
@@ -473,12 +660,15 @@ class Workspace(Widget):
     def neighbour(self, pane: NotebookPane, direction: str) -> NotebookPane | None:
         """The window next to `pane` in direction h/j/k/l (by screen geometry)."""
         tab = self.tab
-        if tab is None or pane not in tab.rects:
+        if tab is None:
             return None
-        me = tab.rects[pane]
+        rects = self.layout_rects(tab)
+        if pane not in rects:
+            return None
+        me = rects[pane]
         best: tuple[int, int, NotebookPane] | None = None
-        for other, rect in tab.rects.items():
-            if other is pane or other not in panes_of(tab.root):
+        for other, rect in rects.items():
+            if other is pane:
                 continue
             match direction:
                 case "h":
