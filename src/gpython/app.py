@@ -79,7 +79,12 @@ _WINDOW_KEYS = {
     "t": "first", "ctrl+t": "first", "b": "last", "ctrl+b": "last",
     "q": "close", "ctrl+q": "close", "c": "close", "ctrl+c": "close",
     "o": "only", "ctrl+o": "only",
-    "T": "totab",
+    "T": "totab", "M": "fromtab",
+    "z": "zoom", "ctrl+z": "zoom",
+    "x": "exchange", "ctrl+x": "exchange",
+    "r": "rotate", "ctrl+r": "rotate", "R": "rotate_back",
+    "H": "edge", "J": "edge", "K": "edge", "L": "edge",
+    " ": "manager", "space": "manager", "ctrl+@": "manager", "ctrl+space": "manager",
     "=": "equal",
     "+": "taller", "-": "shorter", ">": "wider", "<": "narrower",
 }
@@ -674,6 +679,8 @@ class GPython(App):
             panes = self.workspace.tab_panes()
             target = panes[-1] if panes else None
         if target is not None:
+            if target is not current:
+                self.workspace.unzoom()
             self.workspace.set_active(target)
             target.focus_pane()
 
@@ -824,6 +831,21 @@ class GPython(App):
             case "totab":
                 await self.workspace.to_new_tab(pane)
                 pane.focus_pane()
+            case "fromtab":
+                await self.merge_window(pane)
+            case "zoom":
+                self.toggle_zoom(pane)
+            case "exchange":
+                self.workspace.exchange(pane)
+                pane.focus_pane()
+            case "rotate" | "rotate_back":
+                self.workspace.rotate(pane, 1 if command == "rotate" else -1)
+                pane.focus_pane()
+            case "edge":
+                self.workspace.move_to_edge(pane, key)
+                pane.focus_pane()
+            case "manager":
+                self.action_window_manager()
             case "equal":
                 self.workspace.equalize()
             case "taller" | "shorter":
@@ -831,7 +853,32 @@ class GPython(App):
             case "wider" | "narrower":
                 self.workspace.resize(pane, True, 0.1 if command == "wider" else -0.1)
             case _:
-                self.notify(f"ctrl+w {key}: not a window command (s v h j k l w p q o T = + - < >)", severity="warning")
+                self.notify(f"ctrl+w {key}: not a window command (space lists them all: s v h j k l w p q o z x r H J K L T M = + - < >)", severity="warning")
+
+    def toggle_zoom(self, pane: NotebookPane | None = None) -> None:
+        """ctrl+w z / :zoom: the window fills the tab, or the splits come back."""
+        pane = pane or self.pane
+        if len(self.workspace.tab_panes()) < 2 and not self.workspace.tab.zoom:
+            self.notify("Only one window in this tab: nothing to zoom", timeout=2)
+            return
+        self.workspace.toggle_zoom(pane)
+        pane.focus_pane()
+
+    async def merge_window(self, pane: NotebookPane | None = None) -> None:
+        """ctrl+w M / :tabmerge: the window goes back into the tab ctrl+w T took it from
+        (else the previous tab), as a split."""
+        pane = pane or self.pane
+        if not await self.workspace.merge(pane):
+            self.notify("No other tab to move this window into", timeout=2)
+            return
+        pane.focus_pane()
+
+    def action_window_manager(self) -> None:
+        """ctrl+w space / :windows: the floating window manager (imported on first use)."""
+        from .manager import WindowManager
+
+        if not isinstance(self.screen, WindowManager):
+            self.push_screen(WindowManager())
 
 
     def start_run_by_number(self, pane: NotebookPane | None = None) -> None:
@@ -1082,6 +1129,10 @@ class GPython(App):
             (("sp", "split"), "Horizontal split (:sp file opens it there)", lambda arg="": self._ex_split("split", arg)),
             (("vs", "vsp", "vsplit"), "Vertical split (:vs file opens it there)", lambda arg="": self._ex_split("vsplit", arg)),
             (("on", "only"), "Close every other window in this tab", lambda arg="": self._ex_only()),
+            (("zoom",), "Zoom this window to fill the tab, or restore the splits (ctrl+w z)", lambda arg="": self.toggle_zoom()),
+            (("windows", "wins", "wm"), "Window manager: every tab, window and hidden buffer in a floating list (ctrl+w space)", lambda arg="": self.action_window_manager()),
+            (("tabmerge", "tabjoin"), "Move this window back into the tab it came from (ctrl+w M)", lambda arg="": self.merge_window()),
+            (("tabmove", "tabm"), "Move this tab: :tabmove 0 first, :tabmove last, :tabmove +1 / -1, :tabmove N after tab N", lambda arg="": self._ex_tabmove(arg)),
             (("tabnew", "tabe", "tabedit"), "New tab (:tabnew file opens it there)", lambda arg="": self._ex_split("tab", arg)),
             (("tabc", "tabclose"), "Close this tab", lambda arg="": self.tab_close(force=arg.strip() == "!")),
             (("tabo", "tabonly"), "Close every other tab", lambda arg="": self.tab_only()),
@@ -1333,6 +1384,22 @@ class GPython(App):
             await self.open_file(arg, how)
         else:
             await self.new_pane(how)
+
+    def _ex_tabmove(self, arg: str = "") -> None:
+        arg = arg.strip()
+        workspace = self.workspace
+        here = workspace.index
+        if arg in ("", "$", "last"):
+            to = len(workspace.tabs) - 1
+        elif arg[0] in "+-" and arg[1:].isdigit():
+            to = here + int(arg)
+        elif arg.isdigit():
+            n = int(arg)
+            to = n if n <= here else n - 1
+        else:
+            self.notify(f"tabmove {arg}: give 0, N, +N, -N or last", severity="warning")
+            return
+        workspace.move_tab(here, to)
 
     async def _ex_only(self) -> None:
         pane = self.pane

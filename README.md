@@ -75,7 +75,7 @@ Everywhere:
 | `ctrl+s` / `:w` | Save (asks for a name if untitled) |
 | `ctrl+b` | Toggle the file explorer (see [Files, windows and tabs](#files-windows-and-tabs)) |
 | `ctrl+h` / `ctrl+l` | Focus the window to the left / right; `ctrl+h` from the leftmost window opens or focuses the explorer, `ctrl+l` from the explorer goes back (not in insert mode, where `ctrl+h` is backspace) |
-| `ctrl+w` … | Window commands: `s` split, `v` vsplit, `h j k l` move, `q` close, `o` only, `T` to tab |
+| `ctrl+w` … | Window commands: `s` split, `v` vsplit, `h j k l` move, `q` close, `o` only, `z` zoom, `T` / `M` to tab and back, `space` window manager |
 | `f1` | Help |
 | `ctrl+o` | Toggle the outline panel: each cell with what it defines, live types after a run, dependency edges; `enter` jumps (not in insert mode, where it is vim's one-shot command; `:outline`) |
 | `f3` | Toggle run mode, saved: lazy (default, cells that use the variables are only marked stale) / reactive (they re-run) |
@@ -257,13 +257,40 @@ a file opens it too.
 | `ctrl+w q` / `:q` | Close this window (asks if unsaved; closing the last one quits) |
 | `ctrl+w o` / `:only` | Keep only this window |
 | `ctrl+w T` | Move this window to a new tab |
+| `ctrl+w M` / `:tabmerge` | The reverse: put the window back where `T` took it from (else into the previous tab) |
+| `ctrl+w z` / `:zoom` | Zoom: the window fills the tab; again brings the splits back (like tmux's prefix z) |
+| `ctrl+w x` | Swap this window with the next one in its row or column |
+| `ctrl+w r` / `R` | Rotate the windows of this row or column forward / back |
+| `ctrl+w H` `J` `K` `L` | Move the window to the far left / bottom / top / right, full height or width (turns side-by-side into stacked and back) |
+| `ctrl+w space` / `:windows` | The window manager (below) |
 | `ctrl+w =`, `+` `-` `<` `>` | Equalize / resize |
+
+Moving to another window, splitting or closing undoes a zoom. While zoomed, the
+status line says so and the tab line marks the tab with `⤢`.
+
+**Window manager** (`ctrl+w space` or `:windows`): a floating list of every
+tab, the windows in each, and the hidden buffers, with a map of the selected
+tab's layout and what the selected notebook is (path, kernel, unsaved). The keys
+are printed at the bottom of the popup:
+
+| Key | Action |
+|---|---|
+| `j` `k` / arrows, `g` `G`, click | Move (click the selected row, or double-click, to go there) |
+| `enter` | Go there: a tab, a window, or show a hidden buffer in the current window |
+| `s` / `v` | Put the selected notebook in a split below / beside the window you came from (it moves from another tab, or a hidden buffer is shown) |
+| `t` | Give it a tab of its own |
+| `z` | Go there and zoom it |
+| `x` | Close its window (or a whole tab); the notebook stays a hidden buffer |
+| `d` / `D` | Delete the buffer and stop its kernel (`D` even when unsaved) |
+| `J` / `K` | Move its tab right / left (`:tabmove N` does the same) |
+| `1`-`9` | Go to that tab |
+| `/` | Filter by name; `esc` clears the filter, `esc` again closes |
 
 When a tab has several windows each shows a status line with its file name,
 dirty mark and kernel state; the active window's line is highlighted.
 
 **Tabs**: `:tabnew [file]`, `gt` / `gT` / `2gt` (normal and cell mode),
-`:tabn`, `:tabp`, `:tabclose`, `:tabonly`. The tab line appears above the
+`:tabn`, `:tabp`, `:tabclose`, `:tabonly`, `:tabmove N`. The tab line appears above the
 notebook once there are two tabs (or a hidden buffer, see below); click a tab
 to switch. `gpython a.py b.py` opens one tab per file.
 

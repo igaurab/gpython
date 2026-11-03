@@ -69,6 +69,7 @@ class NotebookPane(Vertical):
         self._outline_timer: Timer | None = None
         self._values: dict[str, Value] = {}
         self._status: Static | None = None
+        self.zoomed = False
         self._status_key: tuple | None = None
         self.last_focus = None
         self._undo: list[tuple] = []
@@ -279,10 +280,16 @@ class NotebookPane(Vertical):
         """The status line is shown only when a tab has several windows (vim's laststatus=1)."""
         self.set_class(show, "-multi")
 
+    def set_zoomed(self, zoomed: bool) -> None:
+        """ctrl+w z: this window fills its tab; the status line says so."""
+        if zoomed != self.zoomed:
+            self.zoomed = zoomed
+            self.render_status()
+
     def render_status(self) -> None:
         if self._status is None:
             return
-        key = (self.title, self.kernel_label, self.kernel_state, self.has_class("-active"))
+        key = (self.title, self.kernel_label, self.kernel_state, self.has_class("-active"), self.zoomed)
         if key == self._status_key:
             return
         self._status_key = key
@@ -291,6 +298,7 @@ class NotebookPane(Vertical):
             Text.assemble(
                 (f" {self.title} ", "bold" if active else ""),
                 (f" {self.kernel_label} · {self.kernel_state}", "" if active else "dim"),
+                ("   ⤢ zoomed · ctrl+w z restores the splits" if self.zoomed else "", "bold"),
             ),
             layout=False,
         )

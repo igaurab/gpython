@@ -6,6 +6,19 @@ All notable changes to gpython (published on PyPI as `gpynb`). The format follow
 creates a GitHub release with the wheel and sdist attached and the matching section of
 this file as its notes.
 
+## [Unreleased]
+
+### Added
+- Window management: `ctrl+w z` zooms a window to fill its tab (again restores the splits),
+  `ctrl+w x` swaps, `ctrl+w r` / `R` rotate, `ctrl+w H J K L` move a window to an edge,
+  `ctrl+w M` / `:tabmerge` undoes `ctrl+w T`, `:tabmove N` reorders tabs.
+- Window manager (`ctrl+w space`, `:windows`): a floating list of tabs, windows and hidden
+  buffers with a map of the selected tab's layout; go, split, move to a tab, zoom, close,
+  delete, reorder tabs and filter by name from one popup.
+
+### Fixed
+- `ctrl+w + - < >` resized the layout only after the next unrelated change.
+
 ## [0.1.2] - 2026-10-30
 
 ### Added
