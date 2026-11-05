@@ -6,13 +6,20 @@ import io
 import time
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageFont
 from textual.geometry import Region
 
 from gpython import bigtext, notebook
 from gpython.app import GPython
 from gpython.markdown import MarkdownView
 from gpython.notebook import CellSpec
+
+
+@pytest.fixture(autouse=True)
+def _bundled_font(monkeypatch):
+    """Pillow's own font, so the tests do not depend on the fonts this machine has."""
+    monkeypatch.setattr(bigtext, "_font_path", lambda: ("pillow", 0))
+    monkeypatch.setattr(bigtext, "_font", ImageFont.load_default)
 
 
 @pytest.fixture
