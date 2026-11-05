@@ -9,6 +9,7 @@ this file as its notes.
 ## [Unreleased]
 
 ### Added
+- `gpy`, a short alias for the `gpython` command.
 - Window management: `ctrl+w z` zooms a window to fill its tab (again restores the splits),
   `ctrl+w x` swaps, `ctrl+w r` / `R` rotate, `ctrl+w H J K L` move a window to an edge,
   `ctrl+w M` / `:tabmerge` undoes `ctrl+w T`, `:tabmove N` reorders tabs.
