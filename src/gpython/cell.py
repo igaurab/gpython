@@ -20,9 +20,11 @@ from . import notebook
 from .graph import Graph
 from .markdown import MarkdownView, marimo_markdown
 from .outputs import OutputArea
-from .vim import VimTextArea, _is_escape
+from .vim import CELL_MODE_COLOR, EDITING_COLOR, VimTextArea, _is_escape
 
 BAR_ROLES = {"idle": "panel", "ok": "panel", "stale": "warning", "queued": "primary", "running": "primary", "error": "error", "skipped": "error"}
+CELL_MODE_BAR = CELL_MODE_COLOR
+EDITING_BAR = EDITING_COLOR
 
 STATUS_ICONS = {
     "idle": ("○", "dim"),
@@ -307,12 +309,20 @@ class Cell(Vertical):
         self.paint_bar()
 
     def paint_bar(self) -> None:
-        """Colour the left bar from the status and focus: selection beats status."""
+        """Colour the left bar from the status and focus: selection beats status; a cell selected
+        in cell mode is CELL_MODE_BAR, the blue of the CELL badge; the cell being edited is
+        EDITING_BAR, cyan, a colour no mode cursor uses (the theme's accent was often orange, too
+        close to the yellow normal-mode cursor)."""
         colors = getattr(self.app, "bar_colors", None)
         if colors is None:
             return
         role = "accent" if (self.selected or self.focused_within) else BAR_ROLES.get(self.status, "panel")
-        color = colors[role]
+        if self.focused_within:
+            color = EDITING_BAR
+        elif self.selected:
+            color = CELL_MODE_BAR
+        else:
+            color = colors[role]
         if color != self._bar_color:
             self._bar_color = color
             self.styles.outline_left = ("thick", color)
@@ -635,6 +645,8 @@ class Cell(Vertical):
     def on_focus(self) -> None:
         self.selected = True
         self.add_class("-selected", update=False)
+        if self._editor is not None and not self.editor_hidden:
+            self._editor.show_cell_cursor(True)
         self._render_header()
         self.paint_bar()
         self.app.update_status()
@@ -642,6 +654,8 @@ class Cell(Vertical):
     def on_blur(self) -> None:
         self.selected = False
         self.remove_class("-selected", update=False)
+        if self._editor is not None:
+            self._editor.show_cell_cursor(False)
         self._render_header()
         self.paint_bar()
         if not isinstance(self.app.focused, Cell):

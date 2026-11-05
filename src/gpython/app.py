@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from pathlib import Path
 
 from rich.text import Text
@@ -33,7 +34,7 @@ from . import envpicker
 from .envpicker import KernelChip
 from .themepicker import ThemePicker
 from .themes import CUSTOM_APP_THEMES, DEFAULT_THEME, TERMINAL_THEME, THEME_ALIASES, editor_themes, palette_for
-from .vim import INSERT_CURSOR_SHAPES, RESET_CURSOR_SHAPE, VimTextArea, _is_escape, sync_terminal_cursor, write_to_terminal
+from .vim import CELL_MODE_COLOR, INSERT_CURSOR_SHAPES, RESET_CURSOR_SHAPE, VimTextArea, _is_escape, parse_global, parse_line_command, parse_substitute, sync_terminal_cursor, write_to_terminal
 from .windows import TabBar, Workspace
 
 KEY_HINTS = "shift+enter run+next · ctrl+enter run · esc esc cell mode · / jump · ctrl+b files · ctrl+w splits · f1 help"
@@ -52,13 +53,14 @@ ASK_INSTALL_MESSAGE = "A missing module opens the install prompt first (enter in
 _MODE_STYLES = {
     "insert": "bold black on green",
     "normal": "bold black on yellow",
-    "cell": "bold black on cyan",
+    "cell": f"bold white on {CELL_MODE_COLOR}",
     "files": "bold black on magenta",
     "outline": "bold black on magenta",
     "vars": "bold black on magenta",
     "debug": "bold white on red",
     "visual": "bold black on bright_magenta",
     "v-line": "bold black on bright_magenta",
+    "v-block": "bold black on bright_magenta",
     "replace": "bold black on red",
 }
 _CHIP_VIM_STYLES = {
@@ -67,8 +69,21 @@ _CHIP_VIM_STYLES = {
     "normal": "bold yellow",
     "visual": "bold bright_magenta",
     "v-line": "bold bright_magenta",
+    "v-block": "bold bright_magenta",
 }
 EXPLORER_WIDTH = 34
+_VIM_MODES = ("normal", "visual", "v-line", "v-block", "insert", "replace")
+_VIM_NORMAL_OWNS = ("delete_cell", "run_cell_ctrl_e", "toggle_explorer", "add_cell", "command_palette")
+_VIM_INSERT_OWNS = ("delete_cell", "run_cell_ctrl_e", "add_cell", "command_palette", "window_prefix", "pick_theme", "interrupt")
+_VIM_OWNS = {
+    "normal": _VIM_NORMAL_OWNS,
+    "visual": _VIM_NORMAL_OWNS,
+    "v-line": _VIM_NORMAL_OWNS,
+    "v-block": _VIM_NORMAL_OWNS,
+    "insert": _VIM_INSERT_OWNS,
+    "replace": _VIM_INSERT_OWNS,
+}
+_VIM_OWNED_ACTIONS = frozenset(_VIM_NORMAL_OWNS + _VIM_INSERT_OWNS)
 
 _WINDOW_KEYS = {
     "s": "split", "S": "split", "ctrl+s": "split", "n": "split", "ctrl+n": "split",
@@ -158,7 +173,8 @@ class GPython(App):
     CSS_PATH = "app.tcss"
     TITLE = "gpython"
     BINDINGS = [
-        Binding("ctrl+enter,ctrl+shift+enter,ctrl+e", "run_cell", "Run", priority=True),
+        Binding("ctrl+enter,ctrl+shift+enter", "run_cell", "Run", priority=True),
+        Binding("ctrl+e", "run_cell_ctrl_e", "Run", show=False, priority=True),
         Binding("shift+enter", "run_cell('next')", "Run + next", priority=True),
         Binding("alt+enter", "run_cell('insert')", "Run + insert", priority=True),
         Binding("ctrl+n", "add_cell", "New cell", priority=True),
@@ -250,6 +266,7 @@ class GPython(App):
         self._status_key: tuple | None = None
         self._cell_clipboard: CellSnapshot | None = None
         self._prompt_mode = "normal"
+        self._last_ex: str | None = None
         self._number_sequence = None
         self.cell_mode = False
 
@@ -956,9 +973,174 @@ class GPython(App):
     async def action_run_cell(self, advance: str = "stay") -> None:
         await self.pane.run_cell(advance)
 
-    async def action_run_and_add(self) -> None:
-        """Old name of shift+enter."""
-        await self.pane.run_cell("next")
+    async def action_run_cell_ctrl_e(self) -> None:
+        """ctrl+e outside the editor (in the editor it is vim's scroll / insert-mode copy)."""
+        await self.pane.run_cell("stay")
+
+    def _ex_segments(self, span: str, default_all: bool = False) -> list[tuple[VimTextArea, int, int]]:
+        """An ex range as (editor, top row, bottom row) pieces, the notebook read as one file like
+        vim's buffer: % (and no range when `default_all`) is every line of every cell, $ the
+        notebook's last line, . the cursor line, N line N of the current cell (its gutter number),
+        '<,'> the last visual area. No range is the cursor line in the editor and the whole
+        selected cell in cell mode."""
+        cells = [cell for cell in self.cells() if getattr(cell, "editor", None) is not None]
+        current = self.current_cell()
+        if current is None or current not in cells:
+            raise ValueError("No cell to work on")
+        index = cells.index(current)
+        editor = current.editor
+        in_editor = self.focused is editor
+
+        def last_row(cell) -> int:
+            return cell.editor.document.line_count - 1
+
+        if span == "%" or (not span and default_all):
+            return [(cell.editor, 0, last_row(cell)) for cell in cells]
+        if not span:
+            if in_editor:
+                row = editor.cursor_location[0]
+                return [(editor, row, row)]
+            return [(editor, 0, last_row(current))]
+        if span == "'<,'>":
+            top, bottom = editor._range_rows(span)
+            return [(editor, top, bottom)]
+
+        def address(text: str) -> tuple[int, int]:
+            if text == ".":
+                return index, editor.cursor_location[0]
+            if text == "$":
+                return len(cells) - 1, last_row(cells[-1])
+            return index, max(0, min(last_row(current), int(text) - 1))
+
+        first, _, second = span.partition(",")
+        start, end = sorted((address(first), address(second or first)))
+        pieces = []
+        for position in range(start[0], end[0] + 1):
+            cell = cells[position]
+            top = start[1] if position == start[0] else 0
+            bottom = end[1] if position == end[0] else last_row(cell)
+            pieces.append((cell.editor, top, bottom))
+        return pieces
+
+    def _substitute(self, span: str, pattern: str | None, replacement: str | None, flags: str) -> None:
+        """:s over the ex range (_ex_segments): :%s changes every cell of the notebook, like vim's whole file."""
+        from .vim import prepare_substitute
+
+        try:
+            segments = self._ex_segments(span)
+            prepared = prepare_substitute(pattern, replacement, flags)
+        except (ValueError, re.error) as error:
+            self.notify(str(error), severity="error")
+            return
+        count = lines = cells = 0
+        for editor, top, bottom in segments:
+            made, rows, _ = editor.substitute_rows(top, bottom, *prepared)
+            count += made
+            lines += rows
+            cells += bool(made)
+        flags = prepared[2]
+        where = f" in {cells} cells" if cells > 1 else ""
+        if not count:
+            self.notify(f"Pattern not found: {VimTextArea.last_pattern}", severity="warning")
+        elif "n" in flags:
+            self.notify(f"{count} match{'es' if count > 1 else ''} on {lines} line{'s' if lines > 1 else ''}{where}")
+        elif count > 2 or cells > 1:
+            self.notify(f"{count} substitutions on {lines} line{'s' if lines > 1 else ''}{where}")
+
+    def _global(self, span: str, invert: bool, pattern: str, command: str) -> None:
+        """:g/pattern/command (:g! and :v invert): every cell of the notebook unless a range is given.
+        Without a command, the matching lines are listed."""
+        from .vim import compile_pattern
+
+        try:
+            pattern = pattern or VimTextArea.last_pattern
+            if not pattern:
+                raise ValueError("No previous pattern")
+            regex = compile_pattern(pattern)
+            segments = self._ex_segments(span, default_all=True)
+        except (ValueError, re.error) as error:
+            self.notify(str(error), severity="error")
+            return
+        VimTextArea.last_pattern = pattern
+        matches = [(editor, editor.matching_rows(top, bottom, regex, invert)) for editor, top, bottom in segments]
+        if not any(rows for _, rows in matches):
+            self.notify(f"Pattern not found: {pattern}", severity="warning")
+            return
+        if command in ("", "p", "print", "#", "nu", "number"):
+            labels = {cell.editor: cell.label for cell in self.cells() if getattr(cell, "editor", None) is not None}
+            listing = [f"{labels.get(editor, '?')}:{row + 1}  {editor.document.get_line(row)}" for editor, rows in matches for row in rows]
+            self._show_text(f":g/{pattern}/", "\n".join(listing))
+            return
+        try:
+            for editor, rows in matches:
+                if rows:
+                    editor.global_command(rows, command)
+        except (ValueError, re.error) as error:
+            self.notify(str(error), severity="error")
+
+    def _line_command(self, span: str, name: str, arg: str) -> None:
+        """:d :j :> :< :m :t :co :normal over the ex range; :m and :t addresses count in the cell
+        of the range's first line."""
+        try:
+            segments = self._ex_segments(span)
+            for editor, top, bottom in reversed(segments):
+                editor.line_command(top, bottom, name, arg)
+        except (ValueError, re.error) as error:
+            self.notify(str(error), severity="error")
+
+    def _show_text(self, title: str, text: str, ansi: bool = False) -> None:
+        from .textview import TextView
+
+        self.push_screen(TextView(title, text, ansi=ansi))
+
+    @on(VimTextArea.HelpRequested)
+    def _help_requested(self, event: VimTextArea.HelpRequested) -> None:
+        self.run_worker(self._show_help(event), group="inspect", exclusive=True)
+
+    async def _show_help(self, event: VimTextArea.HelpRequested) -> None:
+        """K: the kernel's help for the name under the cursor (what `name?` prints in IPython)."""
+        kernel = event.editor._kernel()
+        if kernel is None or not kernel.ready.is_set():
+            self.notify("The kernel is not running yet", severity="warning")
+            return
+        text = await kernel.inspect(event.code, event.offset)
+        if not text:
+            self.notify(f"No help for {event.name} (run the cell that defines it first?)", severity="warning")
+            return
+        self._show_text(f"K  {event.name}", text, ansi=True)
+
+    @on(VimTextArea.FoldRequested)
+    def _fold_requested(self, event: VimTextArea.FoldRequested) -> None:
+        self.fold_cells(event.action)
+
+    def fold_cells(self, action: str) -> None:
+        """Folds are cells: "close" / "toggle" hide this cell's code (markdown: fold it) and select
+        the cell; "close_all" / "open_all" do it for every cell; "toggle_all" picks by the current state."""
+        cells = self.cells()
+        current = self.current_cell()
+        if action == "toggle_all":
+            action = "open_all" if any(cell.code_hidden or getattr(cell, "folded", False) for cell in cells) else "close_all"
+        targets = cells if action.endswith("_all") else [current] if current is not None else []
+        if action == "toggle":
+            hide = current is not None and not (current.code_hidden or getattr(current, "folded", False))
+        else:
+            hide = action in ("close", "close_all")
+        for cell in targets:
+            if cell.kind == "markdown":
+                cell.set_folded(hide)
+            else:
+                cell.set_code_hidden(hide)
+        self.pane.mark_dirty()
+        if hide and current is not None and self.focused is current.editor:
+            current.focus(scroll_visible=False)
+
+    def _ex_digraphs(self, arg: str = "") -> None:
+        from .digraphs import table
+
+        pairs = sorted(table().items(), key=lambda item: item[1])
+        columns = [f"{pair} {char!s:<2}" for pair, char in pairs if char.isprintable() and not char.isspace()]
+        rows = ["    ".join(columns[i : i + 8]) for i in range(0, len(columns), 8)]
+        self._show_text("Digraphs: insert mode ctrl+k, then the two characters", "\n".join(rows))
 
     def action_run_all(self) -> None:
         self.pane.run_all()
@@ -1105,8 +1287,8 @@ class GPython(App):
         self.update_status()
 
     @on(VimTextArea.SearchRequested)
-    def _search(self) -> None:
-        self._open_search()
+    def _search(self, event: VimTextArea.SearchRequested) -> None:
+        self._open_search(backward=event.backward)
 
     @on(VimTextArea.SearchNext)
     def _search_next(self, event: VimTextArea.SearchNext) -> None:
@@ -1117,8 +1299,16 @@ class GPython(App):
             self.pane.search(event.pattern, event.step, mode)
 
     @on(VimTextArea.ExCommand)
-    def _ex(self) -> None:
-        self._open_ex()
+    def _ex(self, event: VimTextArea.ExCommand) -> None:
+        self._open_ex(event.initial)
+
+    @on(VimTextArea.ExRun)
+    async def _run_ex_message(self, event: VimTextArea.ExRun) -> None:
+        """ZZ ZQ & g& @: from the editor: an ex command without the prompt (None repeats the last one)."""
+        self._prompt_mode = self.ui_mode
+        command = event.command if event.command is not None else self._last_ex
+        if command:
+            await self._run_ex(command)
 
     @on(VimTextArea.FindFiles)
     def _find_files(self) -> None:
@@ -1132,17 +1322,24 @@ class GPython(App):
     def _tab_switch(self, event: VimTextArea.TabSwitch) -> None:
         self.tab_switch(event.tab, event.step)
 
-    def _open_ex(self) -> None:
+    def _open_ex(self, initial: str = "") -> None:
         self._prompt_mode = self.ui_mode
-        self.push_screen(Prompt(":"), self._run_ex)
+        self.push_screen(Prompt(":", value=initial), self._run_ex)
 
-    def _open_search(self) -> None:
+    def _open_search(self, backward: bool = False) -> None:
         self._prompt_mode = self.ui_mode
-        self.push_screen(Prompt("/", placeholder="cell number or text to search"), self._jump)
+        if backward:
+            self.push_screen(Prompt("?", placeholder="text to search backward"), self._jump_backward)
+        else:
+            self.push_screen(Prompt("/", placeholder="cell number or text to search"), self._jump)
 
     def _jump(self, target: str | None) -> None:
         if target:
             self.pane.jump(target, self._prompt_mode)
+
+    def _jump_backward(self, target: str | None) -> None:
+        if target:
+            self.pane.jump(target, self._prompt_mode, backward=True)
 
     def ex_commands(self) -> list[tuple[tuple[str, ...], str, object]]:
         """(names, description, handler). Shared by ':' commands, the palette and help.
@@ -1200,7 +1397,10 @@ class GPython(App):
             (("stop",), "While paused: :stop if EXPR runs until EXPR is true (b in the debugger)", self._ex_stop),
             (("lazy",), "Toggle run mode: lazy (dependents only marked stale) / reactive (they re-run); saved (f3)", lambda arg="": self.action_toggle_lazy()),
             (("new",), "New cell below", lambda arg="": self.action_add_cell()),
-            (("delete", "del"), "Delete current cell", lambda arg="": self.action_delete_cell()),
+            (("delete", "del", "d"), "Delete current cell (in cell mode; in the editor :d deletes lines as in vim)", lambda arg="": self.action_delete_cell()),
+            (("foldclose", "foldc"), "Fold: hide this cell's code, fold a markdown cell (zc); :foldclose all every cell (zM)", lambda arg="": self.fold_cells("close_all" if arg.strip() == "all" else "close")),
+            (("foldopen", "foldo"), "Unfold this cell; :foldopen all every cell (zR)", lambda arg="": self.fold_cells("open_all" if arg.strip() == "all" else "open")),
+            (("digraphs", "dig"), "List the digraphs (insert mode ctrl+k then two characters)", self._ex_digraphs),
             (("md", "markdown"), "Cell → Markdown", lambda arg="": self._ex_kind("markdown")),
             (("code",), "Cell → Code", lambda arg="": self._ex_kind("code")),
             (("hide",), "Hide this cell's code, or fold a markdown cell (h in cell mode; code: saved as marimo hide_code)", lambda arg="": self._ex_hide(True)),
@@ -1386,7 +1586,7 @@ class GPython(App):
 
     @staticmethod
     def _insert_cursor_setting(value) -> str:
-        return value if value in INSERT_CURSOR_SHAPES else "bar"
+        return value if value in INSERT_CURSOR_SHAPES else "block"
 
     def set_insert_cursor(self, shape: str) -> None:
         """:set cursor=bar|underline|block: the cursor in insert mode; saved as `insert_cursor`."""
@@ -1506,7 +1706,22 @@ class GPython(App):
             self.notify(f"Unknown theme {arg!r}. Try: {names}, …", severity="error")
 
     async def _run_ex(self, command: str | None) -> None:
+        """Run an ex command. A save / quit name (w, q, x ...) that matches nothing exactly is tried
+        in lower case, so the common slips :Q! :WQ! :Wq :W :X :QA! work like :q! :wq! ... Only that
+        family: :D must not become :d (delete cell)."""
         if not command:
+            return
+        self._last_ex = command
+        if (substitute := parse_substitute(command)) is not None:
+            self._substitute(*substitute)
+            return
+        if (global_command := parse_global(command)) is not None:
+            self._global(*global_command)
+            return
+        line_command = parse_line_command(command)
+        cell_delete = line_command is not None and line_command[0] == "" and line_command[1] in ("d", "delete") and not isinstance(self.focused, VimTextArea)
+        if line_command is not None and not cell_delete:
+            self._line_command(*line_command)
             return
         name, _, arg = command.strip().partition(" ")
         if name.isdigit():
@@ -1514,12 +1729,15 @@ class GPython(App):
             pane = self.pane
             pane._after_loaded(lambda: pane.goto_cell(int(name), mode, clamp=False))
             return
-        for names, _, handler in self.ex_commands():
-            if name in names:
-                result = handler(arg.strip())
-                if asyncio.iscoroutine(result):
-                    await result
-                return
+        commands = self.ex_commands()
+        handler = next((h for names, _, h in commands if name in names), None)
+        if handler is None and name[:1].lower() in "wqx":
+            handler = next((h for names, _, h in commands if name.lower() in names), None)
+        if handler is not None:
+            result = handler(arg.strip())
+            if asyncio.iscoroutine(result):
+                await result
+            return
         self.notify(f"Unknown command: {command}  (try :help)", severity="error")
 
     def action_pick_theme(self) -> None:
@@ -1539,7 +1757,9 @@ class GPython(App):
         if action in ("focus_left", "focus_right"):
             return self._window_keys_apply(action == "focus_left")
         if action in ("toggle_outline", "toggle_variables"):
-            return self._window_keys_apply(True)
+            return self._window_keys_apply(True) and self.ui_mode not in _VIM_MODES
+        if action in _VIM_OWNED_ACTIONS and action in _VIM_OWNS.get(self.ui_mode, ()) and isinstance(self.screen, NotebookScreen):
+            return parameters != () if action == "add_cell" else False
         return True
 
     def _window_keys_apply(self, needs_backspace: bool) -> bool:

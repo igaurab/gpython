@@ -21,6 +21,7 @@ asking questions**. Read this file first, then the plan you were assigned.
 | 07 | `07-windows.md` | File explorer, splits, tabs; `NotebookPane` owns the kernel and cells | 04 |
 | 08 | `08-missing-packages.md` | `ModuleNotFoundError` → install the package into the kernel's env (uv) and run the cell again, like marimo | 07 |
 | 09 | `09-outline.md` | Outline panel on the right: cells, their definitions with live types, dependency edges, jump-to (replaces the f2 variables table) | 08 |
+| 11 | `11-full-vim.md` | Full vim in the editor; colliding app keys move to cell mode; cursor coloured by mode | 03 |
 
 Plans run **sequentially** in the order above because they all edit `app.py`.
 

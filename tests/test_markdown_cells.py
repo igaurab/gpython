@@ -102,7 +102,7 @@ def test_m_and_y_switch_kind_and_reactivity(tmp_path):
         app.lazy = False
         first, second = app.cells()
         first.editor.focus()
-        await pilot.press("ctrl+e")
+        await pilot.press("ctrl+enter")
         await app.workers.wait_for_complete()
         assert second.output_text == "2\n" and first.last_defs == {"x"}
 

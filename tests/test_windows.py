@@ -90,7 +90,7 @@ def test_explorer_toggles_and_opens_files(tmp_path, monkeypatch):
 
     async def test(app, pilot):
         assert app.explorer is None
-        await pilot.press("ctrl+b")
+        await pilot.press("escape", "ctrl+b")
         await pilot.pause()
         explorer = app.explorer
         assert isinstance(explorer, Explorer) and explorer.display and app.focused is explorer
@@ -105,12 +105,12 @@ def test_explorer_toggles_and_opens_files(tmp_path, monkeypatch):
         await pilot.pause()
         assert names(app) == ["a.py"] and len(app.workspace.tabs) == 1
         assert app.path == root / "a.py" and app.cells()[0].source == "a = 1"
-        assert isinstance(app.focused, VimTextArea)
+        assert app.ui_mode == "cell"
         assert explorer.display
         assert [p.name for p in app.workspace.buffers] == ["a.py"]
 
         await pilot.press("ctrl+b")
-        assert not explorer.display and isinstance(app.focused, VimTextArea)
+        assert not explorer.display and app.ui_mode == "cell"
         await pilot.press("ctrl+b")
         assert explorer.display and app.focused is explorer
 
@@ -121,11 +121,11 @@ def test_explorer_toggles_and_opens_files(tmp_path, monkeypatch):
         assert visible_names(app) == ["a.py", "b.py"] and app.pane.name == "b.py"
         ra, rb = (app.workspace.tab.rects[p] for p in app.workspace.tab_panes())
         assert ra.x < rb.x and ra.y == rb.y
-        assert isinstance(app.focused, VimTextArea) and app.focused.text == "b = 2"
+        assert app.ui_mode == "cell" and app.current_cell().source == "b = 2"
         await pilot.press("ctrl+w", "w")
         assert app.focused is explorer
         await pilot.press("ctrl+w", "l")
-        assert app.pane.name == "a.py" and isinstance(app.focused, VimTextArea)
+        assert app.pane.name == "a.py" and app.ui_mode == "cell"
         await pilot.press("ctrl+w", "h")
         assert app.focused is explorer
         await pilot.press("g", "g", "l")
@@ -144,7 +144,7 @@ def test_explorer_toggles_and_opens_files(tmp_path, monkeypatch):
         assert len(app.workspace.tabs) == 2
 
         await pilot.press("ctrl+w", "p", "q")
-        assert not explorer.display and isinstance(app.focused, VimTextArea)
+        assert not explorer.display and app.ui_mode == "cell"
 
     ui(test, None)
 
@@ -179,7 +179,7 @@ def test_explorer_new_file_and_click(tmp_path):
     root = project(tmp_path)
 
     async def test(app, pilot):
-        await pilot.press("ctrl+b")
+        await pilot.press("escape", "ctrl+b")
         await pilot.pause()
         explorer = app.explorer
         await loaded(explorer)

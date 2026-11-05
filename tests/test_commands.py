@@ -301,10 +301,15 @@ def test_jumps_labels_and_vars_panel(tmp_path):
         assert not app.pane.outline_visible
         await pilot.press("ctrl+o")
         await pilot.pause()
+        assert not app.pane.outline_visible and app.ui_mode == "normal"
+        await pilot.press("escape", "ctrl+o")
+        await pilot.pause()
         assert app.pane.outline_visible
         await pilot.press("ctrl+o")
         await pilot.pause()
         assert not app.pane.outline_visible
+        app.cells()[0].editor.focus()
+        await pilot.pause()
 
         first, second, third = app.cells()
         await pilot.press("/", "3", "enter")
@@ -314,7 +319,7 @@ def test_jumps_labels_and_vars_panel(tmp_path):
         await pilot.pause()
         assert app.focused is first.editor
 
-        await pilot.press("ctrl+n")
+        await pilot.press("escape", "ctrl+n")
         assert labels(app) == ["c1", "c2", "c3", "c4"]
         assert app.cells()[1].label == "c2" and second.label == "c3"
         await pilot.press("escape", "escape", "d", "d")
@@ -337,9 +342,9 @@ def test_jumps_labels_and_vars_panel(tmp_path):
         assert app.focused is third
 
         first.editor.focus()
-        await pilot.press("J")
+        await pilot.press("j")
         assert app.focused is third.editor
-        await pilot.press("K")
+        await pilot.press("k")
         assert app.focused is first.editor
 
     ui(tmp_path, test)
@@ -405,7 +410,7 @@ def test_shift_enter_keeps_the_viewport(tmp_path):
         cells[15].editor.focus(scroll_visible=False)
         cells[14].editor.text = "pass"
         cells[14].editor.focus(scroll_visible=False)
-        await pilot.press("ctrl+e")
+        await pilot.press("ctrl+enter")
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert cells[14].output_text == "" and not cells[14].output_box.has_output
@@ -420,6 +425,40 @@ def test_shift_enter_keeps_the_viewport(tmp_path):
         assert box.region.contains_region(new.region)
 
     ui(tmp_path, test, sources=many, kernel=True)
+
+
+@pytest.mark.parametrize("typed", ["Q!", "q!", "QA!"])
+def test_quit_without_saving_in_any_case(tmp_path, typed):
+    async def test(app, pilot):
+        app.cells()[0].editor.focus()
+        await pilot.press("i", *"x = 9", "escape", ":", *typed, "enter")
+        await pilot.pause()
+        assert app.return_code == 0
+        assert (tmp_path / "nb.py").read_text().startswith("# %%\na = 1\n")
+
+    ui(tmp_path, test)
+
+
+@pytest.mark.parametrize("typed", ["WQ!", "Wq", "wQ", "X"])
+def test_save_and_quit_in_any_case(tmp_path, typed):
+    async def test(app, pilot):
+        app.cells()[0].editor.focus()
+        await pilot.press("i", *"x = 9", "escape", ":", *typed, "enter")
+        await pilot.pause()
+        assert app.return_code == 0
+        assert (tmp_path / "nb.py").read_text().startswith("# %%\nx = 9a = 1\n")
+
+    ui(tmp_path, test)
+
+
+def test_capital_letters_outside_save_and_quit_are_not_folded(tmp_path):
+    async def test(app, pilot):
+        app.cells()[0].focus()
+        await pilot.press(":", "D", "enter")
+        await pilot.pause()
+        assert len(app.cells()) == 3
+
+    ui(tmp_path, test)
 
 
 def test_wq_saves_and_quits(tmp_path):
@@ -443,7 +482,7 @@ def test_only_the_focused_editor_paints_a_cursor(tmp_path):
         first, second, third = app.cells()
         assert [c.editor.highlight_cursor_line for c in app.cells()] == [c.editor is app.focused for c in app.cells()]
         first.editor.focus()
-        await pilot.press("J")
+        await pilot.press("j")
         await pilot.pause()
         assert app.focused is second.editor
         assert paints_cursor(second.editor) and second.editor.highlight_cursor_line

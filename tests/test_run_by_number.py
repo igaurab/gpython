@@ -223,18 +223,18 @@ def test_space_r_from_vim_normal_mode(tmp_path):
     ui(tmp_path, test, kernel=True)
 
 
-def test_r_from_vim_normal_mode_runs_without_editing(tmp_path):
+def test_space_r_from_vim_normal_mode_runs_without_editing(tmp_path):
     async def test(app, pilot):
         first, _, show, last = app.cells()
         app.select(last, "normal")
         await pilot.pause()
-        await pilot.press("r")
+        await pilot.press("space", "r")
         await pilot.pause()
         assert "run cell: c_" in status(app)
         await pilot.press("3")
         await settle(app, pilot)
         assert show.output_text == "3\n"
-        await pilot.press("r", "C")
+        await pilot.press("space", "r", "C")
         await settle(app, pilot)
         assert first.status == last.status == "ok" and last.exec_count > 0
         assert app.focused is last.editor and VimTextArea.mode == "normal"
@@ -243,7 +243,7 @@ def test_r_from_vim_normal_mode_runs_without_editing(tmp_path):
     ui(tmp_path, test, kernel=True)
 
 
-def test_r_then_an_unknown_letter_in_normal_mode_cancels_and_edits_nothing(tmp_path):
+def test_r_in_normal_mode_is_vims_replace_not_a_run(tmp_path):
     async def test(app, pilot):
         last = app.cells()[-1]
         app.select(last, "normal")
@@ -251,7 +251,10 @@ def test_r_then_an_unknown_letter_in_normal_mode_cancels_and_edits_nothing(tmp_p
         await pilot.press("r", "x")
         await pilot.pause()
         assert app._number_sequence is None
-        assert last.source == "b = 4" and VimTextArea.mode == "normal"
+        assert last.source == "x = 4" and VimTextArea.mode == "normal"
+        await pilot.press("space", "r", "q")
+        await pilot.pause()
+        assert app._number_sequence is None and last.source == "x = 4"
 
     ui(tmp_path, test)
 
@@ -442,7 +445,7 @@ def test_r_t_times_the_cell_over_n_runs(tmp_path):
         await settle(app, pilot)
         assert "1 run:" in last.output_text
         first.editor.focus()
-        await pilot.press("r", "t", "2", "enter")
+        await pilot.press("space", "r", "t", "2", "enter")
         await settle(app, pilot)
         assert "2 runs" in first.output_text and "p99" in first.output_text and app.focused is first.editor
 

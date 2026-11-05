@@ -11,6 +11,7 @@ from textual.color import Color
 from textual.geometry import Region
 
 from gpython.app import GPython
+from gpython.cell import CELL_MODE_BAR, EDITING_BAR
 from gpython.vim import VimTextArea
 
 
@@ -79,16 +80,17 @@ def test_cell_bar_follows_status_and_focus(tmp_path):
             colors = {role: Color.parse(value) for role, value in app.bar_colors.items()}
             assert colors["panel"].a > 0
             bar = lambda cell: cell.styles.outline_left[1]
-            assert bar(first) == colors["accent"]
+            assert bar(first) == Color.parse(EDITING_BAR)
             assert bar(second) == colors["panel"]
             await pilot.press("escape", "escape", "j")
             await pilot.pause()
-            assert bar(second) == colors["accent"] and bar(first) == colors["panel"]
+            blue = Color.parse(CELL_MODE_BAR)
+            assert bar(second) == blue and bar(first) == colors["panel"]
             assert second.selected and second.has_class("-selected") and not first.has_class("-selected")
             header = second.header_text
             assert "c2" in header
             second.set_status("error")
-            assert bar(second) == colors["accent"]
+            assert bar(second) == blue
             await pilot.press("k")
             await pilot.pause()
             assert bar(second) == colors["error"]
@@ -98,7 +100,7 @@ def test_cell_bar_follows_status_and_focus(tmp_path):
             assert bar(second) == colors["primary"]
             app.theme = "nord"
             await pilot.pause()
-            assert bar(second) == Color.parse(app.bar_colors["primary"]) and bar(first) == Color.parse(app.bar_colors["accent"])
+            assert bar(second) == Color.parse(app.bar_colors["primary"]) and bar(first) == blue
             assert bar(second) != colors["primary"]
 
     asyncio.run(asyncio.wait_for(main(), 60))

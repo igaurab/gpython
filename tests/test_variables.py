@@ -59,7 +59,7 @@ async def stopped(app, pilot):
 def test_ctrl_v_builds_the_panel_on_first_use_and_lists_the_variables(tmp_path):
     async def test(app, pilot):
         assert not app.query(VariablesPanel) and not app.pane.variables_visible
-        await pilot.press("ctrl+v")
+        await pilot.press("escape", "ctrl+v")
         await pilot.pause()
         panel = app.query_one(VariablesPanel)
         assert app.pane.variables_visible and rows(panel) == []
@@ -97,7 +97,7 @@ def test_ctrl_v_builds_the_panel_on_first_use_and_lists_the_variables(tmp_path):
 
 def test_enter_shows_the_value_g_jumps_and_d_deletes(tmp_path):
     async def test(app, pilot):
-        await pilot.press("ctrl+v")
+        await pilot.press("escape", "ctrl+v")
         c1 = await run(app, pilot, 1)
         panel = app.query_one(VariablesPanel)
         await until(pilot, lambda: rows(panel) == ["json", "label", "nums"])
@@ -141,8 +141,7 @@ def test_outline_and_variables_stack_in_the_right_column(tmp_path):
     async def test(app, pilot):
         from gpython.outline import Outline
 
-        await pilot.press("ctrl+v")
-        await pilot.press("ctrl+o")
+        await pilot.press("escape", "ctrl+v", "escape", "ctrl+o")
         await pilot.pause()
         side = app.query_one("#side")
         outline, panel = app.query_one(Outline), app.query_one(VariablesPanel)

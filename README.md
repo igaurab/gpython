@@ -57,30 +57,39 @@ keys act on cells). `escape` goes INSERT → NORMAL → CELL; `enter` or `i` goe
 into the editor. Clicking a cell's header selects it. `f1` (or `?` in cell mode)
 shows every key; the list lives in `src/gpython/keymap.py`.
 
+The editor is vim: where an app shortcut and a vim key collide, vim wins inside the
+editor and the app shortcut stays in cell mode (`escape` first). The cursor is a block
+coloured like the mode's badge: yellow NORMAL, green INSERT, magenta VISUAL, red
+REPLACE; in cell mode the selected cell gets a blue bar and a blue block where its cursor is; the cell
+being edited has a cyan bar, a colour no mode cursor uses (`:set cursor=bar|underline`
+brings back the terminal's own cursor, coloured the same way). See
+[What changed for vim](#what-changed-for-vim).
+
 Everywhere:
 
 | Key | Action |
 |---|---|
 | `shift+enter` | Run cell (markdown: render it), then go to the cell below (a new cell only on the last one) |
-| `ctrl+enter` / `ctrl+shift+enter` / `ctrl+e` | Run cell (markdown: render it), stay |
+| `ctrl+enter` / `ctrl+shift+enter` | Run cell (markdown: render it), stay |
+| `ctrl+e` | Run cell, stay — cell mode only (in the editor: vim scroll / insert-mode copy) |
 | `alt+enter` | Run cell and insert a new cell below |
 | `f5` / `f4` | Run all / run stale cells |
 | `f6` | Python environment: switch venv/interpreter, new uv or python venv, install packages |
 | `ctrl+k` | Interrupt running code |
-| `ctrl+n` / `ctrl+shift+n` | New cell below / above |
-| `ctrl+d` | Delete cell (cells that used its variables are marked stale, or re-run when reactive; `u` in cell mode undoes) |
+| `ctrl+n` / `ctrl+shift+n` | New cell below (cell mode only; in the editor `ctrl+n` is vim's line down / completion) / above |
+| `ctrl+d` | Delete cell, cell mode only (cells that used its variables are marked stale, or re-run when reactive; `u` undoes); in the editor it is vim's half page down / dedent |
 | `alt+↑/↓`, `ctrl+↑/↓` | Previous / next cell |
 | `ctrl+home` / `ctrl+end` | First / last cell |
 | `alt+shift+↑/↓` | Move the cell up / down |
 | `ctrl+s` / `:w` | Save (asks for a name if untitled) |
-| `ctrl+b` | Toggle the file explorer (see [Files, windows and tabs](#files-windows-and-tabs)) |
+| `ctrl+b` | Toggle the file explorer (see [Files, windows and tabs](#files-windows-and-tabs)); not in vim normal / visual mode (page up) |
 | `ctrl+h` / `ctrl+l` | Focus the window to the left / right; `ctrl+h` from the leftmost window opens or focuses the explorer, `ctrl+l` from the explorer goes back (not in insert mode, where `ctrl+h` is backspace) |
-| `ctrl+w` … | Window commands: `s` split, `v` vsplit, `h j k l` move, `q` close, `o` only, `z` zoom, `T` / `M` to tab and back, `space` window manager |
+| `ctrl+w` … | Window commands (not in insert mode, where it deletes a word): `s` split, `v` vsplit, `h j k l` move, `q` close, `o` only, `z` zoom, `T` / `M` to tab and back, `space` window manager |
 | `f1` | Help |
-| `ctrl+o` | Toggle the outline panel: each cell with what it defines, live types after a run, dependency edges; `enter` jumps (not in insert mode, where it is vim's one-shot command; `:outline`) |
-| `ctrl+v` | Toggle the variables panel; it is also the debugger while a cell is paused (see [Variables and the debugger](#variables-and-the-debugger); not in insert mode; `:vars`) |
+| `ctrl+o` | Toggle the outline panel: each cell with what it defines, live types after a run, dependency edges; `enter` jumps (cell mode; in the editor it is vim's jump back / one-shot command; `:outline`) |
+| `ctrl+v` | Toggle the variables panel; it is also the debugger while a cell is paused (see [Variables and the debugger](#variables-and-the-debugger); cell mode; in the editor it is vim's visual block / literal insert; `:vars`) |
 | `f3` | Toggle run mode, saved: lazy (default, cells that use the variables are only marked stale) / reactive (they re-run) |
-| `ctrl+p` | Command palette: run all, restart kernel, … |
+| `ctrl+p` | Command palette: run all, restart kernel, … (cell mode; in the editor vim's line up / completion) |
 | `ctrl+q` / `:q` | Quit (asks when there are unsaved changes; `:q!` does not) |
 
 Vim normal mode (in the editor):
@@ -88,11 +97,12 @@ Vim normal mode (in the editor):
 | Key | Action |
 |---|---|
 | `escape` | Leave the editor: cell mode |
-| `J` / `K` | Next / previous cell (`3J` jumps three) |
-| `j` / `k` | Down / up a line; past the edge moves to the next cell |
+| `j` / `k` | Down / up a line; past the edge moves to the next cell (`J` / `K` move cells in cell mode) |
+| `J` / `gJ` | Join lines with / without a space (`3J` joins three) |
+| `r<char>` / `3rx` / `r<enter>` | Replace the character under the cursor / three of them / split the line |
+| `space r 6` | Run cell c6 (and `space r r c C a A s k R i d t`, as `r …` in cell mode) |
 | `gg` / `G` / `3G` | First / last / third line of this cell |
 | `dd` | Delete line, like vim (`3dd` three lines; `u` undoes). To delete the cell: `esc`, then `dd` |
-| `gJ` | Join lines (vim's `J`) |
 | `.` | Repeat the last change (`3.` with a count) |
 | `~` / `g~` / `gu` / `gU` | Toggle / lower / upper case: `~` one character, `gUiw` `g~w` `guu` an object, motion or line |
 | `R` | Replace mode: overtype until `escape` (`backspace` restores) |
@@ -104,16 +114,63 @@ Vim normal mode (in the editor):
 | `ctrl+a` / `ctrl+x` | Add to / subtract from the number under or after the cursor (`5 ctrl+a`) |
 | `ctrl+o` (insert mode) | One normal-mode command, then back to insert mode |
 | `/` | Jump: `/3` third cell (as numbered in the headers), `/text` next match after the cursor (smart case, highlighted) |
+| `?` | Search backward; `n` then goes backward too |
 | `n` / `N` | Next / previous match of the last search, across cells (`3n` skips three) |
-| `*` / `#` | Search forward / backward for the word under the cursor |
+| `*` / `#` / `g*` / `g#` | Search forward / backward for the word under the cursor |
+| `:s/a/b/g` / `:%s` / `:.,$s` / `:'<,'>s` / `&` / `g&` | Substitute with vim patterns (`\(` `\)` `\<` `\>` `\|`) and replacements (`&`, `\1`, `\u`, `\U`, `\r`), flags `g i I n &`; `&` repeats on this line, `g&` everywhere |
+| `:g/pat/cmd` / `:v/pat/cmd` | Run `d` `s` `j` `>` `<` `m` `t` `normal` on every (not) matching line; `:g/pat/` lists the lines |
+| `:d` `:j` `:m0` `:t$` `:2,4>` `:normal A;` | vim line commands on a range (in cell mode `:d` deletes the cell) |
+| `K` | The kernel's help for the name under the cursor (like `name?`) |
+| `zc` / `za` / `zM` / `zR` | Folds are cells: hide this cell's code / every cell's code / show them all (`H` in cell mode) |
+| `ctrl+d` / `ctrl+u` / `ctrl+f` / `ctrl+b` | Scroll half a page / a page; the cursor moves along within the cell |
+| `ctrl+e` / `ctrl+y` / `zz` `zt` `zb` | Scroll one line / put the cursor line in the middle, top, bottom |
+| `ctrl+o` / `tab` / `''` | Jump list back / forward; back to where the last jump started |
+| `g;` / `g,` | Older / newer change |
+| `gi` / `gI` / `gp` / `gP` / `U` | Insert where you left insert mode / at column 0; put leaving the cursor after; undo the line |
+| `gq` / `gw` / `g?` | Wrap at 79 columns (comments keep `#`) / rot13, with a motion, object or doubled |
+| `ctrl+v` | Visual block: `I` `A` `c` type on every line, `$` to each line's end, `d y p ~ u U r O` |
+| `ZZ` / `ZQ` / `@:` | Save and close (`:x`) / close without saving / repeat the last ex command |
 | `gt` / `gT` / `2gt` | Next / previous / second tab |
 | `:` | Ex command |
 
-Also `h j k l w b e ge W B E 0 ^ $ | _ + - H M L % { }`, counts (`3i` repeats the
-insert), `i a I A o O`, `x X s S dw d$ dj D cc cw C yy p P u ctrl+r`, `f F t T ; ,`,
-text objects `iw aw ip ap i" a" i( a( i[ i{ i<` (`d2i(` takes the enclosing pair),
-and visual mode `v V` with `o y d c p > < J ~ u U r`. Not there: `r` replaces nothing
-(it is the run prefix), blockwise `ctrl+v`, and `d/pattern`.
+Also `h j k l w b e ge gE W B E 0 ^ $ g_ gm | _ + - H M L % ( ) { } [( [{ ]) ]} [[ ]] [m ]m gd`,
+counts (`3i` repeats the insert), `i a I A o O`, `x X s S dw d$ dj D cc cw C yy p P u ctrl+r`,
+`f F t T ; ,`, text objects `iw aw iW aW ip ap is as i" a" i' a' i( a( i[ i{ i<` (`d2i(`
+takes the enclosing pair), registers `"a "A "_ "0 "1-"9 "- ". "+`, `ga`, `ctrl+g`, and visual
+mode `v V ctrl+v` with `o O y d c p > < = J gJ ~ u U r gq g? ctrl+a ctrl+x g ctrl+a :`.
+Ranges read the notebook as one file, like vim's buffer: `%` is every line of every cell, `$`
+the notebook's last line, `.,$` from here to the end of the notebook; no range is the cursor
+line (in cell mode: the selected cell); a plain number is that line of the current cell, as
+its gutter shows. Undo (`u`) works per cell, so undoing a `:%s` takes one `u` in each cell.
+
+Insert mode: `ctrl+w` `ctrl+u` delete a word / to the line start, `ctrl+t` `ctrl+d` indent /
+dedent, `ctrl+r x` puts register x, `ctrl+a` the last inserted text, `ctrl+e` `ctrl+y` copy
+the character below / above, `ctrl+n` `ctrl+p` complete, `ctrl+v` inserts the next key
+literally, `ctrl+k` and two characters types a digraph (`ctrl+k a :` ä, `:digraphs`),
+`ctrl+o` runs one normal command. Not there: `d/pattern`, folds inside a cell (folds are
+whole cells), `q:`, `gn`.
+
+#### What changed for vim
+
+| Key | In the editor now | Before | Where the old action lives |
+|---|---|---|---|
+| `r` | vim replace (`rx`, `3rx`, `r<enter>`) | run prefix (`r 6`, `r c`, …) | cell mode `r …`; `space r …` in the editor |
+| `J` | join lines | next cell | cell mode `J` moves the cell; `j` past the last line, `ctrl+↓`, `alt+↓` |
+| `K` | help for the name under the cursor | previous cell | `k` past the first line, `ctrl+↑`, `alt+↑` |
+| `ctrl+k` (insert) | digraph | interrupt | other modes `ctrl+k`, `space r i`, `:interrupt` |
+| `:d` (editor) | delete lines | delete cell | `:d` in cell mode, `dd` in cell mode |
+| `gJ` | join without spaces (as in vim) | join with a space | `J` |
+| `ctrl+d` | half page down; insert: dedent | delete cell | cell mode `ctrl+d`, `dd`, `:delete` |
+| `ctrl+e` | scroll a line; insert: copy the character below | run cell | `ctrl+enter`, `shift+enter`, `alt+enter`, cell mode `ctrl+e`, `space r c` |
+| `ctrl+n` / `ctrl+p` | line down / up; insert: complete | new cell / palette | cell mode, `:new`, `o` / `O` in cell mode |
+| `ctrl+o` | jump back; insert: one-shot command | outline | cell mode `ctrl+o`, `:outline` |
+| `ctrl+v` | visual block; insert: literal key | variables panel | cell mode `ctrl+v`, `:vars` |
+| `ctrl+b` / `ctrl+f` | page up / down | explorer / nothing | cell mode `ctrl+b`, `:Ex` |
+| `ctrl+w` (insert) | delete the word before the cursor | window prefix | `escape`, then `ctrl+w` |
+| `ctrl+t` (insert) | indent the line | theme picker | outside insert mode, `:theme` |
+| `ctrl+u` / `ctrl+y` / `tab` | half page up / scroll up / jump forward | nothing | — |
+| `?` | search backward | nothing (cell mode: help) | cell mode `?` is still help |
+| cursor | block, coloured by mode | bar in insert mode | `:set cursor=bar` |
 
 Cell mode. Whether you are in cell mode or in the editor is one choice for the whole
 notebook: moving across a rendered markdown or hidden-code cell (which is always
@@ -145,8 +202,9 @@ selected as a cell), deleting, undoing, searching or switching tabs keeps it; `e
 Ex commands: `:w [file]`, `:wa`, `:q`, `:q!`, `:wq`, `:qa`, `:wqa`, `:e file`,
 `:sp [file]`, `:vs [file]`, `:only`, `:tabnew [file]`, `:tabclose`, `:tabn`,
 `:tabp`, `:ls`, `:noh`, `:Ex`, `:run`, `:timeit [n]`, `:runabove`, `:runbelow`, `:stale`, `:restart`,
-`:clear`, `:set vim|novim|lazy|nolazy|nu|nonu|time|notime`, `:set debug_detail=…`, `:vars`, `:debug`, `:stop if …`, `:md`, `:code`,
-`:theme [name]`, `:N` (go to cell N), `:help`. `:set novim`, line numbers, the
+`:clear`, `:s/a/b/g` (`:%s`, `:'<,'>s`, `:&&`), `:set vim|novim|lazy|nolazy|nu|nonu|time|notime|cursor=block|bar|underline`, `:set debug_detail=…`, `:vars`, `:debug`, `:stop if …`, `:md`, `:code`,
+`:theme [name]`, `:N` (go to cell N), `:help`. Save and quit commands forgive caps lock:
+`:Q!`, `:WQ!`, `:Wq`, `:W`, `:X`, `:QA!` work like `:q!`, `:wq!`, … (only these; `:D` is not `:d`). `:set novim`, line numbers, the
 run time display, the run mode and the theme are remembered in
 `~/.config/gpython/config.toml` (`vim`, `line_numbers`, `timing`, `run_mode`, `theme`).
 
@@ -159,7 +217,8 @@ Editing: Enter indents after `:` or an open bracket and dedents after
 Tab inserts four spaces.
 
 `shift+enter` and `ctrl+enter` need a terminal that reports them (Ghostty,
-Kitty, WezTerm, iTerm2). In Terminal.app use `ctrl+e` and `ctrl+n`.
+Kitty, WezTerm, iTerm2). In Terminal.app use `alt+enter`, `space r c` in the editor,
+or `escape` then `ctrl+e` / `ctrl+n` in cell mode.
 
 Matplotlib figures and other `image/png` outputs are drawn as pictures in
 terminals with the kitty graphics protocol (Kitty, Ghostty, Rex, WezTerm,
