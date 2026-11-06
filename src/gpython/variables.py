@@ -24,7 +24,7 @@ from . import debugview
 
 VARS_KEYS = "enter value · g go to cell · d delete · / filter · a all · q close"
 DEBUG_KEYS = (
-    "n next · s step · r return · c continue · q quit · ] next iteration · } outer · ) loop end · "
+    "n next · s step · r return · c continue · q stop · ] next iteration · } outer · ) loop end · "
     "b / B stop if (B records) · G iteration · h/l back/forward · T timeline · u/d stack · w watch · e pdb · enter value"
 )
 POSTMORTEM_KEYS = "h/l back/forward · T timeline · u/d stack · w watch · e pdb · enter value · q done"
@@ -183,7 +183,7 @@ class VariablesPanel(Vertical):
         if hidden:
             title.append(f"  {hidden} hidden (a)", style="dim")
         if not rows:
-            title.append("  run a cell to fill it", style="dim")
+            title.append("  run a cell to see its variables", style="dim")
         self.title.update(title)
         self.footer.update(Text(VARS_KEYS, style="dim"))
 
@@ -238,7 +238,7 @@ class VariablesPanel(Vertical):
         payload, record = session.payload, session.record
         place = self.pane.place_of(record)
         if payload.get("postmortem"):
-            title = Text.assemble((" POST-MORTEM ", "bold black on red"), " ", (payload.get("exception", "") + "  ", "red"))
+            title = Text.assemble((" AFTER ERROR ", "bold black on red"), " ", (payload.get("exception", "") + "  ", "red"))
         else:
             title = Text.assemble((" DEBUG ", "bold black on red"), " ")
             if payload.get("event") == "exception":
@@ -324,7 +324,7 @@ class VariablesPanel(Vertical):
         commands = {"n": "n", "s": "s", "r": "r", "c": "c", "right_square_bracket": "_gp_next 0", "right_curly_bracket": "_gp_next 1", "right_parenthesis": "_gp_end"}
         if key in commands:
             if postmortem:
-                self.app.notify("The cell already failed: this is a post-mortem, nothing runs from here", severity="warning")
+                self.app.notify("The cell already failed. Nothing more can run from here.", severity="warning")
                 return
             pane.debug_command(commands[key])
         elif key == "q":
@@ -343,12 +343,12 @@ class VariablesPanel(Vertical):
             self._ask("watch: ", "", lambda text: text and pane.debug_command(f"_gp_watch {text.strip()}", keep_view=True))
         elif key in ("b", "B"):
             command = "_gp_until" if key == "b" else "_gp_until_rec"
-            label = "stop if: " if key == "b" else "stop if (recording every line on the way): "
+            label = "stop if: " if key == "b" else "stop if (records each line): "
             if not postmortem:
                 self._ask(label, "", lambda text: text and pane.debug_command(f"{command} {text.strip()}"))
         elif key == "G":
             if not postmortem:
-                self._ask("go to iteration (N, or N of loop L counted from the outermost, as N L): ", "", self._goto)
+                self._ask("go to iteration N (N L: of loop level L, 1 = outer loop): ", "", self._goto)
         elif key == "e":
             self._ask("pdb> ", "", lambda text: text and pane.debug_command(text.strip(), keep_view=True))
         elif key == "g":
@@ -368,7 +368,7 @@ class VariablesPanel(Vertical):
             target = int(parts[0])
             level = int(parts[1]) if len(parts) > 1 else len(loops)
         except ValueError:
-            self.app.notify("go to iteration: a number, optionally followed by the loop level", severity="warning")
+            self.app.notify("Type an iteration number. You can add a loop level after it.", severity="warning")
             return
         depth = max(0, len(loops) - max(1, level))
         self.pane.debug_command(f"_gp_goto {depth} {target}")
@@ -383,7 +383,7 @@ class VariablesPanel(Vertical):
                 self.pane.debug_command(f"_gp_full {name}", keep_view=True)
             else:
                 shown = dict(self.session.record.get("vars", [])).get(name, "")
-                self.app.push_screen(ValueScreen(name, {"kind": "text", "text": shown + "\n\n(as recorded; l goes forward to the stop)"}))
+                self.app.push_screen(ValueScreen(name, {"kind": "text", "text": shown + "\n\n(recorded value; l goes forward to the stop)"}))
         else:
             self.pane.run_worker(self.pane.show_value(name), group="vars")
 
@@ -476,7 +476,7 @@ class TimelineScreen(ModalScreen[int | None]):
 
     def compose(self) -> ComposeResult:
         marked = sum(1 for node in self.roots if node.warnings)
-        title = Text.assemble(("Timeline", "bold"), (f"  {self.total:,} moments recorded", "dim"))
+        title = Text.assemble(("Timeline", "bold"), (f"  {self.total:,} steps recorded", "dim"))
         if marked:
             title.append(f"  ⚠ {marked} iterations with warnings", style="bold red")
         title.append("  ·  enter goes there · l/h expand/collapse · q closes", style="dim")
@@ -500,7 +500,7 @@ class TimelineScreen(ModalScreen[int | None]):
         previous = None
         for node in nodes:
             if previous is not None and previous.k is not None and node.k is not None and node.k - previous.k > 1:
-                parent.add_leaf(Text(f"     … {node.k - previous.k - 1:,} iterations thinned", style="dim italic"))
+                parent.add_leaf(Text(f"     … {node.k - previous.k - 1:,} iterations not shown", style="dim italic"))
             self._add(parent, node)
             previous = node
 
@@ -564,7 +564,7 @@ class InputPrompt(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Label(Text.assemble((f"{self.where} asks for input", "bold"), ("  ·  enter sends · esc interrupts the cell", "dim")))
+            yield Label(Text.assemble((f"{self.where} asks for input", "bold"), ("  ·  enter sends · esc stops the cell", "dim")))
             yield Input(placeholder=self.prompt.strip() or "input", password=self.password)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:

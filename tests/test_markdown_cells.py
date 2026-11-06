@@ -435,7 +435,7 @@ def test_converting_a_display_cell_to_markdown_asks_twice(tmp_path, how):
         await pilot.pause()
         await _press_kind(app, pilot, how)
         assert problem.kind == "code" and problem.code_hidden
-        assert any("already renders as text" in w and "m again" in w for w in _warnings(app))
+        assert any("already shows as text" in w and "m again" in w for w in _warnings(app))
         await _press_kind(app, pilot, how)
         assert problem.kind == "markdown"
         plain.focus()

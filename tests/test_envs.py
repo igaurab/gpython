@@ -222,7 +222,7 @@ def test_f6_picker_lists_actions_and_envs_then_switches(tmp_path, monkeypatch):
     async def test(app, pilot):
         assert app.pane.kernel.env.prefix == tmp_path / ".venv"
         chip = str(app.query_one("#kernel").render())
-        assert chip.startswith("Python 3") and ".venv" in chip
+        assert chip.startswith("● Python 3") and ".venv" in chip
         monkeypatch.setattr(app.pane, "switch_env", fake_switch)
 
         await pilot.press("f6")
@@ -307,7 +307,7 @@ def test_env_error_names_the_command_exit_code_and_output():
     with pytest.raises(envs.EnvError) as info:
         asyncio.run(envs._check([sys.executable, "-c", code], None))
     text = str(info.value)
-    assert text.splitlines()[0].endswith("(exit 3)") and text.splitlines()[0].startswith(sys.executable.replace(str(Path.home()), "~"))
+    assert text.splitlines()[0].endswith("(exit code 3)") and text.splitlines()[0].startswith(sys.executable.replace(str(Path.home()), "~"))
     assert text.splitlines()[1:] == ["boom:", "because of reasons"]
 
 
@@ -338,7 +338,7 @@ def test_install_prompt_offers_uv_add_in_a_project_and_remembers_the_choice(tmp_
         assert ids[:2] == ["mode:add", "mode:install"]
         options = screen.query_one(OptionList)
         assert options.highlighted == 1
-        assert "enter: uv pip install …" in title(screen) and "↑↓ switch" in title(screen)
+        assert "enter: uv pip install …" in title(screen) and "↑↓: change the way" in title(screen)
         assert plain(options.get_option_at_index(1).prompt).startswith("●")
         assert not plain(options.get_option_at_index(0).prompt).startswith("●")
         await pilot.press(*"rich", "enter")

@@ -168,7 +168,7 @@ async def test_html_prefers_plain():
         out.add("execute_result", {"data": {"text/html": "<table><tr><td>1</td></tr></table>", "text/plain": "   a\n0  1"}})
         await pilot.pause()
         assert out.text == "   a\n0  1"
-        assert "html rendered as text" not in rendered(out._blocks[0])
+        assert "HTML shown as text" not in rendered(out._blocks[0])
 
 
 @sync
@@ -181,7 +181,7 @@ async def test_html_alone_is_stripped():
         await pilot.pause()
         assert "<" not in out.text
         assert "Big" in out.text and "small text" in out.text
-        assert "[html rendered as text]" in rendered(out._blocks[0])
+        assert "[HTML shown as text]" in rendered(out._blocks[0])
 
 
 @sync
@@ -192,7 +192,7 @@ async def test_latex_shown_as_source_with_note():
         out.add("display_data", {"data": {"text/latex": "$x^2$"}})
         await pilot.pause()
         assert out.text == "$x^2$"
-        assert "latex" in rendered(out._blocks[0])
+        assert "LaTeX" in rendered(out._blocks[0])
 
 
 @sync
@@ -202,7 +202,7 @@ async def test_unknown_mime_note():
         out = app.query_one(OutputArea)
         out.add("display_data", {"data": {"application/x-weird": "?"}})
         await pilot.pause()
-        assert "not supported yet" in out.text
+        assert "cannot show application/x-weird output yet" in out.text
 
 
 @sync

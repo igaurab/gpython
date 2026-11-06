@@ -321,7 +321,7 @@ async def _check(argv: list[str], on_line: LineCallback | None, **kw) -> None:
 
     code = await run(argv, tee, **kw)
     if code != 0:
-        raise EnvError("\n".join([f"{_shown(argv)}  (exit {code})", *explain(lines)]))
+        raise EnvError("\n".join([f"{_shown(argv)}  (exit code {code})", *explain(lines)]))
 
 
 async def create(
@@ -339,7 +339,7 @@ async def create(
         await _check([base, "-m", "venv", str(folder)], on_line)
     env = venv_at(folder)
     if env is None:
-        raise EnvError(f"no environment was created at {folder}")
+        raise EnvError(f"The command did not make an environment at {folder}")
     await install(env, ["ipykernel"], on_line, tool=tool)
     return venv_at(folder) or env
 
@@ -397,5 +397,5 @@ async def ensure_ipykernel(env: Env, on_line: LineCallback | None = None) -> Non
         code = "import importlib.util,sys; sys.exit(importlib.util.find_spec('ipykernel') is None)"
         if await run([str(env.python), "-c", code]) != 0:
             raise EnvError(
-                f"{env.python} has no ipykernel. Create a venv from it instead (ctrl+k → new env)."
+                f"{env.python} has no ipykernel. Make an environment from it (f6, then New uv environment)."
             )

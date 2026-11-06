@@ -152,7 +152,7 @@ class Explorer(DirectoryTree):
             if path is not None and needle in path.name.lower():
                 self.move_cursor_to_line(line_no)
                 return True
-        self.notify(f"Not found: {text}", severity="warning")
+        self.notify(f"No file name matches: {text}", severity="warning")
         return False
 
     def cursor_directory(self) -> Path:

@@ -71,17 +71,17 @@ def test_reactive_run_edit_delete_save(tmp_path):
             assert cells[2].editor.mode == "insert" and cells[0].editor.mode == "insert"
             await pilot.press("escape")
             assert cells[1].editor.mode == "normal"
-            assert "NORMAL" in str(app.query_one("#status").render())
+            assert "NORMAL" in str(app.query_one("#mode-chip").render())
             assert "NORMAL" not in app.sub_title and app.sub_title.startswith(str(path))
             assert app.dirty and app.sub_title.endswith("•")
 
-            status = app.query_one("#status", Static)
+            status = app.query_one("#mode-chip", Static)
             assert "NORMAL" in str(status.render())
             await pilot.press("i")
             assert "INSERT" in str(status.render())
             await pilot.press("escape")
             assert "NORMAL" in str(status.render())
-            assert str(app.query_one("#kernel", Static).render()).startswith("Python 3")
+            assert str(app.query_one("#kernel", Static).render()).startswith("● Python 3")
 
     asyncio.run(main())
 

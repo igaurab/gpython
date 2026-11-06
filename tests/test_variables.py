@@ -195,7 +195,7 @@ def test_a_breakpoint_pauses_in_the_panel_and_steps_through_the_loop(tmp_path):
         assert c3.debugging and c3.styles.outline_left[1] == Color.parse(DEBUG_BAR)
         line = c3.editor.get_line(1)
         assert any(span.style == DEBUG_LINE_STYLE for span in line.spans)
-        assert "DEBUG" in str(app._status.render())
+        assert "DEBUG" in str(app.query_one("#mode-chip").render())
         for key in ("n", "n"):
             await pilot.press(key)
             await stopped(app, pilot)
@@ -286,7 +286,7 @@ def test_an_index_error_offers_post_mortem_with_the_pointer_past_the_end(tmp_pat
         session = await stopped(app, pilot)
         panel = app.query_one(VariablesPanel)
         assert session.payload["postmortem"] and session.record["line"] == 3
-        assert "POST-MORTEM" in str(panel.title.render())
+        assert "AFTER ERROR" in str(panel.title.render())
         picture = str(panel.picture.render())
         assert "5/5" in picture and "⚠ k = 4 is past the end of nums (len 4)" in picture
         await pilot.press("n")
@@ -328,7 +328,7 @@ def test_set_debug_options_are_saved_and_explained(tmp_path):
         assert await ex("set debug_history?") == "debug_history = 20 MB (from the balanced preset)"
         await ex("set debug_history=1GB")
         assert await ex("set debug_history?") == "debug_history = 1024 MB (override)"
-        assert "Not a value" in await ex("set debug_thinning=sideways")
+        assert "not a valid value" in await ex("set debug_thinning=sideways")
         assert "one of: full, balanced, lean, auto" in await ex("set debug_detail=huge")
         assert "debug_detail = auto" in await ex("set debug_detail=auto")
 

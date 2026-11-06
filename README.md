@@ -463,9 +463,10 @@ solarized (dark, light), monokai, plus Textual's built-in themes.
 ## Python environments and packages
 
 Each notebook's kernel runs in a Python environment. The header chip shows
-which one (`Python 3.12.4 · .venv ▾`); the bottom bar shows the kernel state
-with a dot (green ready, yellow starting or installing, red failed) and the
-live output of a running install.
+which one (`● Python 3.12.4 · .venv ▾`); its dot is the kernel state (green
+ready, yellow starting or installing, red failed) and while the kernel is not
+ready the state text, such as the live output of a running install, follows
+the environment name.
 
 At start a notebook uses the environment it last used; otherwise the nearest
 `.venv` / `venv` (next to the file, up to the project root) that has

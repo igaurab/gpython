@@ -53,7 +53,7 @@ _BRACKET_MOTIONS = {"[(": "()", "[{": "{}", "])": "()", "]}": "{}"}
 _DEFINITION = re.compile(r"\s*(async\s+def|def|class)\b")
 _SENTENCE_START = re.compile(r"(?<=[.!?])[)\]\"']*\s+(?=\S)|\n[ \t]*\n\s*(?=\S)")
 TEXT_WIDTH = 79
-CELL_MODE_COLOR = "#3b82f6"
+CELL_MODE_COLOR = "#38bdf8"
 INSERT_COLOR = "#a3e635"
 DEBUG_COLOR = "#ef4444"
 MODE_CURSOR_COLORS = {"normal": "#f5c451", "insert": INSERT_COLOR, "visual": "#c084fc", "replace": "#f87171", "cell": CELL_MODE_COLOR}
@@ -261,13 +261,13 @@ def prepare_substitute(pattern: str | None, replacement: str | None, flags: str)
     last = VimTextArea.last_substitute
     if pattern is None:
         if last is None:
-            raise ValueError("No previous substitute")
+            raise ValueError("No earlier replace command to do again")
         pattern, replacement = last[0], last[1]
         flags = (last[2] if "&" in flags else "") + flags.replace("&", "")
     elif not pattern:
         pattern = VimTextArea.last_pattern or (last[0] if last else "")
         if not pattern:
-            raise ValueError("No previous pattern")
+            raise ValueError("No earlier search pattern")
     replacement = replacement or ""
     flags = flags.replace("&", "")
     VimTextArea.last_substitute = (pattern, replacement, flags)
@@ -1357,7 +1357,7 @@ class VimTextArea(TextArea):
                 line = self.document.get_line(row)
                 if col < len(line):
                     char = line[col]
-                    self.notify(f"<{char}> {ord(char)}, hex {ord(char):02x}, octal {ord(char):03o}")
+                    self.notify(f"<{char}> {ord(char)}, hexadecimal {ord(char):02x}, octal {ord(char):03o}")
             elif key == "&":
                 self.post_message(self.ExRun(self, "%&&"))
             elif key == "t":
@@ -1420,7 +1420,7 @@ class VimTextArea(TextArea):
                     box.scroll_relative(y=n if key == "ctrl+e" else -n, animate=False, immediate=True)
             case "ctrl+g":
                 total = self.document.line_count
-                self.notify(f"line {row + 1} of {total} --{(row + 1) * 100 // total}%-- col {col + 1}")
+                self.notify(f"line {row + 1} of {total} ({(row + 1) * 100 // total}%), column {col + 1}")
             case "?":
                 self.post_message(self.SearchRequested(self, backward=True))
             case "K":
@@ -1516,7 +1516,7 @@ class VimTextArea(TextArea):
         row, col = self.cursor_location
         word = word_at(self.document.get_line(row), col)
         if word is None:
-            self.notify("No string under cursor", severity="warning")
+            self.notify("No word at the cursor", severity="warning")
             return
         self.move_cursor((row, word.start()))
         self.post_message(self.SearchNext(self, n if forward else -n, word.group()))
@@ -1567,7 +1567,7 @@ class VimTextArea(TextArea):
     def _change_jump(self, step: int) -> None:
         """g; / g,: older / newer places where the text changed."""
         if not self._changes:
-            self.notify("Change list is empty", severity="warning")
+            self.notify("No changes yet", severity="warning")
             return
         target = max(0, min(len(self._changes) - 1, self._change_index + step))
         self._change_index = target
@@ -1654,7 +1654,7 @@ class VimTextArea(TextArea):
         """K: ask the app for the help of the (dotted) name under the cursor."""
         word = word_at(line, col)
         if word is None or not (word.group()[0].isidentifier()):
-            self.notify("No identifier under cursor", severity="warning")
+            self.notify("No name at the cursor", severity="warning")
             return
         start = word.start()
         while start > 1 and line[start - 1] == "." and (line[start - 2].isalnum() or line[start - 2] in "_)]"):
@@ -2248,7 +2248,7 @@ class VimTextArea(TextArea):
             return 0, last
         if span == "'<,'>":
             if self._last_visual is None:
-                raise ValueError("No visual selection yet")
+                raise ValueError("No selection yet")
             _, anchor, head = self._last_visual
             return min(anchor[0], head[0], last), min(max(anchor[0], head[0]), last)
 
@@ -2304,7 +2304,7 @@ class VimTextArea(TextArea):
         prepared = prepare_substitute(*substitute[1:]) if substitute is not None else None
         line_command = None if substitute is not None else parse_line_command(command)
         if prepared is None and line_command is None:
-            raise ValueError(f"Not a command :g can run here: {command}")
+            raise ValueError(f":g cannot run this command: {command}")
         shift = 0
         for row in rows:
             current = row + shift
@@ -2335,7 +2335,7 @@ class VimTextArea(TextArea):
             return self.document.line_count
         if text.isdigit():
             return min(int(text), self.document.line_count)
-        raise ValueError(f"Invalid address: {text}")
+        raise ValueError(f"Incorrect line number or range: {text}")
 
     def line_command(self, top: int, bottom: int, name: str, arg: str) -> int | None:
         """:d :j :> :< :m :t :co :normal on rows top..bottom. :m and :t return the destination row
@@ -2357,7 +2357,7 @@ class VimTextArea(TextArea):
             after = self._address(arg)
             if name in ("m", "move"):
                 if top < after <= bottom:
-                    raise ValueError("Cannot move a range of lines into itself")
+                    raise ValueError("Cannot move lines into themselves")
                 rest = lines[:top] + lines[bottom + 1 :]
                 at = after if after <= top else after - len(block)
                 new = rest[:at] + block + rest[at:]

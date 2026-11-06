@@ -9,6 +9,16 @@ this file as its notes.
 ## [Unreleased]
 
 ### Changed
+- The bottom status bar is gone. The kernel chip in the header carries the kernel dot
+  (green ready, yellow starting or installing, red failed) and, while the kernel is not
+  ready, the state text; `r 6`, `g 6` and `r t` prompts show in the header subtitle.
+- Cell mode is sky blue (`#38bdf8`) with dark text: the badge, the cell bar and the block cursor.
+- User-facing text (notifications, the `:` command list, the help screen, the environment
+  picker, the install prompt, the debugger and variables panels) is rewritten in plain,
+  short sentences in the style of ASD-STE100 Simplified Technical English.
+- `ctrl+w h/j/k/l` chooses, among equally near windows, the one that lies most fully beside
+  the current one as a share of its own size, so two windows from one split tie and the
+  first wins; a one-row rounding difference no longer decides.
 - The editor follows vim where app shortcuts collided; the old actions stay in cell mode
   (README, "What changed for vim"): `r` is vim's replace (`r 6` runs a cell in cell mode,
   `space r 6` in the editor), `J` joins lines, `gJ` joins without spaces, `K` no longer
