@@ -91,6 +91,7 @@ class NotebookPane(Vertical):
         self._cmd_count = ""
         self._kind_before_y: str | None = None
         self.search_pattern = ""
+        self.search_direction = 1
         self.search_highlight = False
         self._markdown_warned: tuple[str, float] | None = None
         self.load_error: str | None = None
@@ -777,12 +778,14 @@ class NotebookPane(Vertical):
             old = self._cell_by_id(self._debug_line[0])
             if old is not None:
                 old.editor.set_debug_line(None)
+                old.set_debugging(False)
         self._debug_line = target
         if target is None:
             return
         cell = self._cell_by_id(cid)
         if cell is not None:
             cell.editor.set_debug_line(line - 1)
+            cell.set_debugging(True)
             self.call_after_refresh(self._reveal_row, cell, line - 1)
 
     def _cell_by_id(self, cid: str | None) -> Cell | None:
@@ -1413,29 +1416,34 @@ class NotebookPane(Vertical):
         if event.widget is self._cells_box and (cells := self.cells()):
             self.select(cells[-1], "cell" if cells[-1].editor_hidden else "keep")
 
-    def jump(self, target: str, mode: str) -> None:
-        """'3' focuses the third cell by display position; 'text' searches forward for text."""
+    def jump(self, target: str, mode: str, backward: bool = False) -> None:
+        """'3' focuses the third cell by display position; 'text' searches forward (? backward) for text."""
 
         def go() -> None:
-            if target.isdigit():
+            if target.isdigit() and not backward:
                 self.goto_cell(int(target), mode, clamp=False)
             else:
-                self.search(target, 1, mode)
+                self.search(target, -1 if backward else 1, mode)
 
         self._after_loaded(go)
 
     def search(self, pattern: str, step: int, mode: str) -> None:
         """Make `pattern` the search of this pane, highlight it and go `step` matches on."""
         self.search_pattern = pattern
-        self.search_next(step, mode)
+        self.search_direction = 1 if step > 0 else -1
+        self._search_go(step, mode)
 
     def search_next(self, step: int, mode: str) -> None:
-        """n / N: the `step`-th match after (or before, when negative) the cursor, wrapping.
+        """n / N: the `step`-th match in the direction of the last search (/ * forward, ? # backward), wrapping.
 
         From an editor ("normal"/"insert" mode) the cursor lands on the match; in cell mode
         the next cell holding a match is selected. Hidden code and rendered markdown are
         searched by their source and selected as cells.
         """
+        self._search_go(step * self.search_direction, mode)
+
+    def _search_go(self, step: int, mode: str) -> None:
+        """Go `step` matches on from the cursor: forward when positive, backward when negative."""
         if not self.search_pattern:
             self.notify("No previous search", severity="warning")
             return
@@ -1559,6 +1567,8 @@ class NotebookPane(Vertical):
                 app.start_run_by_number(self)
             case "m":
                 await self.set_cell_kind(cell, "markdown")
+            case "H" | "shift+h":
+                app.fold_cells("toggle_all")
             case "h":
                 if cell.toggle_hidden():
                     self.mark_dirty()

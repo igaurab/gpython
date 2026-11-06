@@ -20,9 +20,12 @@ from . import notebook
 from .graph import Graph
 from .markdown import MarkdownView, marimo_markdown
 from .outputs import OutputArea
-from .vim import VimTextArea, _is_escape
+from .vim import CELL_MODE_COLOR, DEBUG_COLOR, MODE_CURSOR_COLORS, VimTextArea, _is_escape
 
 BAR_ROLES = {"idle": "panel", "ok": "panel", "stale": "warning", "queued": "primary", "running": "primary", "error": "error", "skipped": "error"}
+CELL_MODE_BAR = CELL_MODE_COLOR
+STALE_BAR = "#e8846b"
+DEBUG_BAR = DEBUG_COLOR
 
 STATUS_ICONS = {
     "idle": ("○", "dim"),
@@ -223,6 +226,7 @@ class Cell(Vertical):
         self._bar_color: str | None = None
         self.selected = False
         self.focused_within = False
+        self.debugging = False
 
     def compose(self) -> ComposeResult:
         markdown = self.kind == "markdown"
@@ -306,13 +310,37 @@ class Cell(Vertical):
         self._render_header()
         self.paint_bar()
 
+    def set_debugging(self, paused_here: bool) -> None:
+        """The debugger is paused in this cell (or no longer): its bar turns DEBUG_BAR red."""
+        if paused_here != self.debugging:
+            self.debugging = paused_here
+            self.paint_bar()
+
     def paint_bar(self) -> None:
-        """Colour the left bar from the status and focus: selection beats status."""
+        """Colour the left bar from the status and focus: selection beats status; a cell selected
+        in cell mode is CELL_MODE_BAR, the blue of the CELL badge; the cell being edited takes
+        the colour of the vim mode, like the mode's badge and cursor (MODE_CURSOR_COLORS); a
+        stale cell, one that needs a rerun, is STALE_BAR, salmon, apart from the yellow of
+        normal mode. The cell the debugger is paused in is DEBUG_BAR, the red of the DEBUG
+        badge, above everything else."""
         colors = getattr(self.app, "bar_colors", None)
         if colors is None:
             return
         role = "accent" if (self.selected or self.focused_within) else BAR_ROLES.get(self.status, "panel")
-        color = colors[role]
+        if self.debugging:
+            color = DEBUG_BAR
+        elif self.focused_within:
+            editor = self._editor
+            mode = VimTextArea.mode if VimTextArea.enabled else "insert"
+            if editor is not None and editor.visual:
+                mode = "visual"
+            color = MODE_CURSOR_COLORS.get(mode, MODE_CURSOR_COLORS["normal"])
+        elif self.selected:
+            color = CELL_MODE_BAR
+        elif self.status == "stale":
+            color = STALE_BAR
+        else:
+            color = colors[role]
         if color != self._bar_color:
             self._bar_color = color
             self.styles.outline_left = ("thick", color)
@@ -611,7 +639,7 @@ class Cell(Vertical):
         Regions given to `refresh` are relative to the content area, one row and one
         column in from the border row that holds the title.
         """
-        self._border_title = Content.from_rich_text(text)
+        self._border_title = Content.from_rich_text(Text.assemble(" ", text))
         self.refresh(Region(-1, -1, self.outer_size.width, 1))
 
     def _selected_style(self, text: Text) -> Text:
@@ -635,6 +663,8 @@ class Cell(Vertical):
     def on_focus(self) -> None:
         self.selected = True
         self.add_class("-selected", update=False)
+        if self._editor is not None and not self.editor_hidden:
+            self._editor.show_cell_cursor(True)
         self._render_header()
         self.paint_bar()
         self.app.update_status()
@@ -642,6 +672,8 @@ class Cell(Vertical):
     def on_blur(self) -> None:
         self.selected = False
         self.remove_class("-selected", update=False)
+        if self._editor is not None:
+            self._editor.show_cell_cursor(False)
         self._render_header()
         self.paint_bar()
         if not isinstance(self.app.focused, Cell):

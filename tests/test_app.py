@@ -29,14 +29,14 @@ def test_reactive_run_edit_delete_save(tmp_path):
             first.editor.text = "x = 10"
             await pilot.pause()
             assert first.status == "stale"
-            await pilot.press("ctrl+e")
+            await pilot.press("ctrl+enter")
             await app.workers.wait_for_complete()
             assert second.output_text.strip() == "20"
             assert set(app.pane.variables) == {"x", "y"}
 
             await pilot.press("f3")
             first.editor.text = "x = 100"
-            await pilot.press("ctrl+e")
+            await pilot.press("ctrl+enter")
             await app.workers.wait_for_complete()
             assert second.status == "stale" and second.output_text.strip() == "20"
             await pilot.press("f4")
@@ -46,13 +46,13 @@ def test_reactive_run_edit_delete_save(tmp_path):
 
             third.editor.text = "x = 3"
             third.editor.focus()
-            await pilot.press("ctrl+e")
+            await pilot.press("ctrl+enter")
             await app.workers.wait_for_complete()
             assert third.status == "error" and "defined in 2 cells" in third.output_text
             third.editor.text = "print('independent')"
 
             first.editor.focus()
-            await pilot.press("ctrl+d")
+            await pilot.press("escape", "ctrl+d")
             await app.workers.wait_for_complete()
             assert len(app.cells()) == 2
             assert second.status == "error" and "NameError" in second.output_text
@@ -98,7 +98,7 @@ def test_mutation_reruns_owner_and_orders_readers(tmp_path):
             own, mut, read = app.cells()
             mut.editor.focus()
             for _ in range(2):
-                await pilot.press("ctrl+e")
+                await pilot.press("ctrl+enter")
                 await app.workers.wait_for_complete()
             assert read.output_text.strip() == "1"
             assert "mutates xs" in mut.info
@@ -120,12 +120,12 @@ def test_untitled_plain_script_split_and_completion(tmp_path):
 
             cells[2].editor.text = "print(__file__)"
             cells[2].editor.focus()
-            await pilot.press("ctrl+e")
+            await pilot.press("ctrl+enter")
             await app.workers.wait_for_complete()
             assert cells[2].output_text.strip() == str(script.resolve())
 
             cells[0].editor.focus()
-            await pilot.press("ctrl+e")
+            await pilot.press("ctrl+enter")
             await app.workers.wait_for_complete()
             cells[2].editor.text = "math.sqr"
             cells[2].editor.focus()
@@ -210,7 +210,7 @@ def test_click_anywhere_in_cell_focuses_it():
     async def main():
         app = GPython(None)
         async with app.run_test(size=(100, 30)) as pilot:
-            await pilot.press("ctrl+n")
+            await pilot.press("escape", "ctrl+n")
             first, second = app.cells()
             assert app.focused is second.editor
             await pilot.click(first, offset=(3, 0))

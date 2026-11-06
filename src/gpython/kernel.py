@@ -364,6 +364,17 @@ class Kernel:
             return [], cursor_pos, cursor_pos
         return content["matches"], content["cursor_start"], content["cursor_end"]
 
+    async def inspect(self, code: str, cursor_pos: int) -> str:
+        """The kernel's help for the name at cursor_pos (IPython's `name?`: signature, docstring), or ""."""
+        await self.ready.wait()
+        async with self._lock:
+            msg_id = self.client.inspect(code, cursor_pos, detail_level=0)
+            reply = await self._shell_reply(msg_id, timeout=3)
+        content = reply["content"] if reply else {}
+        if content.get("status") != "ok" or not content.get("found"):
+            return ""
+        return content.get("data", {}).get("text/plain", "")
+
     async def _shell_reply(self, msg_id: str, timeout: float) -> dict | None:
         while True:
             try:

@@ -173,7 +173,7 @@ def test_switch_theme_updates_every_editor(notebook_path):
             await pilot.pause()
             assert editor_names(app) == {"nord"}
 
-            await pilot.press("escape", "ctrl+n")
+            await pilot.press("escape", "escape", "ctrl+n")
             await pilot.pause()
             assert len(app.cells()) == 3
             assert app.current_cell().editor.theme == "nord"

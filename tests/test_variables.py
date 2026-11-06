@@ -2,8 +2,11 @@
 
 import asyncio
 
+from textual.color import Color
+
 from gpython import notebook
 from gpython.app import GPython
+from gpython.cell import DEBUG_BAR
 from gpython.notebook import CellSpec
 from gpython.variables import InputPrompt, TimelineScreen, ValueScreen, VariablesPanel
 from gpython.vim import DEBUG_LINE_STYLE
@@ -59,7 +62,7 @@ async def stopped(app, pilot):
 def test_ctrl_v_builds_the_panel_on_first_use_and_lists_the_variables(tmp_path):
     async def test(app, pilot):
         assert not app.query(VariablesPanel) and not app.pane.variables_visible
-        await pilot.press("ctrl+v")
+        await pilot.press("escape", "ctrl+v")
         await pilot.pause()
         panel = app.query_one(VariablesPanel)
         assert app.pane.variables_visible and rows(panel) == []
@@ -97,7 +100,7 @@ def test_ctrl_v_builds_the_panel_on_first_use_and_lists_the_variables(tmp_path):
 
 def test_enter_shows_the_value_g_jumps_and_d_deletes(tmp_path):
     async def test(app, pilot):
-        await pilot.press("ctrl+v")
+        await pilot.press("escape", "ctrl+v")
         c1 = await run(app, pilot, 1)
         panel = app.query_one(VariablesPanel)
         await until(pilot, lambda: rows(panel) == ["json", "label", "nums"])
@@ -141,8 +144,7 @@ def test_outline_and_variables_stack_in_the_right_column(tmp_path):
     async def test(app, pilot):
         from gpython.outline import Outline
 
-        await pilot.press("ctrl+v")
-        await pilot.press("ctrl+o")
+        await pilot.press("escape", "ctrl+v", "escape", "ctrl+o")
         await pilot.pause()
         side = app.query_one("#side")
         outline, panel = app.query_one(Outline), app.query_one(VariablesPanel)
@@ -190,6 +192,7 @@ def test_a_breakpoint_pauses_in_the_panel_and_steps_through_the_loop(tmp_path):
         assert panel.mode == "debug" and app.focused is panel.table and app.ui_mode == "debug"
         assert app.query_one("#side").has_class("-wide")
         assert c3.editor.debug_line == 1 and app.pane._debug_line == (c3.cid, 2)
+        assert c3.debugging and c3.styles.outline_left[1] == Color.parse(DEBUG_BAR)
         line = c3.editor.get_line(1)
         assert any(span.style == DEBUG_LINE_STYLE for span in line.spans)
         assert "DEBUG" in str(app._status.render())
@@ -245,6 +248,7 @@ def test_quit_while_paused_stops_the_cell(tmp_path):
         await pilot.press("q")
         await until(pilot, lambda: app.pane.debug is None and c3.status != "running")
         assert "16" not in c3.output_text and app.pane.kernel_state == "kernel ready"
+        assert not c3.debugging and c3.styles.outline_left[1] != Color.parse(DEBUG_BAR)
         c1 = await run(app, pilot, 1)
         await until(pilot, lambda: c1.run_status == "ok" and not app.pane._run_lock.locked())
 

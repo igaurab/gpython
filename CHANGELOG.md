@@ -8,7 +8,36 @@ this file as its notes.
 
 ## [Unreleased]
 
+### Changed
+- The editor follows vim where app shortcuts collided; the old actions stay in cell mode
+  (README, "What changed for vim"): `r` is vim's replace (`r 6` runs a cell in cell mode,
+  `space r 6` in the editor), `J` joins lines, `gJ` joins without spaces, `K` no longer
+  moves to the previous cell; in normal and visual mode `ctrl+d ctrl+e ctrl+n ctrl+p ctrl+o
+  ctrl+v ctrl+b` are vim keys (scroll, jump list, visual block), in insert mode `ctrl+w
+  ctrl+t ctrl+d ctrl+e ctrl+n ctrl+p ctrl+v` are.
+- The cursor is a block in every mode, coloured like the mode's badge (yellow normal, green
+  insert, magenta visual, red replace); a cell selected in cell mode has a blue bar and a blue
+  block cursor on its current line; the cell being edited has a bar in the vim mode's colour, a stale cell a salmon one, the cell the debugger is paused in red like the DEBUG badge (was the theme's
+  accent, often orange like the normal-mode cursor); and the
+  CELL badge is blue. `:set cursor=bar|underline` brings back the terminal cursor, coloured
+  per mode.
+
 ### Added
+- Vim: `r`, `J`, `U`, `gi gI gp gP g_ gm g0 g$ ga gd gD g; g, g* g# g& g?`, `gq` / `gw`,
+  `( )`, `is as`, `[( [{ ]) ]} [[ ]] [] ][ [m ]m`, the jump list (`ctrl+o`, `tab`, `''`),
+  scrolling (`ctrl+d ctrl+u ctrl+f ctrl+b ctrl+e ctrl+y zz zt zb z. z<enter> z-`), `ZZ ZQ @: &`,
+  `ctrl+g`, `?` backward search (`n` follows its direction), registers `"0 "1-"9 "- ". "+`,
+  blockwise visual mode (`ctrl+v`: `I A c d y p r ~ u U O $`), visual `ctrl+a ctrl+x g ctrl+a :`,
+  insert-mode `ctrl+w ctrl+u ctrl+t ctrl+d ctrl+r ctrl+a ctrl+e ctrl+y ctrl+n ctrl+p ctrl+v ctrl+j`.
+- `:s` with ranges, vim patterns and replacements, flags `g i I n &`, and `:&` / `:&&`. The
+  notebook is one file as in vim: `:%s` changes every cell, `$` is the notebook's last line.
+- `:Q!`, `:WQ!`, `:Wq`, `:W`, `:X`, `:QA!` (any case of a save / quit command) work like the
+  lower-case ones.
+- `:g` / `:g!` / `:v` with `d s j > < m t normal` (no command: list the lines), and the line
+  commands `:d :j :> :< :m :t :co :normal`.
+- `K` shows the kernel's help for the name under the cursor; insert-mode `ctrl+k` types a
+  digraph (`:digraphs`); folds are cells: `zc za zM zR`, `:foldclose`, `:foldopen`, `H` in
+  cell mode. Interrupting from insert mode moves to `space r i` / other modes' `ctrl+k`.
 - `gpy`, a short alias for the `gpython` command.
 - Window management: `ctrl+w z` zooms a window to fill its tab (again restores the splits),
   `ctrl+w x` swaps, `ctrl+w r` / `R` rotate, `ctrl+w H J K L` move a window to an edge,

@@ -87,15 +87,17 @@ def test_yank_paste_undo():
 
 
 def test_join():
-    assert run("a\n    b", "g", "J")[0] == "a b"
+    assert run("a\n    b", "J")[0] == "a b"
+    assert run("a\n    b", "g", "J")[0] == "a    b"
+    assert run("a\nb\nc\nd", "3", "J")[0] == "a b c\nd"
 
 
 def test_cell_level_keys_post_messages():
     messages: list = []
-    assert run("a\nb", "J", messages=messages)[0] == "a\nb"
+    assert run("a\nb", "j", "j", messages=messages)[0] == "a\nb"
+    assert run("a\nb", "k", messages=messages)[0] == "a\nb"
     assert run("a\nb", "K", messages=messages)[0] == "a\nb"
-    run("a\nb", "3", "J", messages=messages)
-    assert messages == [("edge", 1), ("edge", -1), ("edge", 3)]
+    assert messages == [("edge", 1), ("edge", -1)]
     messages.clear()
     run("a", "/", messages=messages)
     assert messages == [("search",)]
