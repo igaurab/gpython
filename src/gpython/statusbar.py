@@ -2,10 +2,14 @@
 
 Modules are `clock`, `host`, `cpu`, `ram` and `gpu`, all on by default. In the config
 `status.cpu = false` drops one, `status.layout = "mode clock host cpu ram gpu"` orders
-them, `status.clock_format` is a strftime pattern. The clock ticks once a second; cpu,
-ram and gpu are sampled every two seconds in a thread (psutil, and nvidia-smi when it
-exists), so the first frame never waits on them. A module whose source is missing
-(no GPU tool, psutil import failure) disappears from the bar.
+them, `status.clock_format` is a strftime pattern and `status.style` is `btop` (the
+default: a sparkline of recent cpu and gpu samples drawn as vertical bars, a block
+meter for ram, coloured green, yellow and red by load) or `tmux` (one level glyph in
+brackets, as tmux-cpu draws it). The clock ticks once a second; cpu, ram and gpu are
+sampled every two seconds on a daemon thread (psutil, and nvidia-smi when it exists),
+never a Textual worker, so tests that wait for the app's workers do not wait on the bar,
+and the thread starts after the first frame. A module whose source is missing (no GPU
+tool, psutil import failure) disappears from the bar.
 """
 
 from __future__ import annotations
@@ -13,7 +17,9 @@ from __future__ import annotations
 import shutil
 import socket
 import subprocess
+import threading
 import time
+from collections import deque
 
 from rich.text import Text
 from textual.widgets import Static
@@ -21,8 +27,48 @@ from textual.widgets import Static
 MODULES = ("mode", "clock", "host", "cpu", "ram", "gpu")
 DEFAULT_LAYOUT = "mode clock host cpu ram gpu"
 DEFAULT_CLOCK_FORMAT = "%a %d %b %H:%M"
+STYLES = ("btop", "tmux")
 SAMPLE_SECONDS = 2.0
 SEPARATOR = " · "
+LEVELS = "▁▂▃▄▅▆▇█"
+HISTORY = 12
+METER_CELLS = 10
+LOW, HIGH = 30, 80
+
+
+def _load_style(percent: float) -> str:
+    return "bold green" if percent < LOW else "bold yellow" if percent < HIGH else "bold red"
+
+
+def _level(percent: float) -> str:
+    return LEVELS[min(len(LEVELS) - 1, max(0, int(percent / 100 * len(LEVELS))))]
+
+
+def gauge(label: str, percent: float, extra: str = "") -> Text:
+    """tmux-cpu style, `cpu [▃] 51%`: one level glyph and the number in the load's colour."""
+    style = _load_style(percent)
+    return Text.assemble((f"{label} [", "dim"), (_level(percent), style), ("] ", "dim"), (f"{percent:.0f}%", style), (f" {extra}" if extra else "", "dim"))
+
+
+def sparkline(label: str, history: list[float], extra: str = "") -> Text:
+    """btop style, `cpu ▂▃▅▃▂ 33%`: the recent samples as vertical bars, each in its own load
+    colour, padded on the left to HISTORY cells so the bar does not move as samples arrive."""
+    bars = Text("".join(" " for _ in range(HISTORY - len(history))), "dim")
+    for value in history:
+        bars.append(_level(value), _load_style(value))
+    current = history[-1] if history else 0.0
+    return Text.assemble((f"{label} ", "dim"), bars, (f" {current:.0f}%", _load_style(current)), (f" {extra}" if extra else "", "dim"))
+
+
+def meter(label: str, percent: float, extra: str = "") -> Text:
+    """btop style, `ram ▪▪▪▪▪▪░░░░ 55% 14.1G/32.0G`: filled cells coloured by their own position
+    along the meter (green, then yellow, then red), empty cells dim."""
+    filled = round(percent / 100 * METER_CELLS)
+    cells = Text()
+    for i in range(METER_CELLS):
+        position = (i + 0.5) / METER_CELLS * 100
+        cells.append("▪" if i < filled else "░", _load_style(position) if i < filled else "dim")
+    return Text.assemble((f"{label} ", "dim"), cells, (f" {percent:.0f}%", _load_style(percent)), (f" {extra}" if extra else "", "dim"))
 
 
 def enabled_modules(settings: dict) -> list[str]:
@@ -36,22 +82,22 @@ def _gigabytes(n: int) -> str:
     return f"{n / 1024 ** 3:.1f}G"
 
 
-def sample_cpu_ram(primed: bool) -> dict[str, str]:
-    """cpu and ram readings from psutil, imported here so start-up never pays for it. psutil's
-    first cpu reading is always 0 (it measures since the previous call), so the first sample
-    only primes it and reports ram."""
+def sample_cpu_ram(primed: bool) -> dict[str, tuple[float, str]]:
+    """(percent, size text) for cpu and ram from psutil, imported here so start-up never pays
+    for it. psutil's first cpu reading is always 0 (it measures since the previous call), so
+    the first sample only primes it and reports ram."""
     import psutil
 
     memory = psutil.virtual_memory()
     cpu = psutil.cpu_percent(interval=None)
-    readings = {"ram": f"ram {_gigabytes(memory.used)}/{_gigabytes(memory.total)}"}
+    readings = {"ram": (memory.percent, f"{_gigabytes(memory.used)}/{_gigabytes(memory.total)}")}
     if primed:
-        readings["cpu"] = f"cpu {cpu:.0f}%"
+        readings["cpu"] = (cpu, "")
     return readings
 
 
-def sample_gpu() -> str | None:
-    """`gpu 12% 1.2G/8.0G` from nvidia-smi; None when there is no such tool or it fails."""
+def sample_gpu() -> tuple[float, str] | None:
+    """(utilisation, `1.2G/8.0G`) from nvidia-smi; None when there is no such tool or it fails."""
     tool = shutil.which("nvidia-smi")
     if tool is None:
         return None
@@ -63,7 +109,7 @@ def sample_gpu() -> str | None:
         util, used, total = (float(v) for v in out[0].split(","))
     except Exception:
         return None
-    return f"gpu {util:.0f}% {used / 1024:.1f}G/{total / 1024:.1f}G"
+    return util, f"{used / 1024:.1f}G/{total / 1024:.1f}G"
 
 
 class StatusBar(Static):
@@ -73,11 +119,15 @@ class StatusBar(Static):
         super().__init__(**kwargs)
         self.modules = enabled_modules(settings)
         self.clock_format = settings.get("status.clock_format", DEFAULT_CLOCK_FORMAT)
+        style = settings.get("status.style", "btop")
+        self.style_name = style if style in STYLES else "btop"
         self.mode: Text | None = None
-        self.values: dict[str, str] = {}
+        self.values: dict[str, str | Text] = {}
+        self.history: dict[str, deque[float]] = {m: deque(maxlen=HISTORY) for m in ("cpu", "gpu")}
         self._text: Text | None = None
         self._started = False
         self._primed = False
+        self._stop: threading.Event | None = None
         if "host" in self.modules:
             self.values["host"] = socket.gethostname().split(".")[0]
 
@@ -90,8 +140,12 @@ class StatusBar(Static):
             self._tick_clock()
             self.set_interval(1, self._tick_clock)
         if any(m in self.modules for m in ("cpu", "ram", "gpu")):
-            self.set_interval(SAMPLE_SECONDS, self._sample)
-            self._sample()
+            self._stop = threading.Event()
+            threading.Thread(target=self._sample_loop, name="statusbar", daemon=True).start()
+
+    def on_unmount(self) -> None:
+        if self._stop is not None:
+            self._stop.set()
 
     def set_mode(self, mode: Text | None) -> None:
         self.mode = mode
@@ -103,11 +157,17 @@ class StatusBar(Static):
             self.values["clock"] = now
             self.repaint()
 
-    def _sample(self) -> None:
-        self.run_worker(self._sample_in_thread, thread=True, exclusive=True, group="statusbar", exit_on_error=False)
+    def _sample_loop(self) -> None:
+        while self._stop is not None and not self._stop.is_set():
+            readings = self._sample()
+            try:
+                self.app.call_from_thread(self._apply, readings)
+            except Exception:
+                return
+            self._stop.wait(SAMPLE_SECONDS)
 
-    def _sample_in_thread(self) -> None:
-        readings: dict[str, str] = {}
+    def _sample(self) -> dict[str, tuple[float, str]]:
+        readings: dict[str, tuple[float, str]] = {}
         if "cpu" in self.modules or "ram" in self.modules:
             try:
                 readings.update(sample_cpu_ram(self._primed))
@@ -120,18 +180,29 @@ class StatusBar(Static):
                 self.modules = [m for m in self.modules if m != "gpu"]
             else:
                 readings["gpu"] = gpu
-        self.app.call_from_thread(self._apply, readings)
+        return readings
 
-    def _apply(self, readings: dict[str, str]) -> None:
-        self.values.update(readings)
+    def _apply(self, readings: dict[str, tuple[float, str]]) -> None:
+        for name, (percent, extra) in readings.items():
+            if name in self.history:
+                self.history[name].append(percent)
+            self.values[name] = self.draw(name, percent, extra)
         self.repaint()
+
+    def draw(self, name: str, percent: float, extra: str) -> Text:
+        if self.style_name == "tmux":
+            return gauge(name, percent, extra)
+        if name in self.history:
+            return sparkline(name, list(self.history[name]), extra)
+        return meter(name, percent, extra)
 
     def on_resize(self) -> None:
         self.repaint()
 
     def compose_text(self, width: int) -> Text:
         left = self.mode if "mode" in self.modules and self.mode is not None else Text("")
-        right = Text(SEPARATOR, "dim").join(Text(self.values[m], "dim") for m in self.modules if m != "mode" and m in self.values)
+        parts = [self.values[m] for m in self.modules if m != "mode" and m in self.values]
+        right = Text(SEPARATOR, "dim").join(part if isinstance(part, Text) else Text(part, "dim") for part in parts)
         gap = max(2, width - left.cell_len - right.cell_len - 1)
         return Text.assemble(left, " " * gap, right)
 

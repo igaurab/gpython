@@ -11,7 +11,9 @@ this file as its notes.
 ### Changed
 - The bottom bar is a tmux-style status line: the mode badge (NORMAL, INSERT, CELL, …)
   on the left and modules on the right: clock, host, cpu, ram, gpu (README, "Bottom
-  bar"). All on by default; `status.cpu = false` drops one, `status.layout` orders them,
+  bar"). cpu and gpu are btop-style sparklines of the last samples, ram a block meter,
+  coloured by load; `status.style = "tmux"` draws one level glyph instead. All on by
+  default; `status.cpu = false` drops one, `status.layout` orders them,
   `status.clock_format` sets the clock. The kernel state, theme name and key hints are
   gone from it. `:set nostatusbar` hides it (`status_bar = false` in the config; `:set
   statusbar` brings it back). psutil is a new dependency. The kernel chip in the header

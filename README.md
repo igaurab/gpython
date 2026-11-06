@@ -218,7 +218,9 @@ run time display, the run mode and the theme are remembered in
 
 The last row shows the mode badge on the left and, on the right, modules like a tmux
 status line: the clock, the host name, cpu, ram and gpu (gpu only where `nvidia-smi`
-exists). All are on by default. In the config:
+exists). All are on by default. cpu and gpu draw the last twelve samples as vertical
+bars, btop style (`cpu ▂▃▅▃▂ 33%`), ram is a block meter (`ram ▪▪▪▪▪▪░░░░ 55% 14.1G/32.0G`);
+every bar and number is green under 30%, yellow under 80%, red above. In the config:
 
 ```toml
 status_bar = true
@@ -226,11 +228,13 @@ status_bar = true
 cpu = false
 layout = "mode clock host ram"
 clock_format = "%H:%M"
+style = "tmux"
 ```
 
 `status.<module> = false` drops a module, `status.layout` orders them (`mode clock host
-cpu ram gpu` is the default), `status.clock_format` is a `strftime` pattern. `:set
-nostatusbar` hides the whole bar and `:set statusbar` brings it back.
+cpu ram gpu` is the default), `status.clock_format` is a `strftime` pattern, `status.style
+= "tmux"` draws one level glyph in brackets (`cpu [▃] 51%`) instead of the btop graphs.
+`:set nostatusbar` hides the whole bar and `:set statusbar` brings it back.
 
 Cell headers read `✓ c3 [4] 1.25s  defines x · uses y`: display position,
 execution count (like Jupyter's `In [4]`) and, when `t` has turned it on, the run
