@@ -34,8 +34,8 @@ MAP_WIDTH = 44
 MAP_HEIGHT = 13
 
 KEY_HELP = [
-    [("enter", "go"), ("s / v", "split beside current"), ("t", "own tab"), ("z", "zoom"), ("x", "close window")],
-    [("d / D", "delete buffer"), ("J / K", "move tab"), ("1-9", "tab"), ("/", "filter"), ("esc", "close")],
+    [("enter", "go"), ("s / v", "split beside"), ("t", "own tab"), ("z", "zoom"), ("x", "close window")],
+    [("d / D", "close notebook"), ("J / K", "move tab"), ("1-9", "go to tab"), ("/", "filter"), ("esc", "close")],
 ]
 
 
@@ -321,8 +321,8 @@ class WindowManager(ModalScreen[None]):
             if row.tab == workspace.index:
                 line.append("  · current tab", "dim italic")
         elif row.kind == "hidden":
-            line.append("Hidden buffers", "bold dim")
-            line.append("  open, but in no window", "dim italic")
+            line.append("Hidden notebooks", "bold dim")
+            line.append("  open, but not in a window", "dim italic")
         else:
             nxt = self.rows[i + 1] if i + 1 < len(self.rows) else None
             last = nxt is None or nxt.kind != row.kind or nxt.tab != row.tab
@@ -356,7 +356,7 @@ class WindowManager(ModalScreen[None]):
             focus = row.pane if row.kind == "window" else (tab.active if tab.active in panes_of(tab.root) else None)
             mapping.update(draw_map(tab, focus, self.here, accent))
         else:
-            mapping.update(Text("\n\n   hidden buffer\n\n   not shown in any window:\n   enter shows it here,\n   s / v beside the current window,\n   t in a tab of its own", "dim"))
+            mapping.update(Text("\n\n   hidden notebook\n\n   not in a window:\n   enter shows it here,\n   s / v beside this window,\n   t in a new tab", "dim"))
         if row.kind == "tab":
             tab = self.workspace.tabs[row.tab]
             names = ", ".join(p.name for p in panes_of(tab.root))
@@ -472,7 +472,7 @@ class WindowManager(ModalScreen[None]):
     def _pane_row(self) -> Row | None:
         row = self.selected
         if row is None or row.pane is None:
-            self.app.notify("Select a window or a buffer first (j / k)", timeout=2)
+            self.app.notify("First select a window or a notebook (j / k)", timeout=2)
             return None
         return row
 
@@ -481,7 +481,7 @@ class WindowManager(ModalScreen[None]):
         if row is None:
             return
         if row.pane is self.here:
-            self.app.notify("That is the window you came from: pick another notebook to put beside it", timeout=3)
+            self.app.notify("You came from this window. Select a different notebook to put beside it.", timeout=3)
             return
         if await self.workspace.place(row.pane, self.here, side_by_side):
             self._finish(row.pane)
@@ -494,7 +494,7 @@ class WindowManager(ModalScreen[None]):
         if row.kind == "buffer":
             await workspace.add(row.pane, "tab")
         elif len(panes_of(workspace.tabs[row.tab].root)) < 2:
-            self.app.notify(f"{row.pane.name} already has a tab of its own", timeout=2)
+            self.app.notify(f"{row.pane.name} already has its own tab", timeout=2)
             return
         else:
             await workspace.to_new_tab(row.pane)
@@ -503,10 +503,10 @@ class WindowManager(ModalScreen[None]):
     def action_zoom(self) -> None:
         row = self.selected
         if row is None or row.kind != "window":
-            self.app.notify("Zoom works on a window (a notebook inside a tab)", timeout=2)
+            self.app.notify("Zoom works only on a window in a tab", timeout=2)
             return
         if len(panes_of(self.workspace.tabs[row.tab].root)) < 2:
-            self.app.notify(f"{row.pane.name} is alone in its tab: it already fills it", timeout=2)
+            self.app.notify(f"{row.pane.name} is the only window in its tab. It already fills the tab.", timeout=2)
             return
         self.workspace.toggle_zoom(row.pane)
         self._finish(row.pane)
@@ -515,11 +515,11 @@ class WindowManager(ModalScreen[None]):
         row = self.selected
         workspace = self.workspace
         if row is None or row.kind in ("hidden", "buffer"):
-            self.app.notify("A hidden buffer has no window to close (d deletes it)", timeout=2)
+            self.app.notify("A hidden notebook has no window to close. Press d to close it.", timeout=2)
             return
         targets = [row.pane] if row.kind == "window" else panes_of(workspace.tabs[row.tab].root)
         if len(targets) >= len(workspace.panes()):
-            self.app.notify("That would close the last window (use :q to quit)", timeout=2)
+            self.app.notify("This is the last window. Use :q to quit.", timeout=2)
             return
         for pane in targets:
             await workspace.close(pane)
@@ -531,7 +531,7 @@ class WindowManager(ModalScreen[None]):
             return
         pane = row.pane
         if pane.dirty and not force:
-            self.app.notify(f"{pane.name} has unsaved changes: D deletes it anyway", severity="warning", timeout=3)
+            self.app.notify(f"{pane.name} has unsaved changes. Press D to close it anyway.", severity="warning", timeout=3)
             return
         workspace = self.workspace
         nxt = await workspace.delete(pane)

@@ -35,13 +35,9 @@ async def settle(app, pilot):
     await pilot.pause()
 
 
-def status_bar(app) -> str:
-    return str(app.query_one("#status").render())
-
-
 def test_lazy_by_default_a_run_leaves_the_dependent_stale(tmp_path):
     async def test(app, pilot):
-        assert app.lazy and "lazy" in status_bar(app)
+        assert app.lazy
         x, show = app.cells()
         x.focus()
         await pilot.press("ctrl+enter")
@@ -105,7 +101,7 @@ def test_f3_switches_to_reactive_and_saves_it(tmp_path):
         x, show = app.cells()
         await pilot.press("f3")
         await pilot.pause()
-        assert not app.lazy and "reactive" in status_bar(app)
+        assert not app.lazy
         assert config.load()["run_mode"] == "reactive"
         x.focus()
         await pilot.press("ctrl+enter")
@@ -113,7 +109,7 @@ def test_f3_switches_to_reactive_and_saves_it(tmp_path):
         assert show.status == "ok" and show.output_text == "10\n"
         await pilot.press("f3")
         await pilot.pause()
-        assert app.lazy and "lazy" in status_bar(app)
+        assert app.lazy
         assert config.load()["run_mode"] == "lazy"
 
     ui(tmp_path, test)
@@ -139,11 +135,11 @@ def test_run_mode_persists_across_restarts(tmp_path):
         assert not app.lazy
 
     async def second(app, pilot):
-        assert not app.lazy and "reactive" in status_bar(app)
+        assert not app.lazy
         app._ex_set("lazy")
 
     async def third(app, pilot):
-        assert app.lazy and "lazy" in status_bar(app)
+        assert app.lazy
 
     ui(tmp_path, first, kernel=False)
     assert config.load()["run_mode"] == "reactive"

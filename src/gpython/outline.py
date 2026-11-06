@@ -370,7 +370,7 @@ class Outline(Vertical):
             parts.append("← uses " + ", ".join(uses))
         if used:
             parts.append("→ used by " + ", ".join(used))
-        return Text("   ".join(parts) or "no edges", style="dim")
+        return Text("   ".join(parts) or "no links to other cells", style="dim")
 
     def action_cursor(self, step: int) -> None:
         if step > 0:

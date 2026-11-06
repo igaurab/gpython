@@ -200,7 +200,7 @@ class OutputArea(Vertical):
     def _add_data(self, data: dict) -> None:
         mime = next((m for m in MIME_PRIORITY if m in data), None)
         if mime is None:
-            self._add_text("note", f"[{', '.join(data)} output not supported yet]")
+            self._add_text("note", f"[cannot show {', '.join(data)} output yet]")
         elif mime == "image/png":
             self._add_image(data["image/png"])
         elif mime == "text/markdown":
@@ -211,9 +211,9 @@ class OutputArea(Vertical):
             if "text/plain" in data:
                 self._add_text("result", _as_str(data["text/plain"]))
             else:
-                self._add_noted(html_to_text(_as_str(data[mime])), "[html rendered as text]")
+                self._add_noted(html_to_text(_as_str(data[mime])), "[HTML shown as text]")
         elif mime == "text/latex":
-            self._add_noted(_as_str(data[mime]), "[latex shown as source]")
+            self._add_noted(_as_str(data[mime]), "[LaTeX shown as source text]")
         else:
             self._add_text("result", _as_str(data["text/plain"]))
 

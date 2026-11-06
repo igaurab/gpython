@@ -25,7 +25,7 @@ def help_renderable(commands: list[tuple[str, str]] = ()) -> Table:
                 table.add_row(key, desc)
         table.add_row("", "")
     if commands:
-        table.add_row(Text("Ex commands", style="bold underline"), "")
+        table.add_row(Text("Commands (type : first)", style="bold underline"), "")
         for name, desc in commands:
             table.add_row(f":{name}", desc)
     return table

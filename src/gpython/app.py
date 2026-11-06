@@ -32,28 +32,28 @@ from .markdown import MarkdownView, markdown_theme
 from .pane import NotebookPane
 from . import envpicker
 from .envpicker import KernelChip
+from .statusbar import StatusBar
 from .themepicker import ThemePicker
 from .themes import CUSTOM_APP_THEMES, DEFAULT_THEME, TERMINAL_THEME, THEME_ALIASES, editor_themes, palette_for
 from .vim import CELL_MODE_COLOR, DEBUG_COLOR, INSERT_COLOR, INSERT_CURSOR_SHAPES, MODE_CURSOR_COLORS, RESET_CURSOR_SHAPE, VimTextArea, _is_escape, parse_global, parse_line_command, parse_substitute, sync_terminal_cursor, write_to_terminal
 from .windows import TabBar, Workspace
 
-KEY_HINTS = "shift+enter run+next · ctrl+enter run · esc esc cell mode · / jump · ctrl+b files · ctrl+w splits · f1 help"
 LAZY_MESSAGE = (
-    "Lazy: a run runs that cell (and the stale cells it uses). Cells that use its variables are only "
-    "marked stale; run them yourself with r 6, or f4 for all stale cells. f3 switches to reactive."
+    "Lazy mode: a run runs this cell and the out-of-date cells it needs. Cells that use its variables "
+    "become stale, which means they need a run. Use r 6 to run one, or f4 to run all stale cells. Press f3 for reactive mode."
 )
 REACTIVE_MESSAGE = (
-    "Reactive: a run also re-runs every cell that uses its variables, like marimo. f3 switches back to lazy."
+    "Reactive mode: a run also runs again each cell that uses its variables. Press f3 for lazy mode."
 )
 AUTOINSTALL_MESSAGE = (
-    "A cell that fails with ModuleNotFoundError gets its package installed into the kernel's env "
-    "(uv pip install) and runs again. :set noautoinstall asks first instead."
+    "If a cell fails with ModuleNotFoundError, gpython installs the package into the kernel environment "
+    "(uv pip install). Then the cell runs again. Use :set noautoinstall to ask first."
 )
-ASK_INSTALL_MESSAGE = "A missing module opens the install prompt first (enter installs, esc skips). :set autoinstall makes it automatic."
+ASK_INSTALL_MESSAGE = "If a module is missing, gpython asks first. Press enter to install it, or esc to skip. Use :set autoinstall to install without a question."
 _MODE_STYLES = {
     "insert": f"bold black on {INSERT_COLOR}",
     "normal": f"bold black on {MODE_CURSOR_COLORS['normal']}",
-    "cell": f"bold white on {CELL_MODE_COLOR}",
+    "cell": f"bold black on {CELL_MODE_COLOR}",
     "files": "bold black on magenta",
     "outline": "bold black on magenta",
     "vars": "bold black on magenta",
@@ -161,7 +161,7 @@ class KeyCapture(ModalScreen[str | None]):
 
 
 def _state_style(state: str) -> str:
-    """Colour of the kernel dot in the bottom bar: ready, busy (starting/installing) or failed."""
+    """Colour of the kernel dot in the header chip: ready, busy (starting/installing) or failed."""
     if state == "kernel ready":
         return "bold green"
     if "fail" in state or "died" in state:
@@ -180,14 +180,14 @@ class GPython(App):
         Binding("ctrl+n", "add_cell", "New cell", priority=True),
         Binding("ctrl+shift+n", "add_cell(True)", "New cell above", priority=True),
         Binding("ctrl+d", "delete_cell", "Delete cell", priority=True),
-        Binding("alt+up,ctrl+up", "focus_cell(-1)", "Prev cell", show=False, priority=True),
+        Binding("alt+up,ctrl+up", "focus_cell(-1)", "Previous cell", show=False, priority=True),
         Binding("alt+down,ctrl+down", "focus_cell(1)", "Next cell", show=False, priority=True),
         Binding("ctrl+home", "focus_edge(False)", "First cell", show=False, priority=True),
         Binding("ctrl+end", "focus_edge(True)", "Last cell", show=False, priority=True),
         Binding("alt+shift+up", "move_cell(-1)", "Move cell up", show=False, priority=True),
         Binding("alt+shift+down", "move_cell(1)", "Move cell down", show=False, priority=True),
         Binding("ctrl+s", "save", "Save", priority=True),
-        Binding("ctrl+k", "interrupt", "Interrupt", priority=True),
+        Binding("ctrl+k", "interrupt", "Stop", priority=True),
         Binding("ctrl+w", "window_prefix", "Window", show=False, priority=True),
         Binding("ctrl+b", "toggle_explorer", "Files", priority=True),
         Binding("ctrl+h,backspace", "focus_left", "Window left", show=False, priority=True),
@@ -195,11 +195,11 @@ class GPython(App):
         Binding("f1", "help", "Help"),
         Binding("ctrl+o", "toggle_outline", "Outline", show=False, priority=True),
         Binding("ctrl+v", "toggle_variables", "Variables", show=False, priority=True),
-        Binding("f3", "toggle_lazy", "Lazy"),
-        Binding("f4", "run_stale", "Run stale"),
+        Binding("f3", "toggle_lazy", "Run mode"),
+        Binding("f4", "run_stale", "Run stale cells"),
         Binding("f5", "run_all", "Run all"),
         Binding("ctrl+t", "pick_theme", "Theme"),
-        Binding("f6", "pick_env", "Env", priority=True),
+        Binding("f6", "pick_env", "Environment", priority=True),
     ]
     _previewing_theme = False
 
@@ -212,6 +212,7 @@ class GPython(App):
     ) -> None:
         super().__init__()
         settings = config.load()
+        self._settings = settings
         VimTextArea.mode = "normal"
         self._editor_theme_cache: dict[str, tuple] = {}
         self._markdown_theme_pushed = False
@@ -222,7 +223,7 @@ class GPython(App):
         name = theme or self._loaded_theme or DEFAULT_THEME
         name = THEME_ALIASES.get(name, name)
         if name not in self.available_themes:
-            self._theme_warning = f"Unknown theme {name!r}; using {DEFAULT_THEME}"
+            self._theme_warning = f"Unknown theme {name!r}. gpython uses {DEFAULT_THEME}"
             name = DEFAULT_THEME
         self._loaded_theme = name
         if self.theme == name:
@@ -233,6 +234,7 @@ class GPython(App):
         VimTextArea.enabled = vim
         VimTextArea.line_numbers = settings.get("line_numbers", True) is not False
         Cell.show_timing = settings.get("timing") is True
+        self.status_bar = settings.get("status_bar", True) is not False
         VimTextArea.insert_cursor = self._insert_cursor_setting(settings.get("insert_cursor"))
         bigtext.enabled = settings.get("experimental.true_markdown") is True
         VimTextArea.search = None
@@ -258,9 +260,10 @@ class GPython(App):
         self.workspace = Workspace()
         self.explorer: Explorer | None = None
         self._tabbar = TabBar()
-        self._status: Static | None = None
         self._kernel_chip: Static | None = None
-        self._chip_label: str | None = None
+        self._chip_key: tuple | None = None
+        self._status: StatusBar | None = None
+        self._status_mode: str | None = None
         self._mode_chip: Static | None = None
         self._mode_chip_mode: str | None = None
         self._status_key: tuple | None = None
@@ -333,7 +336,8 @@ class GPython(App):
         yield self._tabbar
         with Horizontal(id="body"):
             yield self.workspace
-        self._status = Static(id="status")
+        self._status = StatusBar(self._settings, id="status")
+        self._status.display = self.status_bar
         yield self._status
 
     async def on_mount(self) -> None:
@@ -357,6 +361,8 @@ class GPython(App):
             await self.show_explorer()
         self.update_status()
         self.after_first_frame(self._prune_cell_layouts)
+        if self.status_bar:
+            self.after_first_frame(self._status.start)
 
     def _prune_cell_layouts(self) -> None:
         """Forget plain-script cell layouts nobody used for a month (sidecar.prune), off the UI thread."""
@@ -493,8 +499,8 @@ class GPython(App):
         self.update_status()
 
     def update_status(self, kernel_state: str | None = None) -> None:
-        """Header: kernel chip + file subtitle. Status line: vim mode, run mode, kernel state, theme, hints."""
-        if self._status is None or not self.workspace.tabs:
+        """Header: mode chip, file subtitle (or the number-sequence prompt), kernel chip with its state dot. Bottom bar: the mode badge."""
+        if self._kernel_chip is None or not self.workspace.tabs:
             return
         pane = self.pane
         if kernel_state is not None:
@@ -502,22 +508,25 @@ class GPython(App):
             return
         if self._number_sequence is not None:
             self._status_key = None
-            self._status.update(self._number_sequence.status(), layout=False)
+            self.sub_title = str(self._number_sequence.status())
             return
         mode = self.ui_mode
         if pane.debug is not None and mode in ("normal", "cell"):
             mode = "debug"
         name = pane.title
-        key = (mode, VimTextArea.enabled, name, self.lazy, pane.kernel_state, self.theme, pane.kernel_label)
+        key = (mode, VimTextArea.enabled, name, pane.kernel_state, pane.kernel_label)
         if key == self._status_key:
             return
         self._status_key = key
-        show_mode = VimTextArea.enabled or mode in ("cell", "files", "outline", "vars", "debug")
         self.sub_title = name
-        if self._kernel_chip is not None and pane.kernel_label != self._chip_label:
-            self._chip_label = pane.kernel_label
+        chip_key = (pane.kernel_label, pane.kernel_state)
+        if chip_key != self._chip_key:
+            self._chip_key = chip_key
             version, _, env = pane.kernel_label.partition(" · ")
-            self._kernel_chip.update(Text.assemble((version, "dim"), (f" · {env}" if env else "", "bold"), (" ▾", "dim")))
+            state = "" if pane.kernel_state == "kernel ready" else f" · {pane.kernel_state}"
+            self._kernel_chip.update(
+                Text.assemble(("● ", _state_style(pane.kernel_state)), (version, "dim"), (f" · {env}" if env else "", "bold"), (state, "dim"), (" ▾", "dim"))
+            )
         chip_mode = mode if mode in ("cell", "files", "outline", "vars", "debug") or VimTextArea.enabled else "edit"
         if self._mode_chip is not None and chip_mode != self._mode_chip_mode:
             self._mode_chip_mode = chip_mode
@@ -526,17 +535,19 @@ class GPython(App):
             else:
                 text = Text.assemble((" EDIT ", _MODE_STYLES["insert"]), (f" {chip_mode.upper()}", _CHIP_VIM_STYLES[chip_mode]))
             self._mode_chip.update(text, layout=False)
-        self._status.update(
-            Text.assemble(
-                (f" {mode.upper()} ", _MODE_STYLES[mode]) if show_mode else "",
-                f"  {'lazy' if self.lazy else 'reactive'}  ·  ",
-                ("● ", _state_style(pane.kernel_state)),
-                f"{pane.kernel_state}  ·  {self.theme}",
-                (f"    {KEY_HINTS}", "dim"),
-            ),
-            layout=False,
-        )
+        bar_mode = mode if VimTextArea.enabled or mode in ("cell", "files", "outline", "vars", "debug") else ""
+        if self._status is not None and bar_mode != self._status_mode:
+            self._status_mode = bar_mode
+            self._status.set_mode(Text(f" {bar_mode.upper()} ", style=_MODE_STYLES[bar_mode]) if bar_mode else None)
 
+    def set_status_bar(self, on: bool) -> None:
+        """:set statusbar|nostatusbar: show or hide the bottom bar; saved as `status_bar`."""
+        self.status_bar = on
+        if self._status is not None:
+            self._status.display = on
+            if on:
+                self._status.start()
+        config.save({"status_bar": on})
 
     def find_open(self, path: Path) -> NotebookPane | None:
         """The buffer (shown or hidden) for `path`, if the file is open."""
@@ -573,12 +584,12 @@ class GPython(App):
             self.notify(f"Not a file: {path}", severity="error")
             return None
         if not path.exists() and path.suffix not in (".py", ".ipynb"):
-            self.notify(f"New notebooks need a .py or .ipynb name: {path}", severity="error")
+            self.notify(f"A new notebook name must end in .py or .ipynb: {path}", severity="error")
             return None
         pane = NotebookPane(path)
         if current is not None and (how == "here" or current.is_blank):
             if current.dirty and not force:
-                self.notify(f"No write since last change for {current.name} (:e! {path} discards, or :w first)", severity="warning")
+                self.notify(f"{current.name} has unsaved changes. Use :w to save them, or :e! {path} to discard them", severity="warning")
                 return None
             await self.workspace.replace(current, pane)
         elif how in ("split", "vsplit") and current is not None:
@@ -605,7 +616,7 @@ class GPython(App):
         """:b N / :b name: show that buffer in the current window."""
         pane = self.workspace.buffer(str(key))
         if pane is None:
-            self.notify(f"No buffer {key} (:ls lists them)", severity="warning")
+            self.notify(f"No buffer {key}. Use :ls to list the open notebooks", severity="warning")
             return
         await self.workspace.show(pane, self.workspace.active)
         pane.focus_pane()
@@ -623,11 +634,11 @@ class GPython(App):
         """:bd[!] [N | name]: close the buffer (asks when it has unsaved changes) and its kernel."""
         pane = self.workspace.buffer(key) if key.strip() else self.pane
         if pane is None:
-            self.notify(f"No buffer {key} (:ls lists them)", severity="warning")
+            self.notify(f"No buffer {key}. Use :ls to list the open notebooks", severity="warning")
             return
         if pane.dirty and not force:
             self.push_screen(
-                Prompt(f"Unsaved changes in {pane.name}. Delete the buffer anyway? (y/n) "),
+                Prompt(f"{pane.name} has unsaved changes. Close it anyway? (y/n) "),
                 lambda answer: self._confirm(answer, lambda: self.delete_buffer(key, force=True)),
             )
             return
@@ -650,7 +661,7 @@ class GPython(App):
         pane = self.pane
         if save:
             if pane.path is None:
-                self.notify("No file name. Use :wq name.py", severity="warning")
+                self.notify("The notebook has no file name. Use :wq name.py", severity="warning")
                 return
             pane.write_file()
         if len(self.workspace.panes()) == 1:
@@ -887,13 +898,13 @@ class GPython(App):
             case "wider" | "narrower":
                 self.workspace.resize(pane, True, 0.1 if command == "wider" else -0.1)
             case _:
-                self.notify(f"ctrl+w {key}: not a window command (space lists them all: s v h j k l w p q o z x r H J K L T M = + - < >)", severity="warning")
+                self.notify(f"ctrl+w {key} is not a window command. Use one of: s v h j k l w p q o z x r H J K L T M = + - < > space", severity="warning")
 
     def toggle_zoom(self, pane: NotebookPane | None = None) -> None:
         """ctrl+w z / :zoom: the window fills the tab, or the splits come back."""
         pane = pane or self.pane
         if len(self.workspace.tab_panes()) < 2 and not self.workspace.tab.zoom:
-            self.notify("Only one window in this tab: nothing to zoom", timeout=2)
+            self.notify("This tab has only one window. There is nothing to zoom", timeout=2)
             return
         self.workspace.toggle_zoom(pane)
         pane.focus_pane()
@@ -903,7 +914,7 @@ class GPython(App):
         (else the previous tab), as a split."""
         pane = pane or self.pane
         if not await self.workspace.merge(pane):
-            self.notify("No other tab to move this window into", timeout=2)
+            self.notify("There is no other tab for this window", timeout=2)
             return
         pane.focus_pane()
 
@@ -968,7 +979,7 @@ class GPython(App):
         elif arg.removeprefix("c").isdigit():
             self.run_worker(self.pane.run_number(int(arg.removeprefix("c"))), group="run-number")
         else:
-            self.notify(f"Not a cell number: {arg}  (:run 6 runs c6, :run alone runs all)", severity="error")
+            self.notify(f"{arg} is not a cell number. Use :run 6 to run cell c6, or :run to run all cells", severity="error")
 
     async def action_run_cell(self, advance: str = "stay") -> None:
         await self.pane.run_cell(advance)
@@ -1105,7 +1116,7 @@ class GPython(App):
             return
         text = await kernel.inspect(event.code, event.offset)
         if not text:
-            self.notify(f"No help for {event.name} (run the cell that defines it first?)", severity="warning")
+            self.notify(f"No help for {event.name}. Run the cell that defines it, then try again", severity="warning")
             return
         self._show_text(f"K  {event.name}", text, ansi=True)
 
@@ -1140,7 +1151,7 @@ class GPython(App):
         pairs = sorted(table().items(), key=lambda item: item[1])
         columns = [f"{pair} {char!s:<2}" for pair, char in pairs if char.isprintable() and not char.isspace()]
         rows = ["    ".join(columns[i : i + 8]) for i in range(0, len(columns), 8)]
-        self._show_text("Digraphs: insert mode ctrl+k, then the two characters", "\n".join(rows))
+        self._show_text("Digraphs: in insert mode, press ctrl+k and then the two characters", "\n".join(rows))
 
     def action_run_all(self) -> None:
         self.pane.run_all()
@@ -1255,7 +1266,7 @@ class GPython(App):
         if expr.startswith("if "):
             expr = expr[3:].strip()
         if self.pane.debug is None:
-            self.notify(":stop if works while the debugger is paused (breakpoint(), r d, :debug)", severity="warning")
+            self.notify("Use :stop if only when the debugger is paused. To pause, use breakpoint(), r d or :debug", severity="warning")
         elif expr:
             self.pane.debug_command(f"_gp_until {expr}")
 
@@ -1352,71 +1363,71 @@ class GPython(App):
         `:N` (a number) jumps to the N-th cell, like `/N`.
         """
         return [
-            (("w", "write", "w!", "write!"), "Save notebook (:w name.py saves as)", self._ex_write),
-            (("wa", "wall"), "Save every open notebook", lambda arg="": self._save_all()),
+            (("w", "write", "w!", "write!"), "Save the notebook (:w name.py saves it with a new name)", self._ex_write),
+            (("wa", "wall"), "Save all open notebooks", lambda arg="": self._save_all()),
             (("wq", "x", "wq!", "x!", "exit"), "Save and close this window", lambda arg="": self._ex_write_quit(arg)),
-            (("wqa", "wqall", "xa", "xall", "wqa!", "xa!"), "Save every notebook and quit (:wqa name.py names an untitled one)", self._ex_write_quit_all),
-            (("q", "quit", "close", "clo"), "Close this window (quits when it is the last; asks if unsaved)", lambda arg="": self.close_window()),
+            (("wqa", "wqall", "xa", "xall", "wqa!", "xa!"), "Save all notebooks and quit (:wqa name.py gives a name to a new notebook)", self._ex_write_quit_all),
+            (("q", "quit", "close", "clo"), "Close this window (quits if it is the last one; asks about unsaved changes)", lambda arg="": self.close_window()),
             (("q!", "quit!"), "Close this window without saving", lambda arg="": self.close_window(force=True)),
-            (("qa", "qall", "quitall"), "Quit (asks if anything is unsaved)", lambda arg="": self.action_quit()),
+            (("qa", "qall", "quitall"), "Quit (asks first if there are unsaved changes)", lambda arg="": self.action_quit()),
             (("qa!", "qall!"), "Quit without saving", lambda arg="": self.exit()),
-            (("e", "edit", "open"), "Open a notebook here (:e file; :e dir or :e alone opens the explorer)", self._ex_edit),
-            (("e!", "edit!"), "Open a notebook here, discarding unsaved changes", lambda arg="": self._ex_edit(arg, force=True)),
-            (("sp", "split"), "Horizontal split (:sp file opens it there)", lambda arg="": self._ex_split("split", arg)),
-            (("vs", "vsp", "vsplit"), "Vertical split (:vs file opens it there)", lambda arg="": self._ex_split("vsplit", arg)),
+            (("e", "edit", "open"), "Open a notebook in this window (:e file; :e folder or :e alone opens the file explorer)", self._ex_edit),
+            (("e!", "edit!"), "Open a notebook in this window and discard unsaved changes", lambda arg="": self._ex_edit(arg, force=True)),
+            (("sp", "split"), "Split the window into top and bottom (:sp file opens the file there)", lambda arg="": self._ex_split("split", arg)),
+            (("vs", "vsp", "vsplit"), "Split the window into left and right (:vs file opens the file there)", lambda arg="": self._ex_split("vsplit", arg)),
             (("on", "only"), "Close every other window in this tab", lambda arg="": self._ex_only()),
-            (("zoom",), "Zoom this window to fill the tab, or restore the splits (ctrl+w z)", lambda arg="": self.toggle_zoom()),
-            (("windows", "wins", "wm"), "Window manager: every tab, window and hidden buffer in a floating list (ctrl+w space)", lambda arg="": self.action_window_manager()),
+            (("zoom",), "Make this window fill the tab, or show the split windows again (ctrl+w z)", lambda arg="": self.toggle_zoom()),
+            (("windows", "wins", "wm"), "Window manager: show all tabs, windows and hidden notebooks in a list (ctrl+w space)", lambda arg="": self.action_window_manager()),
             (("tabmerge", "tabjoin"), "Move this window back into the tab it came from (ctrl+w M)", lambda arg="": self.merge_window()),
-            (("tabmove", "tabm"), "Move this tab: :tabmove 0 first, :tabmove last, :tabmove +1 / -1, :tabmove N after tab N", lambda arg="": self._ex_tabmove(arg)),
-            (("tabnew", "tabe", "tabedit"), "New tab (:tabnew file opens it there)", lambda arg="": self._ex_split("tab", arg)),
+            (("tabmove", "tabm"), "Move this tab: :tabmove 0 to the start, :tabmove last to the end, :tabmove +1 or -1, :tabmove N after tab N", lambda arg="": self._ex_tabmove(arg)),
+            (("tabnew", "tabe", "tabedit"), "Make a new tab (:tabnew file opens the file there)", lambda arg="": self._ex_split("tab", arg)),
             (("tabc", "tabclose"), "Close this tab", lambda arg="": self.tab_close(force=arg.strip() == "!")),
             (("tabo", "tabonly"), "Close every other tab", lambda arg="": self.tab_only()),
-            (("tabn", "tabnext"), "Next tab (:tabn 3 goes to tab 3)", lambda arg="": self.tab_switch(int(arg) if arg.strip().isdigit() else None, 1)),
-            (("tabp", "tabprevious", "tabN", "tabNext"), "Previous tab", lambda arg="": self.tab_switch(None, -1)),
-            (("tabfirst", "tabr", "tabrewind"), "First tab", lambda arg="": self.tab_switch(1, 0)),
-            (("tablast",), "Last tab", lambda arg="": self.tab_switch(len(self.workspace.tabs), 0)),
-            (("ls", "buffers", "files", "tabs"), "List the buffers (open notebooks): %a current, a shown, h hidden, + unsaved", lambda arg="": self._ex_list()),
-            (("b", "buffer"), "Show buffer N or name in this window (:b 2, :b two-sum)", lambda arg="": self.show_buffer(arg) if arg.strip() else self._ex_list()),
-            (("bn", "bnext"), "Next buffer in this window", lambda arg="": self.cycle_buffer(1)),
-            (("bp", "bprevious", "bN"), "Previous buffer in this window", lambda arg="": self.cycle_buffer(-1)),
-            (("bd", "bdelete"), "Delete buffer N or name (default: this one); stops its kernel", lambda arg="": self.delete_buffer(arg)),
-            (("bd!", "bdelete!"), "Delete buffer without asking about unsaved changes", lambda arg="": self.delete_buffer(arg, force=True)),
-            (("Ex", "Explore", "explorer", "tree", "Lex", "Vex"), "Toggle the file explorer (ctrl+b)", lambda arg="": self._ex_explore(arg)),
-            (("noh", "nohlsearch"), "Stop highlighting search matches (n shows them again)", lambda arg="": self.pane.clear_search_highlight()),
-            (("run", "runall"), "Run all cells; :run 6 runs cell c6 (stale cells it uses first)", self._ex_run),
-            (("timeit", "profile"), "Time this cell: run it n times and print mean, median, std, variance, p50 / p90 / p99, min, max (:timeit 5; r t 5)", self._ex_timeit),
+            (("tabn", "tabnext"), "Go to the next tab (:tabn 3 goes to tab 3)", lambda arg="": self.tab_switch(int(arg) if arg.strip().isdigit() else None, 1)),
+            (("tabp", "tabprevious", "tabN", "tabNext"), "Go to the previous tab", lambda arg="": self.tab_switch(None, -1)),
+            (("tabfirst", "tabr", "tabrewind"), "Go to the first tab", lambda arg="": self.tab_switch(1, 0)),
+            (("tablast",), "Go to the last tab", lambda arg="": self.tab_switch(len(self.workspace.tabs), 0)),
+            (("ls", "buffers", "files", "tabs"), "List the buffers (open notebooks): %a is current, a is shown, h is hidden, + has unsaved changes", lambda arg="": self._ex_list()),
+            (("b", "buffer"), "Show a buffer in this window by number or name (:b 2, :b two-sum)", lambda arg="": self.show_buffer(arg) if arg.strip() else self._ex_list()),
+            (("bn", "bnext"), "Show the next buffer in this window", lambda arg="": self.cycle_buffer(1)),
+            (("bp", "bprevious", "bN"), "Show the previous buffer in this window", lambda arg="": self.cycle_buffer(-1)),
+            (("bd", "bdelete"), "Close buffer N or name (with no name, this one) and stop its kernel", lambda arg="": self.delete_buffer(arg)),
+            (("bd!", "bdelete!"), "Close a buffer and do not ask about unsaved changes", lambda arg="": self.delete_buffer(arg, force=True)),
+            (("Ex", "Explore", "explorer", "tree", "Lex", "Vex"), "Show or hide the file explorer (ctrl+b)", lambda arg="": self._ex_explore(arg)),
+            (("noh", "nohlsearch"), "Remove the search highlights (n shows them again)", lambda arg="": self.pane.clear_search_highlight()),
+            (("run", "runall"), "Run all cells. :run 6 runs cell c6, after the out-of-date cells it needs", self._ex_run),
+            (("timeit", "profile"), "Time this cell: run it n times and show mean, median, std, variance, p50 / p90 / p99, min and max (:timeit 5; r t 5)", self._ex_timeit),
             (("runabove",), "Run the cells above the current one", lambda arg="": self.pane.run_relative(False)),
             (("runbelow",), "Run the current cell and the cells below", lambda arg="": self.pane.run_relative(True, inclusive=True)),
-            (("stale", "runstale"), "Run stale cells", lambda arg="": self.action_run_stale()),
-            (("restart",), "Restart kernel", lambda arg="": self.action_restart_kernel()),
+            (("stale", "runstale"), "Run the stale cells (the cells that are out of date)", lambda arg="": self.action_run_stale()),
+            (("restart",), "Restart the kernel", lambda arg="": self.action_restart_kernel()),
             (("clear",), "Clear all outputs", lambda arg="": self.pane.clear_outputs()),
-            (("img", "image"), "View this cell's image full screen (v in cell mode; :img 2 the second); :img save [N] [file] saves this cell's image(s) as PNG next to the notebook, :img open [N] opens them in the browser; :img save all / :img open all take every cell's", self._ex_image),
-            (("set",), "Options: vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall cursor=bar|underline|block; debugger history: debug_detail=full|balanced|lean|auto (full is the default; auto is full until 10,000 steps, then balanced), debug_history=200MB debug_events debug_thinning=on|off debug_repr_chars debug_strip_items debug_grid_size debug_stats=watched|cpu|off, debug_<key>? shows the value in effect", self._ex_set),
-            (("copy", "yank"), "Copy to the system clipboard: :copy all the whole notebook as plain code, markdown as comments; :copy all metadata keeps the # %% cell lines (the file's text; a .ipynb as # %% code); :copy this cell", self._ex_copy),
-            (("time", "timing"), "Show / hide each cell's run time in its header (t in cell mode; saved)", lambda arg="": self.set_timing(not Cell.show_timing)),
-            (("outline", "tags"), "Outline panel: each cell with what it defines, live types after a run, its edges; enter jumps (ctrl+o)", lambda arg="": self.action_toggle_outline()),
-            (("vars", "variables"), "Variables panel: name, type, shape, value, defining cell; enter shows the value, g goes to the cell, d deletes (ctrl+v)", lambda arg="": self.action_toggle_variables()),
-            (("debug",), "Debugger: post-mortem where this cell failed, else run it paused on its first line (r d; breakpoint() in code)", self._ex_debug),
-            (("stop",), "While paused: :stop if EXPR runs until EXPR is true (b in the debugger)", self._ex_stop),
-            (("lazy",), "Toggle run mode: lazy (dependents only marked stale) / reactive (they re-run); saved (f3)", lambda arg="": self.action_toggle_lazy()),
-            (("new",), "New cell below", lambda arg="": self.action_add_cell()),
-            (("delete", "del", "d"), "Delete current cell (in cell mode; in the editor :d deletes lines as in vim)", lambda arg="": self.action_delete_cell()),
-            (("foldclose", "foldc"), "Fold: hide this cell's code, fold a markdown cell (zc); :foldclose all every cell (zM)", lambda arg="": self.fold_cells("close_all" if arg.strip() == "all" else "close")),
-            (("foldopen", "foldo"), "Unfold this cell; :foldopen all every cell (zR)", lambda arg="": self.fold_cells("open_all" if arg.strip() == "all" else "open")),
-            (("digraphs", "dig"), "List the digraphs (insert mode ctrl+k then two characters)", self._ex_digraphs),
-            (("md", "markdown"), "Cell → Markdown", lambda arg="": self._ex_kind("markdown")),
-            (("code",), "Cell → Code", lambda arg="": self._ex_kind("code")),
-            (("hide",), "Hide this cell's code, or fold a markdown cell (h in cell mode; code: saved as marimo hide_code)", lambda arg="": self._ex_hide(True)),
+            (("img", "image"), "Show this cell's image on the full screen (v in cell mode; :img 2 shows the second). :img save [N] [file] saves it as PNG next to the notebook. :img open [N] opens it in the browser. :img save all and :img open all use all cells", self._ex_image),
+            (("set",), "Options: vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall statusbar nostatusbar cursor=bar|underline|block. Debugger history: debug_detail=full|balanced|lean|auto (full is the default; auto is full until 10,000 steps, then balanced), debug_history=200MB debug_events debug_thinning=on|off debug_repr_chars debug_strip_items debug_grid_size debug_stats=watched|cpu|off. debug_<key>? shows the current value", self._ex_set),
+            (("copy", "yank"), "Copy to the clipboard. :copy copies this cell. :copy all copies the notebook as code, with markdown as comments. :copy all metadata also keeps the # %% cell lines", self._ex_copy),
+            (("time", "timing"), "Show or hide the run time in each cell header (t in cell mode; gpython keeps the setting)", lambda arg="": self.set_timing(not Cell.show_timing)),
+            (("outline", "tags"), "Outline panel: each cell, the names it defines, their types after a run and the cells it uses. Enter goes to the cell (ctrl+o)", lambda arg="": self.action_toggle_outline()),
+            (("vars", "variables"), "Variables panel: name, type, shape, value and the cell that makes it. Enter shows the value, g goes to the cell, d deletes it (ctrl+v)", lambda arg="": self.action_toggle_variables()),
+            (("debug",), "Debugger: if this cell failed, show where it failed. If not, run it and pause on its first line (r d; breakpoint() in code)", self._ex_debug),
+            (("stop",), "When the debugger is paused, :stop if EXPR runs until EXPR is true (b in the debugger)", self._ex_stop),
+            (("lazy",), "Change the run mode (f3). Lazy: the cells that use this cell become out of date. Reactive: they run again", lambda arg="": self.action_toggle_lazy()),
+            (("new",), "Make a new cell below", lambda arg="": self.action_add_cell()),
+            (("delete", "del", "d"), "Delete the current cell (in cell mode; in the editor, :d deletes lines as in vim)", lambda arg="": self.action_delete_cell()),
+            (("foldclose", "foldc"), "Fold this cell: hide its code or fold the markdown (zc). :foldclose all folds all cells (zM)", lambda arg="": self.fold_cells("close_all" if arg.strip() == "all" else "close")),
+            (("foldopen", "foldo"), "Unfold this cell. :foldopen all unfolds all cells (zR)", lambda arg="": self.fold_cells("open_all" if arg.strip() == "all" else "open")),
+            (("digraphs", "dig"), "List the digraphs (in insert mode, press ctrl+k and then two characters)", self._ex_digraphs),
+            (("md", "markdown"), "Change the cell to markdown", lambda arg="": self._ex_kind("markdown")),
+            (("code",), "Change the cell to code", lambda arg="": self._ex_kind("code")),
+            (("hide",), "Hide this cell's code, or fold a markdown cell (h in cell mode; saved as marimo hide_code)", lambda arg="": self._ex_hide(True)),
             (("show",), "Show this cell's code, or unfold a markdown cell", lambda arg="": self._ex_hide(False)),
-            (("interrupt",), "Interrupt running code", lambda arg="": self.pane.kernel.interrupt()),
-            (("theme",), "Set theme (:theme name) or show the current one", self._ex_theme),
-            (("env", "kernel", "envs"), "Python environment for this kernel: pick (f6), or :env name|path switches", lambda arg="": envpicker.ex_env(self.pane, arg)),
-            (("venv",), "New venv with python -m venv, then switch to it (:venv folder [python])", lambda arg="": envpicker.ex_venv(self.pane, arg)),
-            (("uv",), "uv for this kernel: :uv add pkg · :uv pip install pkg · :uv venv [folder] [python]", lambda arg="": envpicker.ex_uv(self.pane, arg)),
-            (("pip",), "Install into this kernel's env (:pip numpy; :pip alone offers what the current cell is missing; uses uv when available; :pip list, uninstall)", lambda arg="": envpicker.ex_pip(self.pane, arg)),
-            (("find", "fin", "Telescope"), "Find files by fuzzy name (space f f; :find text starts the search)", lambda arg="": self.action_find_files(arg)),
-            (("help", "h"), "Keys and commands", lambda arg="": self.action_help()),
+            (("interrupt",), "Stop the running code", lambda arg="": self.pane.kernel.interrupt()),
+            (("theme",), "Set the theme (:theme name) or show the current theme", self._ex_theme),
+            (("env", "kernel", "envs"), "Choose the Python environment for this kernel (f6). :env name or :env path changes to it", lambda arg="": envpicker.ex_env(self.pane, arg)),
+            (("venv",), "Make a new environment with python -m venv and use it (:venv folder [python])", lambda arg="": envpicker.ex_venv(self.pane, arg)),
+            (("uv",), "Run uv for this kernel: :uv add package · :uv pip install package · :uv venv [folder] [python]", lambda arg="": envpicker.ex_uv(self.pane, arg)),
+            (("pip",), "Install packages into the kernel environment (:pip numpy). :pip alone offers the packages this cell needs. It uses uv if it can. Also :pip list and :pip uninstall", lambda arg="": envpicker.ex_pip(self.pane, arg)),
+            (("find", "fin", "Telescope"), "Find files by part of the name (space f f; :find text starts the search)", lambda arg="": self.action_find_files(arg)),
+            (("help", "h"), "Show the keys and commands", lambda arg="": self.action_help()),
         ]
 
     def view_image(self, cell: Cell | None = None, index: int = 0) -> bool:
@@ -1460,7 +1471,7 @@ class GPython(App):
         try:
             if action == "save":
                 if words and len(names) > 1:
-                    self.notify("Give the image number with a file name: :img save 2 plot.png", severity="warning")
+                    self.notify("Give the image number before the file name, for example :img save 2 plot.png", severity="warning")
                     return
                 targets = [Path(words[0])] if words else [imageview.unused_path(self._image_folder(), n) for n in names]
                 saved = [imageview.save_png(pngs[i], target) for i, target in zip(chosen, targets)]
@@ -1541,12 +1552,14 @@ class GPython(App):
             self.set_timing(not option.startswith("no"))
         elif option in ("autoinstall", "noautoinstall"):
             self.set_autoinstall(option == "autoinstall")
+        elif option in ("statusbar", "nostatusbar"):
+            self.set_status_bar(option == "statusbar")
         elif option.startswith("cursor"):
             self.set_insert_cursor(option.partition("=")[2].strip())
         elif option.startswith("debug_"):
             self.set_debug_option(option)
         else:
-            self.notify(f"Unknown option: {option or '(none)'}  (vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall cursor=bar|underline|block debug_detail=full|balanced|lean|auto debug_<limit>=…)", severity="error")
+            self.notify(f"Unknown option: {option or '(none)'}. The options are: vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall statusbar nostatusbar cursor=bar|underline|block debug_detail=full|balanced|lean|auto debug_<limit>=…", severity="error")
 
     def set_debug_option(self, option: str) -> None:
         """:set debug_detail=full|balanced|lean|auto picks the recorder's preset; :set debug_<limit>=value
@@ -1562,7 +1575,7 @@ class GPython(App):
         name = name.rstrip("?").strip()
         key = name[len("debug_"):]
         if key != "detail" and key not in SETTINGS:
-            self.notify(f"Unknown option {name}: debug_detail, " + ", ".join(f"debug_{k}" for k in SETTINGS), severity="error")
+            self.notify(f"Unknown option {name}. The options are: debug_detail, " + ", ".join(f"debug_{k}" for k in SETTINGS), severity="error")
             return
         settings = debug_settings()
         if asking or not equals:
@@ -1575,10 +1588,10 @@ class GPython(App):
             return
         value = value.strip()
         if key == "detail" and value not in DETAILS:
-            self.notify(f"debug_detail is one of: {', '.join(DETAILS)}", severity="error")
+            self.notify(f"debug_detail must be one of: {', '.join(DETAILS)}", severity="error")
             return
         if key != "detail" and value and resolve({name: value})[1][key] != "override":
-            self.notify(f"Not a value for {name}: {value}", severity="error")
+            self.notify(f"{value} is not a valid value for {name}", severity="error")
             return
         config.save({name: value})
         settings[name] = value
@@ -1595,7 +1608,7 @@ class GPython(App):
     def set_insert_cursor(self, shape: str) -> None:
         """:set cursor=bar|underline|block: the cursor in insert mode; saved as `insert_cursor`."""
         if shape not in INSERT_CURSOR_SHAPES:
-            self.notify(f"insert cursor is {VimTextArea.insert_cursor}; choose one of: {', '.join(INSERT_CURSOR_SHAPES)}", severity="warning" if shape else "information")
+            self.notify(f"The insert cursor is {VimTextArea.insert_cursor}. Choose one of: {', '.join(INSERT_CURSOR_SHAPES)}", severity="warning" if shape else "information")
             return
         VimTextArea.insert_cursor = "block"
         sync_terminal_cursor(self)
@@ -1616,7 +1629,7 @@ class GPython(App):
                 return
             text, label = cell.source, f"cell {cell.label}"
         else:
-            self.notify(":copy all copies the whole notebook without # %% lines, :copy all metadata with them; :copy alone, this cell", severity="warning")
+            self.notify(":copy copies this cell. :copy all copies the notebook without the # %% lines. :copy all metadata keeps them", severity="warning")
             return
         self.copy_to_clipboard(text)
         lines = text.count("\n") + (not text.endswith("\n") and bool(text))
@@ -1632,7 +1645,7 @@ class GPython(App):
         for pane in self.workspace.buffers:
             if pane.path is None:
                 if pane.dirty:
-                    self.notify(f"An untitled notebook has no file name: use :w name.py in it", severity="warning")
+                    self.notify(f"A new notebook has no file name. Go to it and use :w name.py", severity="warning")
                     return
                 continue
             if pane.dirty:
@@ -1681,7 +1694,7 @@ class GPython(App):
             n = int(arg)
             to = n if n <= here else n - 1
         else:
-            self.notify(f"tabmove {arg}: give 0, N, +N, -N or last", severity="warning")
+            self.notify(f"tabmove {arg} is not valid. Use 0, N, +N, -N or last", severity="warning")
             return
         workspace.move_tab(here, to)
 
@@ -1698,7 +1711,7 @@ class GPython(App):
             await self.action_toggle_explorer()
 
     def _ex_list(self) -> None:
-        self.notify("\n".join(self.buffer_lines()), title="Buffers  (:b N shows one, :bd N closes it)", timeout=10)
+        self.notify("\n".join(self.buffer_lines()), title="Open notebooks  (:b N shows one, :bd N closes one)", timeout=10)
 
     def _ex_theme(self, arg: str = "") -> None:
         if not arg:
@@ -1742,7 +1755,7 @@ class GPython(App):
             if asyncio.iscoroutine(result):
                 await result
             return
-        self.notify(f"Unknown command: {command}  (try :help)", severity="error")
+        self.notify(f"Unknown command: {command}. Use :help to see the commands", severity="error")
 
     def action_pick_theme(self) -> None:
         """Theme picker with live preview; the config is written only on confirm."""

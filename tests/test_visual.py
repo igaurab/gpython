@@ -193,7 +193,7 @@ def test_status_bar_shows_visual_modes_and_focus_ends_visual(tmp_path):
             first = app.cells()[0].editor
             first.focus()
             await pilot.pause()
-            status = lambda: str(app._status.render())
+            status = lambda: str(app.query_one("#mode-chip").render())
             await pilot.press("v")
             await pilot.pause()
             assert app.ui_mode == "visual" and "VISUAL" in status()

@@ -208,11 +208,33 @@ selected as a cell), deleting, undoing, searching or switching tabs keeps it; `e
 Ex commands: `:w [file]`, `:wa`, `:q`, `:q!`, `:wq`, `:qa`, `:wqa`, `:e file`,
 `:sp [file]`, `:vs [file]`, `:only`, `:tabnew [file]`, `:tabclose`, `:tabn`,
 `:tabp`, `:ls`, `:noh`, `:Ex`, `:run`, `:timeit [n]`, `:runabove`, `:runbelow`, `:stale`, `:restart`,
-`:clear`, `:s/a/b/g` (`:%s`, `:'<,'>s`, `:&&`), `:set vim|novim|lazy|nolazy|nu|nonu|time|notime|cursor=block|bar|underline`, `:set debug_detail=…`, `:vars`, `:debug`, `:stop if …`, `:md`, `:code`,
+`:clear`, `:s/a/b/g` (`:%s`, `:'<,'>s`, `:&&`), `:set vim|novim|lazy|nolazy|nu|nonu|time|notime|statusbar|nostatusbar|cursor=block|bar|underline`, `:set debug_detail=…`, `:vars`, `:debug`, `:stop if …`, `:md`, `:code`,
 `:theme [name]`, `:N` (go to cell N), `:help`. Save and quit commands forgive caps lock:
 `:Q!`, `:WQ!`, `:Wq`, `:W`, `:X`, `:QA!` work like `:q!`, `:wq!`, … (only these; `:D` is not `:d`). `:set novim`, line numbers, the
 run time display, the run mode and the theme are remembered in
-`~/.config/gpython/config.toml` (`vim`, `line_numbers`, `timing`, `run_mode`, `theme`).
+`~/.config/gpython/config.toml` (`vim`, `line_numbers`, `timing`, `run_mode`, `theme`, `status_bar`).
+
+### Bottom bar
+
+The last row shows the mode badge on the left and, on the right, modules like a tmux
+status line: the clock, the host name, cpu, ram and gpu (gpu only where `nvidia-smi`
+exists). All are on by default. cpu and gpu draw the last twelve samples as vertical
+bars, btop style (`cpu ▂▃▅▃▂ 33%`), ram is a block meter (`ram ▪▪▪▪▪▪ 55% 14.1G/32.0G`);
+every bar and number is green under 30%, yellow under 80%, red above. In the config:
+
+```toml
+status_bar = true
+[status]
+cpu = false
+layout = "mode clock host ram"
+clock_format = "%H:%M"
+style = "tmux"
+```
+
+`status.<module> = false` drops a module, `status.layout` orders them (`mode clock host
+cpu ram gpu` is the default), `status.clock_format` is a `strftime` pattern, `status.style
+= "tmux"` draws one level glyph in brackets (`cpu [▃] 51%`) instead of the btop graphs.
+`:set nostatusbar` hides the whole bar and `:set statusbar` brings it back.
 
 Cell headers read `✓ c3 [4] 1.25s  defines x · uses y`: display position,
 execution count (like Jupyter's `In [4]`) and, when `t` has turned it on, the run
@@ -463,9 +485,10 @@ solarized (dark, light), monokai, plus Textual's built-in themes.
 ## Python environments and packages
 
 Each notebook's kernel runs in a Python environment. The header chip shows
-which one (`Python 3.12.4 · .venv ▾`); the bottom bar shows the kernel state
-with a dot (green ready, yellow starting or installing, red failed) and the
-live output of a running install.
+which one (`● Python 3.12.4 · .venv ▾`); its dot is the kernel state (green
+ready, yellow starting or installing, red failed) and while the kernel is not
+ready the state text, such as the live output of a running install, follows
+the environment name.
 
 At start a notebook uses the environment it last used; otherwise the nearest
 `.venv` / `venv` (next to the file, up to the project root) that has

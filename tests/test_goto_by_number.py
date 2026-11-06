@@ -38,7 +38,7 @@ def ui(tmp_path, test, cells=None):
 
 
 def status(app) -> str:
-    return str(app.query_one("#status").render())
+    return str(app.query_one("#mode-chip").render()) + " " + app.sub_title
 
 
 def test_g_number_selects_that_cell_in_cell_mode(tmp_path):

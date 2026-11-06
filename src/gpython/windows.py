@@ -658,7 +658,7 @@ class Workspace(Widget):
 
 
     def neighbour(self, pane: NotebookPane, direction: str) -> NotebookPane | None:
-        """The window next to `pane` in direction h/j/k/l (by screen geometry)."""
+        """The window next to `pane` in direction h/j/k/l: the nearest one, then the one that lies most fully beside it (overlap as a share of its own size, so equal splits tie)."""
         tab = self.tab
         if tab is None:
             return None
@@ -673,16 +673,16 @@ class Workspace(Widget):
             match direction:
                 case "h":
                     ok, gap = rect.right <= me.x, me.x - rect.right
-                    overlap = min(me.bottom, rect.bottom) - max(me.y, rect.y)
+                    overlap = (min(me.bottom, rect.bottom) - max(me.y, rect.y)) / max(rect.height, 1)
                 case "l":
                     ok, gap = rect.x >= me.right, rect.x - me.right
-                    overlap = min(me.bottom, rect.bottom) - max(me.y, rect.y)
+                    overlap = (min(me.bottom, rect.bottom) - max(me.y, rect.y)) / max(rect.height, 1)
                 case "k":
                     ok, gap = rect.bottom <= me.y, me.y - rect.bottom
-                    overlap = min(me.right, rect.right) - max(me.x, rect.x)
+                    overlap = (min(me.right, rect.right) - max(me.x, rect.x)) / max(rect.width, 1)
                 case _:
                     ok, gap = rect.y >= me.bottom, rect.y - me.bottom
-                    overlap = min(me.right, rect.right) - max(me.x, rect.x)
+                    overlap = (min(me.right, rect.right) - max(me.x, rect.x)) / max(rect.width, 1)
             if ok and overlap > 0:
                 key = (gap, -overlap, other)
                 if best is None or key[:2] < best[:2]:

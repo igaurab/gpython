@@ -30,7 +30,7 @@ from . import bigtext, images
 ZOOM_STEP = 1.25
 MIN_SCALE, MAX_SCALE = 0.05, 20.0
 PAN_COLS, PAN_ROWS = 4, 2
-KEYS = "+ - zoom · 0 fit · 1 actual size · h j k l pan · n p next / previous · s save · o browser · q close"
+KEYS = "+ - zoom · 0 fit · 1 actual size · h j k l move · n p next / previous · s save · o browser · q close"
 
 
 def stem_for(stem: str, index: int, count: int) -> str:

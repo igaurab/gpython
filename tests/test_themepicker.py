@@ -61,7 +61,6 @@ def test_down_previews_and_escape_restores(notebook_path):
             previewed = app.theme
             assert previewed != DEFAULT_THEME
             assert {e.theme for e in app.query(VimTextArea)} == {f"{previewed}-normal"}
-            assert previewed in str(app.query_one("#status").render())
             await pilot.press("escape")
             await pilot.pause()
             assert not isinstance(app.screen, ThemePicker)

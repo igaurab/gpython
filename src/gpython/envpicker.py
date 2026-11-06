@@ -35,7 +35,7 @@ KIND_TAGS = {
 SECTIONS = {
     "project": "Project",
     "envs": "Environments",
-    "interpreters": "Interpreters (picking one makes a venv from it if it has no ipykernel)",
+    "interpreters": "Python interpreters (if one has no ipykernel, gpython makes an environment from it)",
 }
 
 _cache: dict[Path, list[envs.Env]] = {}
@@ -95,7 +95,7 @@ class EnvPicker(ModalScreen[tuple | None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="env-picker"):
             yield Static(id="env-title")
-            yield Input(placeholder="Filter, or type a path to a venv or python…  (enter use · esc close)")
+            yield Input(placeholder="Type to filter, or type the path to an environment or Python  (enter: use · esc: close)")
             yield OptionList()
 
     def on_mount(self) -> None:
@@ -120,25 +120,25 @@ class EnvPicker(ModalScreen[tuple | None]):
 
     def _fill(self, query: str, keep: bool = False) -> None:
         cur = self.current
-        self._title(self.title_text or f"kernel runs in {cur.name} · {_home(cur.python)}")
+        self._title(self.title_text or f"The kernel uses {cur.name} · {_home(cur.python)}")
         q = query.strip().lower()
         rows: list[Option] = []
         if not q:
             uv_ok = envs.uv() is not None
             rows.append(Option(Text("Actions", style="bold dim"), disabled=True))
             if uv_ok:
-                rows.append(Option(_row("+", "New uv env", "", ("uv", "green"), "uv venv (fast, any Python version) + ipykernel → switch"), id="act:new-uv"))
-            rows.append(Option(_row("+", "New venv", "", ("venv", "cyan"), "python -m venv + ipykernel → switch"), id="act:new-venv"))
+                rows.append(Option(_row("+", "New uv environment", "", ("uv", "green"), "make it with uv (fast), install ipykernel, use it"), id="act:new-uv"))
+            rows.append(Option(_row("+", "New venv environment", "", ("venv", "cyan"), "make it with python -m venv, install ipykernel, use it"), id="act:new-venv"))
             how = "uv pip install" if uv_ok else "pip install"
             rows.append(Option(_row("⇣", "Install packages", "", ("pkgs", "magenta"), f"{how} into {cur.name}"), id="act:install"))
             if uv_ok and (self.root / "pyproject.toml").exists():
-                rows.append(Option(_row("⇣", "Add to project", "", ("uv add", "green"), f"uv add → {_home(self.root / 'pyproject.toml')}"), id="act:add"))
-            rows.append(Option(_row("↻", "Restart kernel", "", ("kernel", "blue"), "same env, fresh process"), id="act:restart"))
+                rows.append(Option(_row("⇣", "Add to the project", "", ("uv add", "green"), f"uv add: write to {_home(self.root / 'pyproject.toml')}"), id="act:add"))
+            rows.append(Option(_row("↻", "Restart the kernel", "", ("kernel", "blue"), "same environment, new process"), id="act:restart"))
         elif query.strip()[:1] in ("/", "~", ".") or "/" in query:
             path = Path(query.strip()).expanduser()
             if not path.is_absolute():
                 path = self.start / path
-            rows.append(Option(_row("→", f"Use {_home(path)}", "", ("path", "blue"), "a venv folder or a python executable"), id="path:" + str(path)))
+            rows.append(Option(_row("→", f"Use {_home(path)}", "", ("path", "blue"), "an environment folder or a Python program"), id="path:" + str(path)))
         project = {e.prefix for e in envs.project_venvs(self.start)} if self.found else set()
         section = None
         for i, env in enumerate(self.found):
@@ -151,7 +151,7 @@ class EnvPicker(ModalScreen[tuple | None]):
             current = env.same(cur)
             detail = _home(env.prefix or env.python)
             if env.has_ipykernel is False:
-                detail = "needs ipykernel (installed on pick) · " + detail
+                detail = "no ipykernel: gpython installs it when you pick it · " + detail
             tag = KIND_TAGS.get(env.kind, (env.kind, ""))
             rows.append(Option(_row("●" if current else " ", env.name, env.version or "?", tag, detail, current), id=f"env:{i}"))
         if not self.found:
@@ -229,12 +229,12 @@ class EnvPicker(ModalScreen[tuple | None]):
         env = self.current
         rows = []
         if self.can_add():
-            detail = f"→ {_home(self.root / 'pyproject.toml')}, synced into {env.name}"
+            detail = f"write to {_home(self.root / 'pyproject.toml')}, then install into {env.name}"
             on = chosen == "add"
             rows.append(Option(_row("●" if on else " ", "uv add", "", ("project", "green"), detail, on), id="mode:add"))
         on = chosen == "install"
-        detail = f"→ {env.name} ({_home(env.python)})"
-        rows.append(Option(_row("●" if on else " ", self._pip(), "", ("env only", "magenta"), detail, on), id="mode:install"))
+        detail = f"into {env.name} ({_home(env.python)})"
+        rows.append(Option(_row("●" if on else " ", self._pip(), "", ("kernel", "magenta"), detail, on), id="mode:install"))
         return rows
 
     @staticmethod
@@ -249,10 +249,10 @@ class EnvPicker(ModalScreen[tuple | None]):
         return f"{self._pip()} {names} → {self.current.name}"
 
     def _ask_title(self) -> None:
-        lead = self.title_text or "install packages"
-        switch = " · ↑↓ switch" if self.can_add() else ""
-        back = "back" if self._first_ask is None else "skips" if self.after_text else "closes"
-        self._title(f"{lead} · enter: {self._command()}{self.after_text}{switch} · esc {back}")
+        lead = self.title_text or "Install packages"
+        switch = " · ↑↓: change the way" if self.can_add() else ""
+        back = "go back" if self._first_ask is None else "skip" if self.after_text else "close"
+        self._title(f"{lead} · enter: {self._command()}{self.after_text}{switch} · esc: {back}")
 
 
     def _start_ask(self, what: str, tool: str | None = None, python: str | None = None) -> None:
@@ -264,25 +264,25 @@ class EnvPicker(ModalScreen[tuple | None]):
         if what == "create":
             folder = ".venv" if not (self.start / ".venv").exists() else ".venv-" + (python or "2").replace(".", "")
             field.value = folder + (f" {python}" if python else "")
-            field.placeholder = "folder [python version, e.g. 3.12]"
+            field.placeholder = "folder [Python version, for example 3.12]"
             cmd = "uv venv" if tool == "uv" else "python -m venv"
-            self._title(f"new env with {cmd} — folder (relative to {_home(self.start)}) and optional Python version")
-            lines = ["enter creates it, installs ipykernel and switches the kernel to it · esc back"]
+            self._title(f"Make a new environment with {cmd}. Type a folder name (relative to {_home(self.start)}). You can add a Python version.")
+            lines = ["enter: make it, install ipykernel and use it for the kernel · esc: go back"]
             if tool == "uv":
-                lines.append("versions uv can fetch: 3.10 … 3.14 (downloaded on demand)")
+                lines.append("Python versions uv can download: 3.10 to 3.14")
         else:
             field.value = self.prefill
-            field.placeholder = "package names, e.g. numpy pandas 'polars>=1'"
+            field.placeholder = "package names, for example numpy pandas 'polars>=1'"
             rows = self._mode_rows(what)
             for row in rows:
                 options.add_option(row)
             options.highlighted = next((i for i, row in enumerate(rows) if row.id == f"mode:{what}"), 0)
             self._ask_title()
-            lines = ["new imports work without restarting the kernel"]
+            lines = ["You do not need to restart the kernel after the install."]
             if len(rows) > 1:
-                lines[0] = "↑↓ pick the way; the pick is remembered (install_mode in the config) · " + lines[0]
+                lines[0] = "↑↓: pick the way to install. gpython keeps your choice (install_mode in the config). " + lines[0]
             if self.current.kind == "builtin":
-                lines.insert(0, "note: this is gpython's own environment; a project venv (New uv env) keeps them apart")
+                lines.insert(0, "Note: this is the gpython environment. Make a project environment to keep your packages apart.")
         for line in lines:
             options.add_option(Option(Text("  " + line, style="dim"), disabled=True))
         field.cursor_position = len(field.value)
@@ -316,7 +316,7 @@ class EnvPicker(ModalScreen[tuple | None]):
             self.query_one("#env-picker").remove_class("-ask")
             field = self.query_one(Input)
             field.value = ""
-            field.placeholder = "Filter, or type a path to a venv or python…  (enter use · esc close)"
+            field.placeholder = "Type to filter, or type the path to an environment or Python  (enter: use · esc: close)"
             self._fill("")
         else:
             self.dismiss(None)
@@ -350,11 +350,11 @@ def _base(pane) -> Path:
 async def use(pane, env: envs.Env) -> None:
     """Switch the pane's kernel to env, installing ipykernel into it first if it is a venv without it."""
     if env.same(pane.kernel.env):
-        pane.notify(f"Already running in {env.name}")
+        pane.notify(f"The kernel already uses {env.name}")
         return
     state = pane.kernel_state
     try:
-        await envs.ensure_ipykernel(env, _progress(pane, f"installing ipykernel into {env.name}"))
+        await envs.ensure_ipykernel(env, _progress(pane, f"Installing ipykernel into {env.name}"))
     except envs.EnvError:
         pane.set_kernel_state(state)
         if env.prefix is None:
@@ -362,7 +362,7 @@ async def use(pane, env: envs.Env) -> None:
                 EnvPicker(pane.kernel.env, _base(pane), ask=("create", "uv" if envs.uv() else "venv", str(env.python))),
                 lambda choice: handle(pane, choice),
             )
-            pane.notify(f"{env.name} has no ipykernel: make a venv from it (enter), or esc", timeout=6)
+            pane.notify(f"{env.name} has no ipykernel. enter: make an environment from it · esc: stop", timeout=6)
         else:
             pane.notify(f"Could not install ipykernel into {env.name}", severity="error")
         return
@@ -374,11 +374,11 @@ async def create(pane, tool: str, folder: str, python: str | None = None) -> Non
     if not path.is_absolute():
         path = _base(pane) / path
     if (existing := envs.venv_at(path)) is not None:
-        pane.notify(f"{_home(path)} already is an environment: switching to it")
+        pane.notify(f"{_home(path)} is already an environment. The kernel uses it now.")
         await use(pane, existing)
         return
     if path.exists() and any(path.iterdir()):
-        pane.notify(f"{_home(path)} exists and is not empty", severity="error")
+        pane.notify(f"{_home(path)} is not empty. Type a different folder.", severity="error")
         return
     state = pane.kernel_state
     cmd = "uv venv" if tool == "uv" and envs.uv() else "python -m venv"
@@ -389,7 +389,7 @@ async def create(pane, tool: str, folder: str, python: str | None = None) -> Non
         pane.notify(f"{cmd} failed: {error}", severity="error", timeout=10)
         return
     _cache.clear()
-    pane.notify(f"Created {env.name} (Python {env.version}, {cmd})")
+    pane.notify(f"Made {env.name} (Python {env.version}, {cmd})")
     await pane.switch_env(env)
 
 
@@ -404,7 +404,7 @@ async def install(pane, names: list[str], project: bool = False) -> str | None:
     on_line = _progress(pane, f"{'uv add' if project else 'installing'} {text}")
     try:
         if project and not await envs.add(env, names, _base(pane), on_line):
-            pane.notify("No pyproject.toml here: installing into the env only")
+            pane.notify("There is no pyproject.toml here. gpython installs only into the kernel environment.")
             project = False
         if not project:
             await envs.install(env, names, on_line)
@@ -416,7 +416,7 @@ async def install(pane, names: list[str], project: bool = False) -> str | None:
     if pane.kernel.ready.is_set():
         await pane.kernel._execute("__import__('importlib').invalidate_caches()", None, store_history=False)
     where = f"{_home(envs.project_root(_base(pane)) / 'pyproject.toml')} and {env.name}" if project else env.name
-    pane.notify(f"{'Added' if project else 'Installed'} {text} → {where}")
+    pane.notify(f"Added {text} to {where}" if project else f"Installed {text} into {where}")
     return None
 
 
@@ -456,7 +456,7 @@ def install_missing(pane, cells: list, after_install: bool = False) -> None:
     env = pane.kernel.env
     modules = sorted({cell.missing for cell in new})
     verb = "is" if len(modules) == 1 else "are"
-    again = ", then " + ", ".join(cell.label for cell in new) + (" runs" if len(new) == 1 else " run") + " again"
+    again = ", then run " + ", ".join(cell.label for cell in new) + " again"
 
     def done(choice: tuple | None) -> None:
         if choice and choice[0] in ("install", "add"):
@@ -535,7 +535,7 @@ def ex_env(pane, arg: str = "") -> None:
     found = envs.discover(_base(pane))
     match = next((e for e in found if e.name == arg), None) or next((e for e in found if arg in e.name), None)
     if match is None:
-        pane.notify(f"No environment matches {arg!r} (f6 lists them)", severity="error")
+        pane.notify(f"No environment matches {arg!r}. Press f6 to see all environments.", severity="error")
     else:
         handle(pane, ("use", match))
 
@@ -575,7 +575,7 @@ def ex_uv(pane, arg: str = "") -> None:
     """:uv add pkg · :uv pip install pkg · :uv venv [folder] [python] · :uv <anything> (in the project)."""
     words = _words(arg)
     if not envs.uv():
-        pane.notify("uv is not installed: https://docs.astral.sh/uv/", severity="error")
+        pane.notify("uv is not installed. Get it from https://docs.astral.sh/uv/", severity="error")
         return
     if not words:
         open_picker(pane)

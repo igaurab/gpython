@@ -39,7 +39,7 @@ def ui(tmp_path, test, cells=CELLS, kernel=False):
 
 
 def status(app) -> str:
-    return str(app.query_one("#status").render())
+    return str(app.query_one("#mode-chip").render()) + " " + app.sub_title
 
 
 async def settle(app, pilot):

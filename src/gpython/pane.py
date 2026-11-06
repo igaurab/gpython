@@ -103,7 +103,7 @@ class NotebookPane(Vertical):
             try:
                 specs, self.markers = notebook.load_cells(self.path)
             except Exception as error:
-                self.load_error = f"Could not parse {self.path}: {error}"
+                self.load_error = f"Could not read {self.path}: {error}"
                 specs = [notebook.CellSpec(self.path.read_text(errors="replace"))]
             specs = specs or [notebook.CellSpec("")]
         self._specs = specs
@@ -154,7 +154,7 @@ class NotebookPane(Vertical):
         if self.load_error:
             self.notify(self.load_error, severity="warning")
         if self._env_hint is not None:
-            self.notify(f"Found {self._env_hint.name} without ipykernel: f6 to run the kernel there (ipykernel is installed for you)", timeout=8)
+            self.notify(f"Found {self._env_hint.name}, but it has no ipykernel. Press f6 to run the kernel there. gpython installs ipykernel for you", timeout=8)
         self.app.after_first_frame(self._after_first_frame)
 
     def _after_first_frame(self) -> None:
@@ -212,7 +212,7 @@ class NotebookPane(Vertical):
         except Exception as error:
             if not self._shutting_down and self.is_attached:
                 self.set_kernel_state("no kernel")
-                self.notify(f"Kernel could not start: {error}", severity="error", timeout=10)
+                self.notify(f"The kernel did not start: {error}", severity="error", timeout=10)
         finally:
             self._booted.set()
 
@@ -224,7 +224,7 @@ class NotebookPane(Vertical):
         except Exception as error:
             self.notify(f"Could not start a kernel in {env.python}: {error}", severity="error", timeout=10)
             if not self.kernel.ready.is_set():
-                self.set_kernel_state("kernel failed to start (f6 picks another env)")
+                self.set_kernel_state("kernel failed to start (press f6 to choose another environment)")
                 return
         else:
             if self.path is not None:
@@ -513,7 +513,7 @@ class NotebookPane(Vertical):
     async def delete_variable(self, name: str) -> None:
         """d in the variables panel: remove the name from the kernel; the cells that bound it become stale."""
         if self.debug is not None:
-            self.notify("Not while the debugger is paused", severity="warning")
+            self.notify("You cannot do this while the debugger is paused", severity="warning")
             return
         await self.kernel.delete({name})
         self._values.pop(name, None)
@@ -531,7 +531,7 @@ class NotebookPane(Vertical):
         from .variables import ValueScreen
 
         if self.kernel._lock.locked():
-            self.notify("The kernel is busy; the value shows once the cell finishes", severity="information")
+            self.notify("The kernel is busy. The value shows when the cell finishes", severity="information")
         value = await self.kernel.full_value(name)
         self.app.push_screen(ValueScreen(name, value))
 
@@ -824,7 +824,7 @@ class NotebookPane(Vertical):
         if session is None:
             return
         if not session.total:
-            self.notify("Nothing recorded yet: step with n, ], ) or b first", severity="information")
+            self.notify("The debugger has no steps yet. Step first with n, ], ) or b", severity="information")
             return
         fetch = session.travel(step)
         if fetch is not None:
@@ -848,7 +848,7 @@ class NotebookPane(Vertical):
         self._timeline_wanted = False
         roots = timeline(session.records())
         if not roots:
-            self.notify("No loop iterations recorded yet: step through a loop first", severity="information")
+            self.notify("The debugger has no loop steps yet. Step through a loop first", severity="information")
             return
 
         def chosen(index: int | None) -> None:
@@ -1247,7 +1247,7 @@ class NotebookPane(Vertical):
     async def paste_cell(self, above: bool = False) -> None:
         clip = self.app._cell_clipboard
         if clip is None:
-            self.notify("No cell copied (yy or x in cell mode)")
+            self.notify("No cell is copied. Use yy or x in cell mode to copy one")
             return
         clip = dataclasses.replace(clip, spec=None)
         cell = await self._insert(self.current_cell(), above, snapshot=clip)
@@ -1325,7 +1325,7 @@ class NotebookPane(Vertical):
         if warned is not None and warned[0] == cell.cid and now - warned[1] <= self.MARKDOWN_CONFIRM_SECONDS:
             return True
         self._markdown_warned = (cell.cid, now)
-        self.notify("This cell already renders as text; press m again to convert it to markdown anyway", severity="warning")
+        self.notify("This cell already shows as text. Press m again to change it to markdown", severity="warning")
         return False
 
     def save(self, then=None) -> None:
