@@ -208,11 +208,11 @@ selected as a cell), deleting, undoing, searching or switching tabs keeps it; `e
 Ex commands: `:w [file]`, `:wa`, `:q`, `:q!`, `:wq`, `:qa`, `:wqa`, `:e file`,
 `:sp [file]`, `:vs [file]`, `:only`, `:tabnew [file]`, `:tabclose`, `:tabn`,
 `:tabp`, `:ls`, `:noh`, `:Ex`, `:run`, `:timeit [n]`, `:runabove`, `:runbelow`, `:stale`, `:restart`,
-`:clear`, `:s/a/b/g` (`:%s`, `:'<,'>s`, `:&&`), `:set vim|novim|lazy|nolazy|nu|nonu|time|notime|cursor=block|bar|underline`, `:set debug_detail=…`, `:vars`, `:debug`, `:stop if …`, `:md`, `:code`,
+`:clear`, `:s/a/b/g` (`:%s`, `:'<,'>s`, `:&&`), `:set vim|novim|lazy|nolazy|nu|nonu|time|notime|statusbar|nostatusbar|cursor=block|bar|underline`, `:set debug_detail=…`, `:vars`, `:debug`, `:stop if …`, `:md`, `:code`,
 `:theme [name]`, `:N` (go to cell N), `:help`. Save and quit commands forgive caps lock:
 `:Q!`, `:WQ!`, `:Wq`, `:W`, `:X`, `:QA!` work like `:q!`, `:wq!`, … (only these; `:D` is not `:d`). `:set novim`, line numbers, the
 run time display, the run mode and the theme are remembered in
-`~/.config/gpython/config.toml` (`vim`, `line_numbers`, `timing`, `run_mode`, `theme`).
+`~/.config/gpython/config.toml` (`vim`, `line_numbers`, `timing`, `run_mode`, `theme`, `status_bar`).
 
 Cell headers read `✓ c3 [4] 1.25s  defines x · uses y`: display position,
 execution count (like Jupyter's `In [4]`) and, when `t` has turned it on, the run

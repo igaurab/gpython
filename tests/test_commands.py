@@ -3,7 +3,7 @@
 import asyncio
 
 import pytest
-from textual.widgets import Input
+from textual.widgets import Input, Static
 
 from gpython import config
 from gpython.app import GPython, Prompt
@@ -513,6 +513,32 @@ def test_ctrl_h_and_l_move_between_explorer_and_notebook(tmp_path):
         await pilot.pause()
         assert app.screen.query_one(Input).value == "a"
         await pilot.press("escape")
+
+    ui(tmp_path, test)
+
+
+def test_status_bar_shows_the_mode_and_set_nostatusbar_hides_it(tmp_path):
+    async def test(app, pilot):
+        bar = app.query_one("#status", Static)
+        assert bar.display and "NORMAL" in str(bar.render())
+        app.cells()[0].focus()
+        await pilot.press("escape")
+        assert "CELL" in str(bar.render())
+        await pilot.press(":", *"set nostatusbar", "enter")
+        await pilot.pause()
+        assert not bar.display and config.load()["status_bar"] is False
+        await pilot.press(":", *"set statusbar", "enter")
+        await pilot.pause()
+        assert bar.display and config.load()["status_bar"] is True
+
+    ui(tmp_path, test)
+
+
+def test_status_bar_off_in_config_starts_hidden(tmp_path):
+    config.save({"status_bar": False})
+
+    async def test(app, pilot):
+        assert not app.status_bar and not app.query_one("#status").display
 
     ui(tmp_path, test)
 

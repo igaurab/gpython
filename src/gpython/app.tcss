@@ -253,6 +253,13 @@ EnvPicker {
     background: $accent 30%;
 }
 
+#status {
+    dock: bottom;
+    height: 1;
+    background: $background;
+    color: $text-muted;
+}
+
 HelpScreen {
     align: center middle;
 }

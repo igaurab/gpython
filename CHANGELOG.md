@@ -9,9 +9,12 @@ this file as its notes.
 ## [Unreleased]
 
 ### Changed
-- The bottom status bar is gone. The kernel chip in the header carries the kernel dot
-  (green ready, yellow starting or installing, red failed) and, while the kernel is not
-  ready, the state text; `r 6`, `g 6` and `r t` prompts show in the header subtitle.
+- The bottom bar shows only the mode badge (NORMAL, INSERT, CELL, …); the kernel state,
+  theme name and key hints are gone from it. `:set nostatusbar` hides it (`status_bar =
+  false` in the config; `:set statusbar` brings it back). The kernel chip in the header
+  carries the kernel dot (green ready, yellow starting or installing, red failed) and,
+  while the kernel is not ready, the state text; `r 6`, `g 6` and `r t` prompts show in
+  the header subtitle.
 - Cell mode is sky blue (`#38bdf8`) with dark text: the badge, the cell bar and the block cursor.
 - User-facing text (notifications, the `:` command list, the help screen, the environment
   picker, the install prompt, the debugger and variables panels) is rewritten in plain,

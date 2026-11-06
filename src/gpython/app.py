@@ -232,6 +232,7 @@ class GPython(App):
         VimTextArea.enabled = vim
         VimTextArea.line_numbers = settings.get("line_numbers", True) is not False
         Cell.show_timing = settings.get("timing") is True
+        self.status_bar = settings.get("status_bar", True) is not False
         VimTextArea.insert_cursor = self._insert_cursor_setting(settings.get("insert_cursor"))
         bigtext.enabled = settings.get("experimental.true_markdown") is True
         VimTextArea.search = None
@@ -259,6 +260,8 @@ class GPython(App):
         self._tabbar = TabBar()
         self._kernel_chip: Static | None = None
         self._chip_key: tuple | None = None
+        self._status: Static | None = None
+        self._status_mode: str | None = None
         self._mode_chip: Static | None = None
         self._mode_chip_mode: str | None = None
         self._status_key: tuple | None = None
@@ -331,6 +334,9 @@ class GPython(App):
         yield self._tabbar
         with Horizontal(id="body"):
             yield self.workspace
+        self._status = Static(id="status")
+        self._status.display = self.status_bar
+        yield self._status
 
     async def on_mount(self) -> None:
         self._record_terminal_output()
@@ -489,7 +495,7 @@ class GPython(App):
         self.update_status()
 
     def update_status(self, kernel_state: str | None = None) -> None:
-        """Header: mode chip, file subtitle (or the number-sequence prompt), kernel chip with its state dot."""
+        """Header: mode chip, file subtitle (or the number-sequence prompt), kernel chip with its state dot. Bottom bar: the mode badge."""
         if self._kernel_chip is None or not self.workspace.tabs:
             return
         pane = self.pane
@@ -525,6 +531,17 @@ class GPython(App):
             else:
                 text = Text.assemble((" EDIT ", _MODE_STYLES["insert"]), (f" {chip_mode.upper()}", _CHIP_VIM_STYLES[chip_mode]))
             self._mode_chip.update(text, layout=False)
+        bar_mode = mode if VimTextArea.enabled or mode in ("cell", "files", "outline", "vars", "debug") else ""
+        if self._status is not None and bar_mode != self._status_mode:
+            self._status_mode = bar_mode
+            self._status.update(Text(f" {bar_mode.upper()} ", style=_MODE_STYLES[bar_mode]) if bar_mode else "", layout=False)
+
+    def set_status_bar(self, on: bool) -> None:
+        """:set statusbar|nostatusbar: show or hide the bottom bar (the mode badge for now); saved as `status_bar`."""
+        self.status_bar = on
+        if self._status is not None:
+            self._status.display = on
+        config.save({"status_bar": on})
 
     def find_open(self, path: Path) -> NotebookPane | None:
         """The buffer (shown or hidden) for `path`, if the file is open."""
@@ -1380,7 +1397,7 @@ class GPython(App):
             (("restart",), "Restart the kernel", lambda arg="": self.action_restart_kernel()),
             (("clear",), "Clear all outputs", lambda arg="": self.pane.clear_outputs()),
             (("img", "image"), "Show this cell's image on the full screen (v in cell mode; :img 2 shows the second). :img save [N] [file] saves it as PNG next to the notebook. :img open [N] opens it in the browser. :img save all and :img open all use all cells", self._ex_image),
-            (("set",), "Options: vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall cursor=bar|underline|block. Debugger history: debug_detail=full|balanced|lean|auto (full is the default; auto is full until 10,000 steps, then balanced), debug_history=200MB debug_events debug_thinning=on|off debug_repr_chars debug_strip_items debug_grid_size debug_stats=watched|cpu|off. debug_<key>? shows the current value", self._ex_set),
+            (("set",), "Options: vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall statusbar nostatusbar cursor=bar|underline|block. Debugger history: debug_detail=full|balanced|lean|auto (full is the default; auto is full until 10,000 steps, then balanced), debug_history=200MB debug_events debug_thinning=on|off debug_repr_chars debug_strip_items debug_grid_size debug_stats=watched|cpu|off. debug_<key>? shows the current value", self._ex_set),
             (("copy", "yank"), "Copy to the clipboard. :copy copies this cell. :copy all copies the notebook as code, with markdown as comments. :copy all metadata also keeps the # %% cell lines", self._ex_copy),
             (("time", "timing"), "Show or hide the run time in each cell header (t in cell mode; gpython keeps the setting)", lambda arg="": self.set_timing(not Cell.show_timing)),
             (("outline", "tags"), "Outline panel: each cell, the names it defines, their types after a run and the cells it uses. Enter goes to the cell (ctrl+o)", lambda arg="": self.action_toggle_outline()),
@@ -1529,12 +1546,14 @@ class GPython(App):
             self.set_timing(not option.startswith("no"))
         elif option in ("autoinstall", "noautoinstall"):
             self.set_autoinstall(option == "autoinstall")
+        elif option in ("statusbar", "nostatusbar"):
+            self.set_status_bar(option == "statusbar")
         elif option.startswith("cursor"):
             self.set_insert_cursor(option.partition("=")[2].strip())
         elif option.startswith("debug_"):
             self.set_debug_option(option)
         else:
-            self.notify(f"Unknown option: {option or '(none)'}. The options are: vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall cursor=bar|underline|block debug_detail=full|balanced|lean|auto debug_<limit>=…", severity="error")
+            self.notify(f"Unknown option: {option or '(none)'}. The options are: vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall statusbar nostatusbar cursor=bar|underline|block debug_detail=full|balanced|lean|auto debug_<limit>=…", severity="error")
 
     def set_debug_option(self, option: str) -> None:
         """:set debug_detail=full|balanced|lean|auto picks the recorder's preset; :set debug_<limit>=value
