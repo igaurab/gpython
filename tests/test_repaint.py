@@ -11,7 +11,8 @@ from textual.color import Color
 from textual.geometry import Region
 
 from gpython.app import GPython
-from gpython.cell import CELL_MODE_BAR, EDITING_BAR
+from gpython.cell import CELL_MODE_BAR, STALE_BAR
+from gpython.vim import MODE_CURSOR_COLORS
 from gpython.vim import VimTextArea
 
 
@@ -80,7 +81,7 @@ def test_cell_bar_follows_status_and_focus(tmp_path):
             colors = {role: Color.parse(value) for role, value in app.bar_colors.items()}
             assert colors["panel"].a > 0
             bar = lambda cell: cell.styles.outline_left[1]
-            assert bar(first) == Color.parse(EDITING_BAR)
+            assert bar(first) == Color.parse(MODE_CURSOR_COLORS["normal"])
             assert bar(second) == colors["panel"]
             await pilot.press("escape", "escape", "j")
             await pilot.pause()
@@ -95,7 +96,7 @@ def test_cell_bar_follows_status_and_focus(tmp_path):
             await pilot.pause()
             assert bar(second) == colors["error"]
             second.set_status("stale")
-            assert bar(second) == colors["warning"]
+            assert bar(second) == Color.parse(STALE_BAR)
             second.set_status("running")
             assert bar(second) == colors["primary"]
             app.theme = "nord"

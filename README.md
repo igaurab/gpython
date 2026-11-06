@@ -61,7 +61,8 @@ The editor is vim: where an app shortcut and a vim key collide, vim wins inside 
 editor and the app shortcut stays in cell mode (`escape` first). The cursor is a block
 coloured like the mode's badge: yellow NORMAL, green INSERT, magenta VISUAL, red
 REPLACE; in cell mode the selected cell gets a blue bar and a blue block where its cursor is; the cell
-being edited has a cyan bar, a colour no mode cursor uses (`:set cursor=bar|underline`
+being edited has a bar in the colour of the vim mode (yellow, green, purple, red, like the
+badge and the cursor), and a cell that needs a rerun (stale) a salmon one (`:set cursor=bar|underline`
 brings back the terminal's own cursor, coloured the same way). See
 [What changed for vim](#what-changed-for-vim).
 

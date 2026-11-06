@@ -30,7 +30,7 @@
   Names: insert/normal keep the colorscheme's names; visual/replace are `<insert name>-visual|replace`.
 - Default `insert_cursor` is now `block` (painted). bar/underline: terminal cursor, OSC 12 colour, OSC 112 reset.
 - Cell mode: `Cell.paint_bar` uses `CELL_MODE_BAR` (= `vim.CELL_MODE_COLOR` #3b82f6, the same value as the CELL badge and the cell-mode cursor, so terminals' ANSI palettes cannot turn it purple) when the cell itself is focused; CELL badge blue;
-  editing bar `EDITING_BAR` (`vim.EDITING_COLOR` #22d3ee): no mode cursor uses cyan. `VimTextArea.show_cell_cursor` paints a blue block there by swapping `_theme` only (a theme switch restyles the widget on every cell move).
+  editing bar = `MODE_CURSOR_COLORS[mode]` (fixed hex per mode, shared by badge, cursor and bar; repainted on ModeChanged); stale bar `STALE_BAR` #e8846b; the header starts one column in, aligned with the code. `VimTextArea.show_cell_cursor` paints a blue block there by swapping `_theme` only (a theme switch restyles the widget on every cell move).
 
 ## Ex ranges = vim's file
 - `GPython._ex_segments`: % every cell; $ notebook's last line; . cursor line; N = gutter line of current cell;

@@ -11,7 +11,7 @@ from gpython import config, notebook, vim
 from gpython.app import GPython
 from gpython.notebook import CellSpec
 from gpython.app import _MODE_STYLES
-from gpython.vim import CELL_MODE_COLOR, EDITING_COLOR, HIDE_CURSOR, MODE_CURSOR_COLORS, RESET_CURSOR_COLOR, SHOW_BAR_CURSOR, VimTextArea, terminal_cursor_color
+from gpython.vim import CELL_MODE_COLOR, HIDE_CURSOR, MODE_CURSOR_COLORS, RESET_CURSOR_COLOR, SHOW_BAR_CURSOR, VimTextArea, terminal_cursor_color
 
 SHOW_INSERT_BAR = SHOW_BAR_CURSOR + terminal_cursor_color("insert")
 HIDE = HIDE_CURSOR + RESET_CURSOR_COLOR
@@ -117,15 +117,25 @@ def test_block_is_the_default_and_the_cursor_takes_each_mode_colour(tmp_path, mo
         await pilot.press("i")
         await pilot.pause()
         assert VimTextArea.bar_editor is None and editor._draw_cursor
-        assert colour() == MODE_CURSOR_COLORS["insert"]
+
+        def same_colour_everywhere(mode: str) -> bool:
+            colour_of_mode = MODE_CURSOR_COLORS[mode]
+            bar = app.cells()[0].styles.outline_left[1]
+            return colour() == colour_of_mode and bar == Color.parse(colour_of_mode) and colour_of_mode in _MODE_STYLES[mode]
+
+        assert same_colour_everywhere("insert")
         await pilot.press("escape", "R")
-        assert colour() == MODE_CURSOR_COLORS["replace"]
+        await pilot.pause()
+        assert same_colour_everywhere("replace")
         await pilot.press("escape", "v")
-        assert colour() == MODE_CURSOR_COLORS["visual"]
+        await pilot.pause()
+        assert same_colour_everywhere("visual")
         await pilot.press("escape", "ctrl+v")
-        assert colour() == MODE_CURSOR_COLORS["visual"] and app.ui_mode == "v-block"
+        await pilot.pause()
+        assert same_colour_everywhere("visual") and app.ui_mode == "v-block"
         await pilot.press("escape")
-        assert colour() == MODE_CURSOR_COLORS["normal"]
+        await pilot.pause()
+        assert same_colour_everywhere("normal")
         await pilot.press("escape")
         await pilot.pause()
         cell = app.cells()[0]
@@ -135,8 +145,7 @@ def test_block_is_the_default_and_the_cursor_takes_each_mode_colour(tmp_path, mo
         assert CELL_MODE_COLOR in _MODE_STYLES["cell"]
         await pilot.press("enter")
         await pilot.pause()
-        assert cell.styles.outline_left[1] == Color.parse(EDITING_COLOR)
-        assert colour() == MODE_CURSOR_COLORS["normal"]
+        assert same_colour_everywhere("normal")
         await pilot.press("escape", "j")
         await pilot.pause()
         second = app.cells()[1].editor

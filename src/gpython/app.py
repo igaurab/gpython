@@ -34,7 +34,7 @@ from . import envpicker
 from .envpicker import KernelChip
 from .themepicker import ThemePicker
 from .themes import CUSTOM_APP_THEMES, DEFAULT_THEME, TERMINAL_THEME, THEME_ALIASES, editor_themes, palette_for
-from .vim import CELL_MODE_COLOR, INSERT_CURSOR_SHAPES, RESET_CURSOR_SHAPE, VimTextArea, _is_escape, parse_global, parse_line_command, parse_substitute, sync_terminal_cursor, write_to_terminal
+from .vim import CELL_MODE_COLOR, INSERT_COLOR, INSERT_CURSOR_SHAPES, MODE_CURSOR_COLORS, RESET_CURSOR_SHAPE, VimTextArea, _is_escape, parse_global, parse_line_command, parse_substitute, sync_terminal_cursor, write_to_terminal
 from .windows import TabBar, Workspace
 
 KEY_HINTS = "shift+enter run+next · ctrl+enter run · esc esc cell mode · / jump · ctrl+b files · ctrl+w splits · f1 help"
@@ -51,25 +51,25 @@ AUTOINSTALL_MESSAGE = (
 )
 ASK_INSTALL_MESSAGE = "A missing module opens the install prompt first (enter installs, esc skips). :set autoinstall makes it automatic."
 _MODE_STYLES = {
-    "insert": "bold black on green",
-    "normal": "bold black on yellow",
+    "insert": f"bold black on {INSERT_COLOR}",
+    "normal": f"bold black on {MODE_CURSOR_COLORS['normal']}",
     "cell": f"bold white on {CELL_MODE_COLOR}",
     "files": "bold black on magenta",
     "outline": "bold black on magenta",
     "vars": "bold black on magenta",
     "debug": "bold white on red",
-    "visual": "bold black on bright_magenta",
-    "v-line": "bold black on bright_magenta",
-    "v-block": "bold black on bright_magenta",
-    "replace": "bold black on red",
+    "visual": f"bold black on {MODE_CURSOR_COLORS['visual']}",
+    "v-line": f"bold black on {MODE_CURSOR_COLORS['visual']}",
+    "v-block": f"bold black on {MODE_CURSOR_COLORS['visual']}",
+    "replace": f"bold black on {MODE_CURSOR_COLORS['replace']}",
 }
 _CHIP_VIM_STYLES = {
-    "insert": "bold green",
-    "replace": "bold red",
-    "normal": "bold yellow",
-    "visual": "bold bright_magenta",
-    "v-line": "bold bright_magenta",
-    "v-block": "bold bright_magenta",
+    "insert": f"bold {INSERT_COLOR}",
+    "replace": f"bold {MODE_CURSOR_COLORS['replace']}",
+    "normal": f"bold {MODE_CURSOR_COLORS['normal']}",
+    "visual": f"bold {MODE_CURSOR_COLORS['visual']}",
+    "v-line": f"bold {MODE_CURSOR_COLORS['visual']}",
+    "v-block": f"bold {MODE_CURSOR_COLORS['visual']}",
 }
 EXPLORER_WIDTH = 34
 _VIM_MODES = ("normal", "visual", "v-line", "v-block", "insert", "replace")
@@ -1283,8 +1283,12 @@ class GPython(App):
 
 
     @on(VimTextArea.ModeChanged)
-    def _mode_changed(self) -> None:
+    def _mode_changed(self, event: VimTextArea.ModeChanged) -> None:
+        """The status bar, and the edited cell's bar, which takes the colour of the mode."""
         self.update_status()
+        cell = next((node for node in event.editor.ancestors if isinstance(node, Cell)), None)
+        if cell is not None:
+            cell.paint_bar()
 
     @on(VimTextArea.SearchRequested)
     def _search(self, event: VimTextArea.SearchRequested) -> None:

@@ -54,8 +54,8 @@ _DEFINITION = re.compile(r"\s*(async\s+def|def|class)\b")
 _SENTENCE_START = re.compile(r"(?<=[.!?])[)\]\"']*\s+(?=\S)|\n[ \t]*\n\s*(?=\S)")
 TEXT_WIDTH = 79
 CELL_MODE_COLOR = "#3b82f6"
-EDITING_COLOR = "#22d3ee"
-MODE_CURSOR_COLORS = {"normal": "yellow", "insert": "green", "visual": "bright_magenta", "replace": "red", "cell": CELL_MODE_COLOR}
+INSERT_COLOR = "#a3e635"
+MODE_CURSOR_COLORS = {"normal": "#f5c451", "insert": INSERT_COLOR, "visual": "#c084fc", "replace": "#f87171", "cell": CELL_MODE_COLOR}
 _DEDENT_KEYWORDS = ("elif ", "elif(", "else", "except", "finally", "case ")
 _BLOCK_ENDERS = ("return", "break", "continue", "pass", "raise")
 _INCLUSIVE = ("e", "E", "ge", "gE", "%", "g_", "])", "]}")
