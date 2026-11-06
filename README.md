@@ -22,7 +22,8 @@ since, or their inputs changed), then the cell. What happens to the cells
 
 ## Install
 
-The package on PyPI is called `gpynb`; the command it installs is `gpython`.
+The package on PyPI is called `gpynb`; the command it installs is `gpython`,
+with `gpy` as a short alias.
 Needs Python 3.13 or newer.
 
 ```sh
@@ -33,7 +34,10 @@ pipx install gpynb           # if you use pipx instead of uv
 ```
 
 From a checkout, `./gpython` runs the working copy (it creates the venv on
-first use); `uv run gpython` does the same.
+first use); `uv run gpython` does the same. To use the working copy from any
+directory without root, `uv tool install --editable .` puts `gpython` and `gpy`
+in `~/.local/bin` (`uv tool update-shell` adds it to `PATH`); `gpy` alone opens
+an untitled scratch notebook.
 
 ## Usage
 

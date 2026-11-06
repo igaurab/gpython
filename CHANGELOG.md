@@ -38,6 +38,7 @@ this file as its notes.
 - `K` shows the kernel's help for the name under the cursor; insert-mode `ctrl+k` types a
   digraph (`:digraphs`); folds are cells: `zc za zM zR`, `:foldclose`, `:foldopen`, `H` in
   cell mode. Interrupting from insert mode moves to `space r i` / other modes' `ctrl+k`.
+- `gpy`, a short alias for the `gpython` command.
 - Window management: `ctrl+w z` zooms a window to fill its tab (again restores the splits),
   `ctrl+w x` swaps, `ctrl+w r` / `R` rotate, `ctrl+w H J K L` move a window to an edge,
   `ctrl+w M` / `:tabmerge` undoes `ctrl+w T`, `:tabmove N` reorders tabs.
