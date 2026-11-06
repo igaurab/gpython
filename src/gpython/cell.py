@@ -20,11 +20,12 @@ from . import notebook
 from .graph import Graph
 from .markdown import MarkdownView, marimo_markdown
 from .outputs import OutputArea
-from .vim import CELL_MODE_COLOR, MODE_CURSOR_COLORS, VimTextArea, _is_escape
+from .vim import CELL_MODE_COLOR, DEBUG_COLOR, MODE_CURSOR_COLORS, VimTextArea, _is_escape
 
 BAR_ROLES = {"idle": "panel", "ok": "panel", "stale": "warning", "queued": "primary", "running": "primary", "error": "error", "skipped": "error"}
 CELL_MODE_BAR = CELL_MODE_COLOR
 STALE_BAR = "#e8846b"
+DEBUG_BAR = DEBUG_COLOR
 
 STATUS_ICONS = {
     "idle": ("○", "dim"),
@@ -225,6 +226,7 @@ class Cell(Vertical):
         self._bar_color: str | None = None
         self.selected = False
         self.focused_within = False
+        self.debugging = False
 
     def compose(self) -> ComposeResult:
         markdown = self.kind == "markdown"
@@ -308,17 +310,26 @@ class Cell(Vertical):
         self._render_header()
         self.paint_bar()
 
+    def set_debugging(self, paused_here: bool) -> None:
+        """The debugger is paused in this cell (or no longer): its bar turns DEBUG_BAR red."""
+        if paused_here != self.debugging:
+            self.debugging = paused_here
+            self.paint_bar()
+
     def paint_bar(self) -> None:
         """Colour the left bar from the status and focus: selection beats status; a cell selected
         in cell mode is CELL_MODE_BAR, the blue of the CELL badge; the cell being edited takes
         the colour of the vim mode, like the mode's badge and cursor (MODE_CURSOR_COLORS); a
         stale cell, one that needs a rerun, is STALE_BAR, salmon, apart from the yellow of
-        normal mode."""
+        normal mode. The cell the debugger is paused in is DEBUG_BAR, the red of the DEBUG
+        badge, above everything else."""
         colors = getattr(self.app, "bar_colors", None)
         if colors is None:
             return
         role = "accent" if (self.selected or self.focused_within) else BAR_ROLES.get(self.status, "panel")
-        if self.focused_within:
+        if self.debugging:
+            color = DEBUG_BAR
+        elif self.focused_within:
             editor = self._editor
             mode = VimTextArea.mode if VimTextArea.enabled else "insert"
             if editor is not None and editor.visual:

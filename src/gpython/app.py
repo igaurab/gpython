@@ -34,7 +34,7 @@ from . import envpicker
 from .envpicker import KernelChip
 from .themepicker import ThemePicker
 from .themes import CUSTOM_APP_THEMES, DEFAULT_THEME, TERMINAL_THEME, THEME_ALIASES, editor_themes, palette_for
-from .vim import CELL_MODE_COLOR, INSERT_COLOR, INSERT_CURSOR_SHAPES, MODE_CURSOR_COLORS, RESET_CURSOR_SHAPE, VimTextArea, _is_escape, parse_global, parse_line_command, parse_substitute, sync_terminal_cursor, write_to_terminal
+from .vim import CELL_MODE_COLOR, DEBUG_COLOR, INSERT_COLOR, INSERT_CURSOR_SHAPES, MODE_CURSOR_COLORS, RESET_CURSOR_SHAPE, VimTextArea, _is_escape, parse_global, parse_line_command, parse_substitute, sync_terminal_cursor, write_to_terminal
 from .windows import TabBar, Workspace
 
 KEY_HINTS = "shift+enter run+next · ctrl+enter run · esc esc cell mode · / jump · ctrl+b files · ctrl+w splits · f1 help"
@@ -57,7 +57,7 @@ _MODE_STYLES = {
     "files": "bold black on magenta",
     "outline": "bold black on magenta",
     "vars": "bold black on magenta",
-    "debug": "bold white on red",
+    "debug": f"bold white on {DEBUG_COLOR}",
     "visual": f"bold black on {MODE_CURSOR_COLORS['visual']}",
     "v-line": f"bold black on {MODE_CURSOR_COLORS['visual']}",
     "v-block": f"bold black on {MODE_CURSOR_COLORS['visual']}",

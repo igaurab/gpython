@@ -55,6 +55,7 @@ _SENTENCE_START = re.compile(r"(?<=[.!?])[)\]\"']*\s+(?=\S)|\n[ \t]*\n\s*(?=\S)"
 TEXT_WIDTH = 79
 CELL_MODE_COLOR = "#3b82f6"
 INSERT_COLOR = "#a3e635"
+DEBUG_COLOR = "#ef4444"
 MODE_CURSOR_COLORS = {"normal": "#f5c451", "insert": INSERT_COLOR, "visual": "#c084fc", "replace": "#f87171", "cell": CELL_MODE_COLOR}
 _DEDENT_KEYWORDS = ("elif ", "elif(", "else", "except", "finally", "case ")
 _BLOCK_ENDERS = ("return", "break", "continue", "pass", "raise")

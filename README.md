@@ -62,7 +62,8 @@ editor and the app shortcut stays in cell mode (`escape` first). The cursor is a
 coloured like the mode's badge: yellow NORMAL, green INSERT, magenta VISUAL, red
 REPLACE; in cell mode the selected cell gets a blue bar and a blue block where its cursor is; the cell
 being edited has a bar in the colour of the vim mode (yellow, green, purple, red, like the
-badge and the cursor), and a cell that needs a rerun (stale) a salmon one (`:set cursor=bar|underline`
+badge and the cursor), a cell that needs a rerun (stale) a salmon one, and the cell the debugger is paused in a red one,
+the red of the DEBUG badge (`:set cursor=bar|underline`
 brings back the terminal's own cursor, coloured the same way). See
 [What changed for vim](#what-changed-for-vim).
 

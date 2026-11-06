@@ -2,8 +2,11 @@
 
 import asyncio
 
+from textual.color import Color
+
 from gpython import notebook
 from gpython.app import GPython
+from gpython.cell import DEBUG_BAR
 from gpython.notebook import CellSpec
 from gpython.variables import InputPrompt, TimelineScreen, ValueScreen, VariablesPanel
 from gpython.vim import DEBUG_LINE_STYLE
@@ -189,6 +192,7 @@ def test_a_breakpoint_pauses_in_the_panel_and_steps_through_the_loop(tmp_path):
         assert panel.mode == "debug" and app.focused is panel.table and app.ui_mode == "debug"
         assert app.query_one("#side").has_class("-wide")
         assert c3.editor.debug_line == 1 and app.pane._debug_line == (c3.cid, 2)
+        assert c3.debugging and c3.styles.outline_left[1] == Color.parse(DEBUG_BAR)
         line = c3.editor.get_line(1)
         assert any(span.style == DEBUG_LINE_STYLE for span in line.spans)
         assert "DEBUG" in str(app._status.render())
@@ -244,6 +248,7 @@ def test_quit_while_paused_stops_the_cell(tmp_path):
         await pilot.press("q")
         await until(pilot, lambda: app.pane.debug is None and c3.status != "running")
         assert "16" not in c3.output_text and app.pane.kernel_state == "kernel ready"
+        assert not c3.debugging and c3.styles.outline_left[1] != Color.parse(DEBUG_BAR)
         c1 = await run(app, pilot, 1)
         await until(pilot, lambda: c1.run_status == "ok" and not app.pane._run_lock.locked())
 

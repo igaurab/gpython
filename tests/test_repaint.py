@@ -11,7 +11,7 @@ from textual.color import Color
 from textual.geometry import Region
 
 from gpython.app import GPython
-from gpython.cell import CELL_MODE_BAR, STALE_BAR
+from gpython.cell import CELL_MODE_BAR, DEBUG_BAR, STALE_BAR
 from gpython.vim import MODE_CURSOR_COLORS
 from gpython.vim import VimTextArea
 
@@ -96,6 +96,10 @@ def test_cell_bar_follows_status_and_focus(tmp_path):
             await pilot.pause()
             assert bar(second) == colors["error"]
             second.set_status("stale")
+            assert bar(second) == Color.parse(STALE_BAR)
+            second.set_debugging(True)
+            assert bar(second) == Color.parse(DEBUG_BAR)
+            second.set_debugging(False)
             assert bar(second) == Color.parse(STALE_BAR)
             second.set_status("running")
             assert bar(second) == colors["primary"]

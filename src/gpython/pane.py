@@ -778,12 +778,14 @@ class NotebookPane(Vertical):
             old = self._cell_by_id(self._debug_line[0])
             if old is not None:
                 old.editor.set_debug_line(None)
+                old.set_debugging(False)
         self._debug_line = target
         if target is None:
             return
         cell = self._cell_by_id(cid)
         if cell is not None:
             cell.editor.set_debug_line(line - 1)
+            cell.set_debugging(True)
             self.call_after_refresh(self._reveal_row, cell, line - 1)
 
     def _cell_by_id(self, cid: str | None) -> Cell | None:

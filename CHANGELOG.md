@@ -17,7 +17,7 @@ this file as its notes.
   ctrl+t ctrl+d ctrl+e ctrl+n ctrl+p ctrl+v` are.
 - The cursor is a block in every mode, coloured like the mode's badge (yellow normal, green
   insert, magenta visual, red replace); a cell selected in cell mode has a blue bar and a blue
-  block cursor on its current line; the cell being edited has a bar in the vim mode's colour, a stale cell a salmon one (was the theme's
+  block cursor on its current line; the cell being edited has a bar in the vim mode's colour, a stale cell a salmon one, the cell the debugger is paused in red like the DEBUG badge (was the theme's
   accent, often orange like the normal-mode cursor); and the
   CELL badge is blue. `:set cursor=bar|underline` brings back the terminal cursor, coloured
   per mode.
