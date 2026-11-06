@@ -93,7 +93,7 @@ def test_btop_sparkline_and_meter():
     bar_styles = [span.style for span in spark.spans if span.style.startswith("bold")]
     assert bar_styles == ["bold green", "bold yellow", "bold red", "bold red"]
     ram = meter("ram", 55, "14.1G/32.0G")
-    assert ram.plain == "ram [▪▪▪▪▪▪░░░░] 55% 14.1G/32.0G"
+    assert ram.plain == "ram [▪▪▪▪▪▪    ] 55% 14.1G/32.0G"
     assert sparkline("gpu", []).plain.endswith(" 0%")
 
 

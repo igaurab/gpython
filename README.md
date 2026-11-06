@@ -219,7 +219,7 @@ run time display, the run mode and the theme are remembered in
 The last row shows the mode badge on the left and, on the right, modules like a tmux
 status line: the clock, the host name, cpu, ram and gpu (gpu only where `nvidia-smi`
 exists). All are on by default. cpu and gpu draw the last twelve samples as vertical
-bars, btop style (`cpu ▂▃▅▃▂ 33%`), ram is a block meter (`ram [▪▪▪▪▪▪░░░░] 55% 14.1G/32.0G`);
+bars, btop style (`cpu ▂▃▅▃▂ 33%`), ram is a block meter (`ram [▪▪▪▪▪▪    ] 55% 14.1G/32.0G`);
 every bar and number is green under 30%, yellow under 80%, red above. In the config:
 
 ```toml
