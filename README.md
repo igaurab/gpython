@@ -214,6 +214,24 @@ Ex commands: `:w [file]`, `:wa`, `:q`, `:q!`, `:wq`, `:qa`, `:wqa`, `:e file`,
 run time display, the run mode and the theme are remembered in
 `~/.config/gpython/config.toml` (`vim`, `line_numbers`, `timing`, `run_mode`, `theme`, `status_bar`).
 
+### Bottom bar
+
+The last row shows the mode badge on the left and, on the right, modules like a tmux
+status line: the clock, the host name, cpu, ram and gpu (gpu only where `nvidia-smi`
+exists). All are on by default. In the config:
+
+```toml
+status_bar = true
+[status]
+cpu = false
+layout = "mode clock host ram"
+clock_format = "%H:%M"
+```
+
+`status.<module> = false` drops a module, `status.layout` orders them (`mode clock host
+cpu ram gpu` is the default), `status.clock_format` is a `strftime` pattern. `:set
+nostatusbar` hides the whole bar and `:set statusbar` brings it back.
+
 Cell headers read `✓ c3 [4] 1.25s  defines x · uses y`: display position,
 execution count (like Jupyter's `In [4]`) and, when `t` has turned it on, the run
 time (`12ms`, `420ms`, `1.25s`, `1m 05s`).

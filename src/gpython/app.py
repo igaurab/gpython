@@ -32,6 +32,7 @@ from .markdown import MarkdownView, markdown_theme
 from .pane import NotebookPane
 from . import envpicker
 from .envpicker import KernelChip
+from .statusbar import StatusBar
 from .themepicker import ThemePicker
 from .themes import CUSTOM_APP_THEMES, DEFAULT_THEME, TERMINAL_THEME, THEME_ALIASES, editor_themes, palette_for
 from .vim import CELL_MODE_COLOR, DEBUG_COLOR, INSERT_COLOR, INSERT_CURSOR_SHAPES, MODE_CURSOR_COLORS, RESET_CURSOR_SHAPE, VimTextArea, _is_escape, parse_global, parse_line_command, parse_substitute, sync_terminal_cursor, write_to_terminal
@@ -211,6 +212,7 @@ class GPython(App):
     ) -> None:
         super().__init__()
         settings = config.load()
+        self._settings = settings
         VimTextArea.mode = "normal"
         self._editor_theme_cache: dict[str, tuple] = {}
         self._markdown_theme_pushed = False
@@ -260,7 +262,7 @@ class GPython(App):
         self._tabbar = TabBar()
         self._kernel_chip: Static | None = None
         self._chip_key: tuple | None = None
-        self._status: Static | None = None
+        self._status: StatusBar | None = None
         self._status_mode: str | None = None
         self._mode_chip: Static | None = None
         self._mode_chip_mode: str | None = None
@@ -334,7 +336,7 @@ class GPython(App):
         yield self._tabbar
         with Horizontal(id="body"):
             yield self.workspace
-        self._status = Static(id="status")
+        self._status = StatusBar(self._settings, id="status")
         self._status.display = self.status_bar
         yield self._status
 
@@ -359,6 +361,8 @@ class GPython(App):
             await self.show_explorer()
         self.update_status()
         self.after_first_frame(self._prune_cell_layouts)
+        if self.status_bar:
+            self.after_first_frame(self._status.start)
 
     def _prune_cell_layouts(self) -> None:
         """Forget plain-script cell layouts nobody used for a month (sidecar.prune), off the UI thread."""
@@ -534,13 +538,15 @@ class GPython(App):
         bar_mode = mode if VimTextArea.enabled or mode in ("cell", "files", "outline", "vars", "debug") else ""
         if self._status is not None and bar_mode != self._status_mode:
             self._status_mode = bar_mode
-            self._status.update(Text(bar_mode.upper(), style=_MODE_STYLES[bar_mode]) if bar_mode else "", layout=False)
+            self._status.set_mode(Text(bar_mode.upper(), style=_MODE_STYLES[bar_mode]) if bar_mode else None)
 
     def set_status_bar(self, on: bool) -> None:
-        """:set statusbar|nostatusbar: show or hide the bottom bar (the mode badge for now); saved as `status_bar`."""
+        """:set statusbar|nostatusbar: show or hide the bottom bar; saved as `status_bar`."""
         self.status_bar = on
         if self._status is not None:
             self._status.display = on
+            if on:
+                self._status.start()
         config.save({"status_bar": on})
 
     def find_open(self, path: Path) -> NotebookPane | None:
