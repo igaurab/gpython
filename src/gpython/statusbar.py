@@ -61,13 +61,14 @@ def sparkline(label: str, history: list[float], extra: str = "") -> Text:
 
 
 def meter(label: str, percent: float, extra: str = "") -> Text:
-    """btop style, `ram ▪▪▪▪▪▪░░░░ 55% 14.1G/32.0G`: filled cells coloured by their own position
-    along the meter (green, then yellow, then red), empty cells dim."""
+    """btop style, `ram [▪▪▪▪▪▪░░░░] 55% 14.1G/32.0G`: a bracketed track, filled cells coloured
+    by their own position along it (green, then yellow, then red), the rest dim."""
     filled = round(percent / 100 * METER_CELLS)
-    cells = Text()
+    cells = Text("[", "dim")
     for i in range(METER_CELLS):
         position = (i + 0.5) / METER_CELLS * 100
         cells.append("▪" if i < filled else "░", _load_style(position) if i < filled else "dim")
+    cells.append("]", "dim")
     return Text.assemble((f"{label} ", "dim"), cells, (f" {percent:.0f}%", _load_style(percent)), (f" {extra}" if extra else "", "dim"))
 
 
