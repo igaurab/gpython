@@ -534,7 +534,7 @@ class GPython(App):
         bar_mode = mode if VimTextArea.enabled or mode in ("cell", "files", "outline", "vars", "debug") else ""
         if self._status is not None and bar_mode != self._status_mode:
             self._status_mode = bar_mode
-            self._status.update(Text(f" {bar_mode.upper()} ", style=_MODE_STYLES[bar_mode]) if bar_mode else "", layout=False)
+            self._status.update(Text(bar_mode.upper(), style=_MODE_STYLES[bar_mode]) if bar_mode else "", layout=False)
 
     def set_status_bar(self, on: bool) -> None:
         """:set statusbar|nostatusbar: show or hide the bottom bar (the mode badge for now); saved as `status_bar`."""
