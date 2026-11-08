@@ -8,12 +8,12 @@ cells whose run failed on a missing module.
 
 from __future__ import annotations
 
-from .cell import Cell, ends_with_string
+from .cell import CellState, ends_with_string
 from .graph import Graph
 
 
 class BatchRun:
-    def __init__(self, pane, graph: Graph, by_id: dict[str, Cell], debug: str | None) -> None:
+    def __init__(self, pane, graph: Graph, by_id: dict[str, CellState], debug: str | None) -> None:
         self.pane = pane
         self.graph = graph
         self.by_id = by_id
@@ -22,7 +22,7 @@ class BatchRun:
         self.began: dict[str, float] = {}
         self.ended: set[str] = set()
         self.failed: set[str] = set()
-        self.missing: list[Cell] = []
+        self.missing: list[CellState] = []
 
     def next_batch(self, pending: list[str]) -> tuple[list[str], list[str]]:
         """Split `pending` into the cells to send now and the ones for later.

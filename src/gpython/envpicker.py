@@ -472,9 +472,9 @@ async def _install_then_run(pane, names: list[str], cids: list[str], project: bo
     if failure is None:
         await pane.run_cells(cids, after_install=True)
         return
-    for cell in pane.cells():
-        if cell.cid in cids:
-            cell.show_hint(failure)
+    for state in pane.states:
+        if state.cid in cids:
+            state.show_hint(failure)
 
 
 async def run_tool(pane, argv: list[str], title: str) -> None:

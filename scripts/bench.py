@@ -109,7 +109,7 @@ async def bench(n: int, profile_what: str | None) -> dict[str, float]:
             profiles["mount"] = mount_prof
 
         cells = app.cells()
-        assert len(cells) == n, (len(cells), n)
+        assert app.pane.cell_count() == n, (app.pane.cell_count(), n)
 
         cells[0].editor.focus()
         await pilot.pause()

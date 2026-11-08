@@ -162,7 +162,18 @@ viewport. It saves memory (1000 cells: 134 MB) and 40 ms of `loaded_60`, but the
 editor mounts land on scrolling (`moves_30_proc` 0.35 → 0.39 s), and the user wants speed
 first. A widget-free off-screen cell list has the same scroll-time mounting by construction.
 
-### Next: a virtual cell list for notebooks over ~100 cells (decided 2026-10-30, not started)
+### Done 2026-11-08: the virtual cell list (`docs/plans/12-virtual-cells.md`)
+
+`CellState` is the notebook's cell, the `Cell` widget its view; over `MOUNT_BUDGET` (100) only
+a window of cells around the viewport is mounted, moved a batch at a time after each paint.
+`scripts/bench.py` (2 ms tick): 60 cells unchanged (first_paint 0.06, loaded 0.24,
+keys_30_net 0.075, moves_30_proc 0.28); 500 cells loaded 0.95 → 0.31 s, moves_30_proc
+1.39 → 0.35 s; 1000 cells loaded 1.39 → 0.37 s, keys_30_net 0.27 → 0.11 s, moves_30_proc
+2.91 → 0.35 s. 150 `j` moves through 500 cells, window shifts included: 9.6 ms CPU per move
+(6.2 at 60). warmbench 500 cells: last cell 1.51 → 1.40 s, 203 → 168 MB. Open: ex ranges
+(`:%s`, `:g`) only see mounted cells over the budget; tune the budget in a real terminal.
+
+### The virtual cell list as it was decided (2026-10-30)
 
 Every keystroke and every cell move costs time in proportion to the number of mounted
 widgets: Textual re-arranges all of them (`_arrange_root`), rebuilds its compositor map over

@@ -22,7 +22,7 @@ from textual.widget import Widget
 from textual.widgets import Static
 
 from . import config, envpicker, envs, notebook, packages
-from .cell import Cell, CellSnapshot, outputs_to_ipynb, time_brief, time_summary
+from .cell import Cell, CellSnapshot, CellState, outputs_to_ipynb, time_brief, time_summary
 from .dom import forget_removed
 from .graph import Graph, build
 from .kernel import Kernel
@@ -33,6 +33,9 @@ from .vim import VimTextArea, search_regex
 
 MIN_INITIAL_CELLS = 4
 MOUNT_BATCH = 10
+MOUNT_BUDGET = 100
+WINDOW_STEP = 8
+JUMP_WINDOW = 12
 MAX_UNDO = 50
 DEBUGGABLE_ERRORS = {
     "IndexError", "KeyError", "ZeroDivisionError", "AssertionError", "ValueError", "TypeError",
@@ -40,13 +43,24 @@ DEBUGGABLE_ERRORS = {
 }
 
 
-def needs_run(cell: Cell) -> bool:
+def needs_run(cell: CellState | Cell) -> bool:
     """A non-empty code cell that never ran, was edited since it ran, or whose inputs changed (marimo's "stale")."""
     return bool(cell.source.strip()) and (cell.inputs_stale or cell.ran_source != cell.source)
 
 
+def state_of(cell: Cell | CellState) -> CellState:
+    return cell.state if isinstance(cell, Cell) else cell
+
+
 class NotebookPane(Vertical):
-    """A window showing one notebook (vim: a window showing a buffer)."""
+    """A window showing one notebook (vim: a window showing a buffer).
+
+    `states` is the notebook: one CellState per cell from the moment the file is read. The
+    mounted `Cell` widgets (`cells()`) are the states `_window` names, `states[lo:hi]`, in
+    order. Up to MOUNT_BUDGET cells every state has a widget once loaded and nothing is ever
+    unmounted; above it the window follows the viewport (`_update_window`), so the cost of a
+    keystroke or a cell move does not grow with the notebook (docs/plans/12-virtual-cells.md).
+    """
 
     def __init__(self, path: Path | None = None) -> None:
         super().__init__(classes="pane")
@@ -68,8 +82,12 @@ class NotebookPane(Vertical):
         self.loaded = asyncio.Event()
         self._focus_scroll_pending = False
         self._pacer: PaintPacer | None = None
-        self._specs: list[notebook.CellSpec] = []
-        self._pending_sources: list[notebook.CellSpec] = []
+        self.states: list[CellState] = []
+        self._window = (0, 0)
+        self._window_dirty = False
+        self._window_lock = asyncio.Lock()
+        self._removal = None
+        self._last_focus_cid: str | None = None
         self._outputs_timer = None
         self._outputs_to_store: tuple[Path, list[notebook.CellSpec], str] | None = None
         self._run_state_json: dict[str, tuple[tuple, str]] = {}
@@ -110,7 +128,8 @@ class NotebookPane(Vertical):
                 self.load_error = f"Could not read {self.path}: {error}"
                 specs = [notebook.CellSpec(self.path.read_text(errors="replace"))]
             specs = specs or [notebook.CellSpec("")]
-        self._specs = specs
+        self.states = [CellState(spec.source, spec.kind, spec) for spec in specs]
+        self.relabel()
 
     @property
     def name(self) -> str:
@@ -123,8 +142,8 @@ class NotebookPane(Vertical):
     @property
     def is_blank(self) -> bool:
         """An untitled, unchanged notebook with one empty cell: safe to replace with a file."""
-        cells = self.cells()
-        return self.path is None and not self.dirty and len(cells) == 1 and not cells[0].source.strip()
+        states = self.states
+        return self.path is None and not self.dirty and len(states) == 1 and not states[0].source.strip()
 
 
     def _initial_count(self) -> int:
@@ -135,25 +154,24 @@ class NotebookPane(Vertical):
         """
         height = self.app.size.height or 45
         rows = 0
-        for n, spec in enumerate(self._specs, 1):
-            rows += spec.source.count("\n") + 3
+        for n, state in enumerate(self.states, 1):
+            rows += state.source.count("\n") + 3
             if rows >= height and n >= MIN_INITIAL_CELLS:
                 return n
-        return len(self._specs)
+        return len(self.states)
 
     def compose(self) -> ComposeResult:
         initial = self._initial_count()
-        specs, self._pending_sources = self._specs[:initial], self._specs[initial:]
         with Horizontal(classes="pane-body"):
             with VerticalScroll(id="cells") as self._cells_box:
-                for n, spec in enumerate(specs, 1):
-                    cell = Cell(spec.source, kind=spec.kind, spec=spec)
-                    cell.set_label(n)
-                    yield cell
+                for state in self.states[:initial]:
+                    yield Cell(state=state)
+        self._window = (0, initial)
         self._status = Static(classes="pane-status")
         yield self._status
 
     def on_mount(self) -> None:
+        self.watch(self._cells_box, "scroll_y", self._scrolled, init=False)
         self.render_status()
         if self.load_error:
             self.notify(self.load_error, severity="warning")
@@ -162,44 +180,230 @@ class NotebookPane(Vertical):
         self.app.after_first_frame(self._after_first_frame)
 
     def _after_first_frame(self) -> None:
-        self.run_worker(self._restore_outputs_then_mount_rest(), group="mount")
+        self.run_worker(self._restore_outputs_then_fill(), group="mount")
         if (boot := self.start_kernel()) is not None:
             self.run_worker(boot, group="kernel")
 
-    async def _restore_outputs_then_mount_rest(self) -> None:
+    async def _restore_outputs_then_fill(self) -> None:
         if self.path is not None and not self.markers:
             await self._restore_outputs()
-        await self._mount_rest()
+        await self._update_window()
 
     async def _restore_outputs(self) -> None:
         """A plain script's stored outputs are read after the first frame (sidecar.py), then shown."""
-        cells = self.cells()
-        specs = [self._light_spec(c) for c in cells] + self._pending_sources
+        states = list(self.states)
+        specs = [self._light_spec(s) for s in states]
         try:
-            states = await asyncio.to_thread(notebook.load_outputs, self.path, specs)
+            stored = await asyncio.to_thread(notebook.load_outputs, self.path, specs)
         except Exception:
             return
-        if states is None or self.dirty or self.cells() != cells:
+        if stored is None or self.dirty or self.states != states:
             return
-        mounted = len(cells)
-        for cell, state in zip(cells, states):
-            cell.restore_run(notebook.with_run_state(self._light_spec(cell), state))
-        self._pending_sources = [notebook.with_run_state(spec, state) for spec, state in zip(self._pending_sources, states[mounted:])]
+        for state, run_state in zip(states, stored):
+            state.restore_run(notebook.with_run_state(self._light_spec(state), run_state))
 
-    async def _mount_rest(self) -> None:
-        """Mount the cells left out of compose(), a batch at a time, after the first frame."""
-        while self._pending_sources:
-            batch = [Cell(spec.source, kind=spec.kind, spec=spec) for spec in self._pending_sources[:MOUNT_BATCH]]
-            del self._pending_sources[:MOUNT_BATCH]
-            first = len(self._cells_box.children) + 1
-            for n, cell in enumerate(batch, first):
-                cell.set_label(n)
-            with self.app.batch_update():
-                await self._cells_box.mount_all(batch)
-            await asyncio.sleep(0)
-        self.relabel()
-        self.refresh_info()
-        self.loaded.set()
+
+    def _scrolled(self) -> None:
+        """The cell list scrolled: once that has painted, see whether the window should follow."""
+        if len(self.states) > MOUNT_BUDGET and not self._window_dirty:
+            self._window_dirty = True
+            self.call_after_refresh(self._window_worker)
+
+    def _window_worker(self) -> None:
+        self.run_worker(self._update_window(), group="window")
+
+    async def _update_window(self) -> None:
+        """Mount and unmount cells, a batch at a time, until the window is where `_wanted_window` says.
+
+        One at a time: a call while one runs only marks the window dirty for it. Every batch
+        is one layout pass and keys get through between batches. `loaded` is set the first
+        time the window is full (every cell, up to the budget).
+        """
+        self._window_dirty = True
+        if self._window_lock.locked():
+            return
+        async with self._window_lock:
+            while self._window_dirty and self.is_attached:
+                self._window_dirty = False
+                if self._removal is not None:
+                    removal, self._removal = self._removal, None
+                    await removal
+                wanted = self._wanted_window()
+                if wanted != self._window:
+                    touched_top = await self._step_window(*wanted)
+                    self._window_dirty = True
+                    if touched_top:
+                        await self._after_refresh()
+                    else:
+                        await asyncio.sleep(0)
+            lo, hi = self._window
+            if not self.loaded.is_set() and hi - lo >= min(len(self.states), MOUNT_BUDGET):
+                self.refresh_info()
+                self.loaded.set()
+
+    async def _after_refresh(self) -> None:
+        """Wait for the next screen refresh, so widget regions are current again."""
+        painted = asyncio.Event()
+        if self.call_after_refresh(painted.set):
+            await painted.wait()
+
+    def _wanted_window(self) -> tuple[int, int]:
+        """Which states should be mounted: all of them up to the budget; above it a budget-sized
+        window centred on the visible cells, moved once the view drifted WINDOW_STEP cells off centre."""
+        n = len(self.states)
+        if n <= MOUNT_BUDGET:
+            return (0, n)
+        lo, hi = self._window
+        first, last = self._visible_range()
+        wanted = max(0, min(n - MOUNT_BUDGET, (first + last + 1) // 2 - MOUNT_BUDGET // 2))
+        if hi - lo >= MOUNT_BUDGET and abs(wanted - lo) < WINDOW_STEP:
+            return (lo, hi)
+        return (wanted, wanted + MOUNT_BUDGET)
+
+    def _visible_range(self) -> tuple[int, int]:
+        """Indices of the first and last mounted cells in the viewport; the window's middle before a layout."""
+        box = self._cells_box
+        lo, hi = self._window
+        top = box.scroll_y
+        bottom = top + box.scrollable_content_region.height
+        first = last = None
+        for index in range(lo, hi):
+            widget = self.states[index].widget
+            if widget is None:
+                continue
+            region = widget.virtual_region
+            if not region.height:
+                continue
+            if region.y >= bottom:
+                if first is not None:
+                    break
+                continue
+            last = index
+            if first is None and region.y + region.height > top:
+                first = index
+        if first is None:
+            middle = (lo + hi) // 2
+            return (middle, middle)
+        return (first, max(first, last))
+
+    async def _step_window(self, lo: int, hi: int) -> bool:
+        """Move the window one batch toward [lo, hi): drop what falls outside, mount up to MOUNT_BATCH
+        cells on the side that is short, under one layout pass. A change above the viewport
+        shifts the content, so the layout is redone at once and the first cell that stayed is
+        scrolled back to where it was. Returns True when the top of the window changed."""
+        old_lo, old_hi = self._window
+        states = self.states
+        if hi <= old_lo or lo >= old_hi:
+            self._jump_window(lo, min(hi, lo + JUMP_WINDOW))
+            return True
+        new_lo, new_hi = max(lo, old_lo), min(hi, old_hi)
+        if hi > old_hi:
+            new_hi = min(hi, old_hi + MOUNT_BATCH)
+        elif lo < old_lo:
+            new_lo = max(lo, old_lo - MOUNT_BATCH)
+        box = self._cells_box
+        anchor = states[max(old_lo, new_lo)].widget
+        offset = anchor.virtual_region.y - box.scroll_y if anchor is not None else 0
+        victims: list[Cell] = []
+        for state in states[old_lo:new_lo] + states[new_hi:old_hi]:
+            if state.widget is not None:
+                victims.append(state.widget)
+                state.sleep()
+        above = [Cell(state=state) for state in states[new_lo:old_lo]]
+        below = [Cell(state=state) for state in states[old_hi:new_hi]]
+        touched_top = bool(above) or new_lo > old_lo
+        self._window = (new_lo, new_hi)
+        with self.app.batch_update():
+            self._blur_inside(victims)
+            removal = box.remove_children(victims) if victims else None
+            if above:
+                await box.mount_all(above, before=anchor)
+            if below:
+                await box.mount_all(below)
+            if removal is not None:
+                await removal
+                forget_removed(box)
+            if touched_top and anchor is not None:
+                self.screen._refresh_layout()
+                box.scroll_to(y=anchor.virtual_region.y - offset, animate=False, immediate=True, force=True)
+        return touched_top
+
+    def _blur_inside(self, victims: list[Cell]) -> None:
+        """Drop the focus before unmounting the cell that holds it: Textual would otherwise focus a
+        neighbour and scroll back to it, undoing the scroll that moved the window."""
+        focused = self.app.focused
+        if focused is None or not victims:
+            return
+        if any(victim is focused or victim in focused.ancestors for victim in victims):
+            self.last_focus = None
+            self.app.screen.set_focus(None)
+
+    def _jump_window(self, lo: int, hi: int) -> None:
+        """Make states[lo:hi] the mounted cells now (a jump far outside the window): cells already
+        mounted in that range stay, the others go. The window grows to the budget after the paint."""
+        box = self._cells_box
+        states = self.states
+        wanted = states[lo:hi]
+        victims = [state.widget for index, state in enumerate(states) if state.widget is not None and not lo <= index < hi]
+        for widget in victims:
+            widget.state.sleep()
+        self._blur_inside(victims)
+        if victims:
+            self._removal = box.remove_children(victims)
+            self.call_after_refresh(forget_removed, box)
+        if all(state.widget is None for state in wanted):
+            box.scroll_to(y=0, animate=False, immediate=True, force=True)
+        missing: list[Cell] = []
+        for state in wanted:
+            if state.widget is None:
+                missing.append(Cell(state=state))
+            elif missing:
+                box.mount_all(missing, before=state.widget)
+                missing = []
+        if missing:
+            box.mount_all(missing)
+        self._window = (lo, hi)
+        self._window_dirty = True
+        self.call_after_refresh(self._window_worker)
+
+    def _reveal(self, state: CellState) -> Cell:
+        """The widget of `state`, mounting one if it has none: at the window's edge when it is next
+        to it, else in a fresh small window around it. A widget mounted here has no editor until
+        the mount completes, so callers focus it after the refresh (`select_state`)."""
+        if state.widget is not None:
+            return state.widget
+        index = self.states.index(state)
+        lo, hi = self._window
+        box = self._cells_box
+        if index == hi:
+            box.mount_all([Cell(state=state)])
+            self._window = (lo, hi + 1)
+        elif index == lo - 1:
+            box.mount_all([Cell(state=state)], before=self.states[lo].widget)
+            self._window = (lo - 1, hi)
+        else:
+            start = max(0, index - JUMP_WINDOW // 2)
+            end = min(len(self.states), start + JUMP_WINDOW)
+            self._jump_window(max(0, end - JUMP_WINDOW), end)
+        self._window_dirty = True
+        self.call_after_refresh(self._window_worker)
+        return state.widget
+
+    def _cell_mounted(self, cell: Cell) -> None:
+        """A cell's widget is up: paint what the pane knows about it (the debugger's line and breakpoints)."""
+        if self._debug_line is not None and self._debug_line[0] == cell.cid:
+            cell.editor.set_debug_line(self._debug_line[1] - 1)
+            cell.set_debugging(True)
+        if cell.cid in self._debug_breaks:
+            cell.editor.set_debug_breaks(line - 1 for line in self._debug_breaks[cell.cid])
+
+    def _mounted_span(self) -> tuple[int, int]:
+        """The window as the states say it: from the first mounted one to the last."""
+        mounted = [index for index, state in enumerate(self.states) if state.widget is not None]
+        return (mounted[0], mounted[-1] + 1) if mounted else (0, 0)
+
+    def _state_by_id(self, cid: str | None) -> CellState | None:
+        return next((s for s in self.states if s.cid == cid), None) if cid else None
 
     def start_kernel(self):
         """The coroutine that boots the kernel, once; None if it was already started."""
@@ -273,17 +477,20 @@ class NotebookPane(Vertical):
         """Give focus back to the cell that had it last, in the global mode (cell or editor)."""
         target = self.last_focus
         cell = target if isinstance(target, Cell) else getattr(target, "parent", None)
-        if not isinstance(cell, Cell) or not cell.is_attached:
-            cells = self.cells()
-            if not cells:
-                return
-            cell = cells[0]
-        self.select(cell, "auto")
+        if isinstance(cell, Cell) and cell.is_attached:
+            self.select(cell, "auto")
+            return
+        state = self._state_by_id(self._last_focus_cid) or (self.states[0] if self.states else None)
+        if state is not None:
+            self.select_state(state, "auto")
 
     def _on_descendant_focus(self, event: events.DescendantFocus) -> None:
         widget = event.widget
         if isinstance(widget, (Cell, VimTextArea)):
             self.last_focus = widget
+            holder = widget if isinstance(widget, Cell) else widget.parent
+            if isinstance(holder, Cell):
+                self._last_focus_cid = holder.cid
             if self.outline_visible:
                 cell, row = self._cursor_position(widget)
                 self._outline.follow(cell.cid if cell else None, row)
@@ -336,7 +543,7 @@ class NotebookPane(Vertical):
         box = self._cells_box
         if box is None:
             return list(self.query(Cell))
-        return [node for node in box.children if isinstance(node, Cell)]
+        return [node for node in box.children if isinstance(node, Cell) and not node._pruning]
 
     def current_cell(self) -> Cell | None:
         """The cell holding the focus, or the one that held it last while this pane was active."""
@@ -351,21 +558,27 @@ class NotebookPane(Vertical):
         if node is not None and node.is_attached:
             return node
         cells = self.cells()
-        return cells[0] if cells else None
+        if not cells:
+            return None
+        if len(self.states) > MOUNT_BUDGET:
+            first, _ = self._visible_range()
+            if self.states[first].widget is not None:
+                return self.states[first].widget
+        return cells[0]
 
     def relabel(self) -> None:
         """Headers show display positions; renumber after any insert, delete or move."""
-        for n, cell in enumerate(self.cells(), 1):
-            cell.set_label(n)
+        for n, state in enumerate(self.states, 1):
+            state.set_label(n)
 
     def graph(self) -> Graph:
         """The dependency graph of the code cells (markdown cells never run)."""
-        return build({c.cid: c.source for c in self.cells() if c.kind == "code"})
+        return build({s.cid: s.source for s in self.states if s.kind == "code"})
 
     def refresh_info(self) -> Graph:
         graph = self.graph()
-        for cell in self.cells():
-            cell.set_info(graph)
+        for state in self.states:
+            state.set_info(graph)
         self._refresh_outline(graph)
         return graph
 
@@ -378,16 +591,16 @@ class NotebookPane(Vertical):
         """name → (type, repr) for the names the cells define, as of the last run."""
         return self._values
 
-    def _owners(self, cells: list[Cell]) -> dict[str, Cell]:
+    def _owners(self, cells: list[CellState]) -> dict[str, CellState]:
         """name → the cell that bound it last (the highest run number among the cells defining it)."""
-        owners: dict[str, Cell] = {}
+        owners: dict[str, CellState] = {}
         for cell in cells:
             for name in cell.last_defs:
                 if name in self._values and (name not in owners or cell.exec_count > owners[name].exec_count):
                     owners[name] = cell
         return owners
 
-    def _cell_values(self, cells: list[Cell]) -> Values:
+    def _cell_values(self, cells: list[CellState]) -> Values:
         """The kernel's values keyed by (cell, name): a name belongs to the cell that bound it
         last, so a second cell defining the same name does not show the first one's value."""
         return {(cell.cid, name): self._values[name] for name, cell in self._owners(cells).items()}
@@ -488,7 +701,7 @@ class NotebookPane(Vertical):
         return True
 
     def _variable_rows(self) -> list[tuple]:
-        owners = self._owners(self.cells())
+        owners = self._owners(self.states)
         rows = []
         for name, (kind, shown, info, category) in sorted(self._var_rows.items()):
             cell = owners.get(name)
@@ -503,16 +716,16 @@ class NotebookPane(Vertical):
         """g in the variables panel: the editor of the cell that bound `name`, on its line."""
         from .outline import symbols
 
-        cell = self._owners(self.cells()).get(name)
-        if cell is None:
+        state = self._owners(self.states).get(name)
+        if state is None:
             self.notify(f"No cell defines {name}", severity="warning")
             return
-        line = next((symbol.line for symbol in symbols(cell.source) if symbol.name == name), 0)
-        if cell.editor_hidden:
-            self.select(cell, "cell")
+        line = next((symbol.line for symbol in symbols(state.source) if symbol.name == name), 0)
+        if state.editor_hidden:
+            self.select_state(state, "cell")
         else:
-            self.select(cell, "normal", row=line)
-            self.call_after_refresh(self._reveal_row, cell, line)
+            self.select_state(state, "normal", row=line)
+            self.call_after_refresh(self._reveal_row_of, state, line)
 
     async def delete_variable(self, name: str) -> None:
         """d in the variables panel: remove the name from the kernel; the cells that bound it become stale."""
@@ -522,12 +735,12 @@ class NotebookPane(Vertical):
         await self.kernel.delete({name})
         self._values.pop(name, None)
         self._var_rows.pop(name, None)
-        for cell in self.cells():
-            if name in cell.last_defs:
-                cell.mark_inputs_stale()
+        for state in self.states:
+            if name in state.last_defs:
+                state.mark_inputs_stale()
         self._refresh_variables()
         if self.outline_visible:
-            self._outline.set_values(self._cell_values(self.cells()))
+            self._outline.set_values(self._cell_values(self.states))
         self.notify(f"Deleted {name} from the kernel")
 
     async def show_value(self, name: str) -> None:
@@ -546,9 +759,9 @@ class NotebookPane(Vertical):
     def _refresh_outline(self, graph: Graph | None = None) -> None:
         if not self.outline_visible:
             return
-        cells = self.cells()
+        states = self.states
         current, row = self._cursor_position()
-        self._outline.rebuild(cells, graph or self.graph(), self._cell_values(cells), current.cid if current else None, row)
+        self._outline.rebuild(states, graph or self.graph(), self._cell_values(states), current.cid if current else None, row)
 
     @on(VimTextArea.SelectionChanged)
     def _cursor_moved(self, event: VimTextArea.SelectionChanged) -> None:
@@ -561,13 +774,13 @@ class NotebookPane(Vertical):
     @on(Outline.Jump)
     def _outline_jump(self, event: Outline.Jump) -> None:
         event.stop()
-        cell = next((c for c in self.cells() if c.cid == event.cid), None)
-        if cell is None:
+        state = self._state_by_id(event.cid)
+        if state is None:
             return
-        if event.line is None or cell.editor_hidden:
-            self.select(cell, "cell")
+        if event.line is None or state.editor_hidden:
+            self.select_state(state, "cell")
         else:
-            self.select(cell, "normal", row=event.line)
+            self.select_state(state, "normal", row=event.line)
 
     @on(Outline.Closed)
     def _outline_closed(self, event: Outline.Closed) -> None:
@@ -588,12 +801,12 @@ class NotebookPane(Vertical):
 
         The cells go to the kernel in batches, one request each (runs.py), and the screen is
         painted a few times a second while they run (pacing.py); both are what keep a run of
-        hundreds of cells to about a millisecond a cell.
+        hundreds of cells to about a millisecond a cell. Every cell has a state from the
+        start, so a run never waits for the cells to mount.
         """
-        await self.loaded.wait()
         async with self._run_lock:
             graph = self.refresh_info()
-            by_id = {c.cid: c for c in self.cells() if c.kind == "code"}
+            by_id = {s.cid: s for s in self.states if s.kind == "code"}
             roots = [r for r in roots if r in by_id]
             roots = graph.expand_roots(roots + self._stale_ancestors(graph, by_id, roots))
             if downstream is None:
@@ -607,7 +820,7 @@ class NotebookPane(Vertical):
             for cid in order:
                 by_id[cid].set_status("queued")
             run = BatchRun(self, graph, by_id, debug)
-            pending = [cid for cid in order if by_id[cid].is_mounted]
+            pending = list(order)
             with PaintPacer(self.app) as self._pacer:
                 while pending:
                     batch, pending = run.next_batch(pending)
@@ -631,7 +844,7 @@ class NotebookPane(Vertical):
         if run.missing:
             envpicker.install_missing(self, run.missing, after_install)
 
-    def _note_missing(self, cell: Cell) -> str | None:
+    def _note_missing(self, cell: CellState) -> str | None:
         """After a failed run: the module a ModuleNotFoundError names, with a hint under the traceback.
 
         A standard-library module is pointed out but never offered: pip cannot supply it.
@@ -652,7 +865,7 @@ class NotebookPane(Vertical):
         return packages.pypi_name(cell.missing, cell.source) if cell is not None and cell.missing else ""
 
     @staticmethod
-    def _stale_ancestors(graph: Graph, by_id: dict[str, Cell], roots: list[str]) -> list[str]:
+    def _stale_ancestors(graph: Graph, by_id: dict[str, CellState], roots: list[str]) -> list[str]:
         """Upstream code cells that are stale: never ran, edited since, or their inputs changed.
 
         Like marimo, a run first brings everything it depends on up to date; clean cells do not re-run.
@@ -660,13 +873,13 @@ class NotebookPane(Vertical):
         upstream = graph.ancestors(roots) - set(roots)
         return [cid for cid in graph.order if cid in upstream and cid in by_id and needs_run(by_id[cid])]
 
-    def _keep_focus_visible(self, ran: Cell) -> None:
+    def _keep_focus_visible(self, ran: CellState) -> None:
         """New output above the focused cell pushes it down; keep the user's cell on screen.
         One scroll is queued at a time, however many cells end before the next paint."""
         if self._focus_scroll_pending:
             return
         current = self.current_cell()
-        if current is not None and current is not ran and self.app.focused is not None and current.pane is self:
+        if current is not None and current.state is not ran and self.app.focused is not None and current.pane is self:
             self._focus_scroll_pending = True
             if self._pacer is not None:
                 self._pacer.after_paint(lambda: self._scroll_focus_into_view(current))
@@ -684,7 +897,7 @@ class NotebookPane(Vertical):
         self._values = {row[0]: Value(row[1], row[2]) for row in rows}
         self._var_rows = {row[0]: list(row[1:5]) for row in rows if len(row) >= 5}
         if self.outline_visible:
-            self._outline.set_values(self._cell_values(self.cells()))
+            self._outline.set_values(self._cell_values(self.states))
         self._refresh_variables()
 
     def _offer_debugger(self, cell: Cell) -> None:
@@ -776,31 +989,39 @@ class NotebookPane(Vertical):
         self._debug_line = target
         if target is None:
             return
+        state = self._state_by_id(cid)
+        if state is None:
+            return
         cell = self._cell_by_id(cid)
         if cell is not None:
             cell.editor.set_debug_line(line - 1)
             cell.set_debugging(True)
-            self.call_after_refresh(self._reveal_row, cell, line - 1)
+        else:
+            self._reveal(state)
+        self.call_after_refresh(self._reveal_row_of, state, line - 1)
 
     def _cell_by_id(self, cid: str | None) -> Cell | None:
-        return next((c for c in self.cells() if c.cid == cid), None) if cid else None
+        """The mounted widget of the cell `cid`, with its editor up, else None."""
+        state = self._state_by_id(cid)
+        widget = state.widget if state is not None else None
+        return widget if widget is not None and widget._editor is not None else None
 
     def place_of(self, where: dict) -> str:
         """`c3 line 5 in f()` for a frame in a cell, `file.py:12 in g()` elsewhere."""
         func = where.get("func", "")
         suffix = "" if func in ("<module>", "") else f" in {func}()"
-        cell = self._cell_by_id(where.get("cell"))
-        if cell is not None:
-            return f"{cell.label} line {where.get('line')}{suffix}"
+        state = self._state_by_id(where.get("cell"))
+        if state is not None:
+            return f"{state.label} line {where.get('line')}{suffix}"
         name = str(where.get("file", "?")).rsplit("/", 1)[-1]
         return f"{name}:{where.get('line')}{suffix}"
 
     def jump_to_record(self, record: dict) -> None:
-        cell = self._cell_by_id(record.get("cell"))
-        if cell is None:
+        state = self._state_by_id(record.get("cell"))
+        if state is None:
             self.notify("This line is not in a cell of this notebook", severity="warning")
             return
-        self.select(cell, "normal", row=max(0, (record.get("line") or 1) - 1))
+        self.select_state(state, "normal", row=max(0, (record.get("line") or 1) - 1))
 
     def debug_command(self, command: str, keep_view: bool = False) -> None:
         """Send one pdb command (or a private _gp_* one) to the paused kernel."""
@@ -902,7 +1123,7 @@ class NotebookPane(Vertical):
             self.notify("".join(notes).strip(), severity="warning")
 
     def all_specs(self) -> list[notebook.CellSpec]:
-        return [self._spec_of(c) for c in self.cells()] + self._pending_sources
+        return [self._spec_of(s) for s in self.states]
 
     def copy_text(self, clean: bool = False) -> str:
         """The whole notebook to paste elsewhere, unsaved edits included: the file's own text, but
@@ -940,16 +1161,14 @@ class NotebookPane(Vertical):
 
     def _outputs_snapshot(self) -> tuple[list[notebook.CellSpec], str]:
         """The cells (no outputs) and the JSON list of their run states, as remember_outputs takes them."""
-        import json
-
-        cells = self.cells()
-        states = [self._run_state_of(c) for c in cells] + [json.dumps(notebook.run_state(s)) for s in self._pending_sources]
-        live = {c.cid for c in cells}
+        states = self.states
+        encoded = [self._run_state_of(s) for s in states]
+        live = {s.cid for s in states}
         for cid in [cid for cid in self._run_state_json if cid not in live]:
             del self._run_state_json[cid]
-        return [self._light_spec(c) for c in cells] + self._pending_sources, "[" + ",".join(states) + "]"
+        return [self._light_spec(s) for s in states], "[" + ",".join(encoded) + "]"
 
-    def _spec_of(self, cell: Cell) -> notebook.CellSpec:
+    def _spec_of(self, cell: CellState | Cell) -> notebook.CellSpec:
         """The CellSpec to save for `cell`: its loaded spec (format extras) with the current state."""
         outputs = outputs_to_ipynb(cell.outputs_snapshot(), cell.exec_count or None) if cell.kind == "code" else []
         count = (cell.exec_count or None) if cell.kind == "code" else None
@@ -958,19 +1177,25 @@ class NotebookPane(Vertical):
             return dataclasses.replace(cell.spec, source=cell.source, kind=cell.kind, hide_code=cell.code_hidden, outputs=outputs, execution_count=count, duration=duration)
         return notebook.CellSpec(cell.source, cell.kind, hide_code=cell.code_hidden, outputs=outputs, execution_count=count, duration=duration)
 
-    def _after_loaded(self, callback) -> None:
-        """Call `callback` now if every cell is mounted, else once they are."""
-        if self.loaded.is_set():
-            callback()
+    def select_state(self, state: CellState, mode: str, row: int | None = None, column: int = 0) -> None:
+        """`select` for a cell that may have no widget yet: it is mounted first (`_reveal`) and
+        focused once the mount has gone through a refresh."""
+        widget = state.widget
+        if widget is not None and widget.is_mounted and widget._editor is not None:
+            self.select(widget, mode, row, column)
             return
+        self._reveal(state)
+        self.run_worker(self._select_when_mounted(state, mode, row, column), group="select", exclusive=True)
 
-        async def later() -> None:
-            await self.loaded.wait()
-            callback()
+    async def _select_when_mounted(self, state: CellState, mode: str, row: int | None, column: int) -> None:
+        widget = state.widget
+        if widget is None:
+            return
+        await widget._mounted_event.wait()
+        if state.widget is widget and widget.is_attached:
+            self.select(widget, mode, row, column)
 
-        self.run_worker(later(), group="nav")
-
-    def select(self, cell: Cell, mode: str, row: int | None = None) -> None:
+    def select(self, cell: Cell, mode: str, row: int | None = None, column: int = 0) -> None:
         """Focus `cell` in `mode`: "cell" selects it, otherwise its editor gets focus.
 
         The choice between cell mode and the editor is global, `app.cell_mode` (see
@@ -978,7 +1203,7 @@ class NotebookPane(Vertical):
         markdown or hidden-code cell is always selected as a cell, but passing through one
         does not drop an editing user into cell mode.
         `mode` "normal"/"insert" also switches the vim mode; "keep" leaves it.
-        `row` puts the cursor at the start of that line (-1 = last line).
+        `row` puts the cursor at `column` of that line (-1 = last line).
         """
         if mode == "auto":
             mode = "cell" if self.app.cell_mode else "keep"
@@ -992,7 +1217,7 @@ class NotebookPane(Vertical):
             if mode in ("normal", "insert") and VimTextArea.mode != mode:
                 editor.set_mode(mode)
             if row is not None:
-                editor.move_cursor((editor.document.line_count - 1 if row < 0 else row, 0))
+                editor.move_cursor((editor.document.line_count - 1 if row < 0 else row, column))
         self._scroll_to_cell(cell)
         self.call_after_refresh(cell.scroll_visible, animate=False, immediate=True)
 
@@ -1006,16 +1231,16 @@ class NotebookPane(Vertical):
 
     def goto_cell(self, n: int, mode: str, row: int = 0, clamp: bool = True) -> bool:
         """Focus the n-th cell by display position (1-based), keeping `mode`."""
-        cells = self.cells()
+        states = self.states
         if clamp:
-            n = max(1, min(len(cells), n))
-        if not 1 <= n <= len(cells):
-            self.notify(f"No cell {n} (there are {len(cells)})", severity="warning")
+            n = max(1, min(len(states), n))
+        if not 1 <= n <= len(states):
+            self.notify(f"No cell {n} (there are {len(states)})", severity="warning")
             return False
-        self.select(cells[n - 1], mode if mode in ("cell", "auto") else "keep", row)
+        self.select_state(states[n - 1], mode if mode in ("cell", "auto") else "keep", row)
         return True
 
-    def _snapshot(self, cell: Cell, index: int) -> CellSnapshot:
+    def _snapshot(self, cell: Cell | CellState, index: int) -> CellSnapshot:
         return CellSnapshot(index, cell.source, cell.kind, cell.ran_source is not None, cell.outputs_snapshot(), cell.spec)
 
     def _push_undo(self, action: tuple) -> None:
@@ -1023,30 +1248,42 @@ class NotebookPane(Vertical):
         del self._undo[:-MAX_UNDO]
 
     async def _insert(
-        self, anchor: Cell | None, above: bool = False, snapshot: CellSnapshot | None = None, record: bool = True
+        self, anchor: Cell | CellState | None, above: bool = False, snapshot: CellSnapshot | None = None, record: bool = True
     ) -> Cell:
-        """Mount a new (or restored) cell next to `anchor`; renumber; mark dirty.
+        """Add a new (or restored) cell next to `anchor` (None: at the end) and mount it; renumber; mark dirty.
 
         `record` puts an ("insert", cid) entry on the undo stack (undo removes the cell).
+        The widget comes back right away, but one mounted outside the window has no editor
+        until the refresh: focus it with `select_state`.
         """
-        cell = Cell(snapshot.source, snapshot.kind, snapshot.spec) if snapshot else Cell()
-        box = self._cells_box
-        if anchor is None:
-            await box.mount(cell)
-        elif above:
-            await box.mount(cell, before=anchor)
-        else:
-            await box.mount(cell, after=anchor)
+        state = CellState(snapshot.source, snapshot.kind, snapshot.spec) if snapshot else CellState()
         if snapshot:
-            cell.replay(snapshot.outputs)
+            state.replay(snapshot.outputs)
             if snapshot.ran:
-                cell.set_status("stale")
+                state.set_status("stale")
+        index = len(self.states) if anchor is None else self.states.index(state_of(anchor)) + (0 if above else 1)
+        self.states.insert(index, state)
+        lo, hi = self._window
+        box = self._cells_box
+        if lo <= index <= hi:
+            widget = Cell(state=state)
+            if index < hi:
+                await box.mount(widget, before=self.states[index + 1].widget)
+            elif hi > lo:
+                await box.mount(widget, after=self.states[index - 1].widget)
+            else:
+                await box.mount(widget)
+            self._window = (lo, hi + 1)
+        else:
+            if index < lo:
+                self._window = (lo + 1, hi + 1)
+            widget = self._reveal(state)
         if record:
-            self._push_undo(("insert", cell.cid))
+            self._push_undo(("insert", state.cid))
         self.relabel()
         self.refresh_info()
         self.mark_dirty()
-        return cell
+        return widget
 
 
     async def run_cell(self, advance: str = "stay") -> None:
@@ -1058,38 +1295,39 @@ class NotebookPane(Vertical):
             cell.focus(scroll_visible=False, keep_mode=True)
         await self._run_one(cell)
         if advance == "next":
-            cells = self.cells()
-            if cells[-1] is cell and self._pending_sources:
-                await self.loaded.wait()
-                cells = self.cells()
-            index = cells.index(cell) if cell in cells else len(cells) - 1
-            if index + 1 < len(cells):
-                self.select(cells[index + 1], "cell" if self.app.cell_mode else "normal", row=0)
+            states = self.states
+            index = states.index(cell.state) if cell.state in states else len(states) - 1
+            if index + 1 < len(states):
+                self.select_state(states[index + 1], "cell" if self.app.cell_mode else "normal", row=0)
                 return
             advance = "insert"
         if advance == "insert":
             new = await self._insert(cell)
-            self.select(new, "insert")
+            self.select_state(new.state, "insert")
 
-    async def _run_one(self, cell: Cell) -> None:
+    async def _run_one(self, cell: Cell | CellState) -> None:
         """Run one code cell (stale ancestors first, then dependents), or render a markdown one."""
-        if cell.kind == "markdown":
-            await cell.show_rendered()
+        state = state_of(cell)
+        if state.kind == "markdown":
+            if state.widget is not None:
+                await state.widget.show_rendered()
+            else:
+                state.editing = False
         else:
-            self._last_run_cid = cell.cid
-            self.run_worker(self.run_cells([cell.cid]), group="run")
+            self._last_run_cid = state.cid
+            self.run_worker(self.run_cells([state.cid]), group="run")
 
     async def run_last(self) -> None:
         """r r: run again the cell run last, wherever the cursor is; the current cell if none ran yet."""
-        cell = next((c for c in self.cells() if c.cid == self._last_run_cid), None)
-        if cell is None:
+        state = self._state_by_id(self._last_run_cid)
+        if state is None:
             await self.run_cell()
         else:
-            await self._run_one(cell)
+            await self._run_one(state)
 
     def cell_count(self) -> int:
-        """Cells in the notebook, counting the ones not mounted yet."""
-        return len(self.cells()) + len(self._pending_sources)
+        """Cells in the notebook, mounted or not."""
+        return len(self.states)
 
     async def run_number(self, n: int) -> bool:
         """Run cell c`n` (display position) without moving the focus or the selection."""
@@ -1097,11 +1335,11 @@ class NotebookPane(Vertical):
         if not 1 <= n <= total:
             self.notify(f"No cell c{n} (there are {total})", severity="warning")
             return False
-        await self.loaded.wait()
-        cell = self.cells()[n - 1]
-        if cell.kind == "markdown" and self.app.focused is cell.editor:
-            cell.focus(scroll_visible=False, keep_mode=True)
-        await self._run_one(cell)
+        state = self.states[n - 1]
+        widget = state.widget
+        if widget is not None and state.kind == "markdown" and self.app.focused is widget._editor:
+            widget.focus(scroll_visible=False, keep_mode=True)
+        await self._run_one(state)
         return True
 
     async def time_cell(self, runs: int) -> None:
@@ -1122,32 +1360,24 @@ class NotebookPane(Vertical):
         self.notify(f"{cell.label}: {time_brief(durations)}", timeout=8)
 
     def run_all(self) -> None:
-        """Run every cell, waiting for the cells still being mounted after a fast open."""
-        self._after_loaded(
-            lambda: self.run_worker(self.run_cells([c.cid for c in self.cells()], downstream=True), group="run")
-        )
+        """Run every cell, the ones not mounted yet included: a run needs states, not widgets."""
+        self.run_worker(self.run_cells([s.cid for s in self.states], downstream=True), group="run")
 
     def run_stale(self) -> None:
-        self._after_loaded(self._run_stale_now)
-
-    def _run_stale_now(self) -> None:
-        stale = [c.cid for c in self.cells() if c.kind == "code" and needs_run(c)]
+        stale = [s.cid for s in self.states if s.kind == "code" and needs_run(s)]
         if stale:
             self.run_worker(self.run_cells(stale, downstream=True), group="run")
 
     def run_relative(self, below: bool, inclusive: bool = False) -> None:
         """Run the cells below (r a, :runbelow) or above (r C, :runabove) the current one; `inclusive` counts it in."""
-        if below and not self.loaded.is_set():
-            self._after_loaded(lambda: self.run_relative(below, inclusive))
-            return
         cell = self.current_cell()
-        cells = self.cells()
-        if cell is None or cell not in cells:
+        states = self.states
+        if cell is None or cell.state not in states:
             return
-        index = cells.index(cell)
-        subset = cells[index if inclusive else index + 1 :] if below else cells[: index + 1 if inclusive else index]
+        index = states.index(cell.state)
+        subset = states[index if inclusive else index + 1 :] if below else states[: index + 1 if inclusive else index]
         if subset:
-            self.run_worker(self.run_cells([c.cid for c in subset], downstream=False), group="run")
+            self.run_worker(self.run_cells([s.cid for s in subset], downstream=False), group="run")
 
     async def add_cell(self, above: bool = False) -> None:
         cell = await self._insert(self.current_cell(), above)
@@ -1158,29 +1388,42 @@ class NotebookPane(Vertical):
         cell = self.current_cell()
         if cell is None:
             return
-        cells = self.cells()
-        index = cells.index(cell)
-        await self._remove_cells(cells[index : index + max(1, count)])
+        states = self.states
+        index = states.index(cell.state)
+        await self._remove_cells(states[index : index + max(1, count)])
 
-    async def _remove_cells(self, victims: list[Cell], record: bool = True) -> None:
+    async def _remove_cells(self, victims: list[Cell | CellState], record: bool = True) -> None:
         """Remove cells; their variables leave the kernel and the cells that used them re-run or go stale; select the next one."""
-        cells = self.cells()
-        index = cells.index(victims[0])
-        ids = [c.cid for c in victims]
+        states = self.states
+        gone = [state_of(v) for v in victims]
+        index = states.index(gone[0])
+        ids = [s.cid for s in gone]
         graph = self.graph()
         downstream = graph.descendants([i for i in ids if i in graph.children]) - set(ids)
-        defs = set().union(*(c.last_defs for c in victims))
+        defs = set().union(*(s.last_defs for s in gone))
         if record:
-            for offset in range(len(victims) - 1, -1, -1):
-                self._push_undo(("delete", self._snapshot(victims[offset], index + offset)))
-        await self._cells_box.remove_children(victims)
-        forget_removed(self._cells_box)
-        if not self.cells():
-            await self._cells_box.mount(Cell())
-        remaining = self.cells()
+            for offset in range(len(gone) - 1, -1, -1):
+                self._push_undo(("delete", self._snapshot(gone[offset], index + offset)))
+        lo, hi = self._window
+        positions = [states.index(s) for s in gone]
+        before = sum(1 for p in positions if p < lo)
+        inside = sum(1 for p in positions if lo <= p < hi)
+        widgets = [s.widget for s in gone if s.widget is not None]
+        for state in gone:
+            state.sleep()
+            states.remove(state)
+        self._window = (lo - before, hi - before - inside)
+        box = self._cells_box
+        if widgets:
+            await box.remove_children(widgets)
+            forget_removed(box)
+        if not states:
+            states.append(CellState())
+            await box.mount(Cell(state=states[0]))
+            self._window = (0, 1)
         self.relabel()
         self.mark_dirty()
-        self.select(remaining[min(index, len(remaining) - 1)], "auto")
+        self.select_state(states[min(index, len(states) - 1)], "auto")
 
         await self.kernel.delete(defs)
         self._rerun_or_mark_stale(downstream)
@@ -1191,9 +1434,9 @@ class NotebookPane(Vertical):
             self.run_worker(self.run_cells(sorted(downstream)), group="run")
             return
         graph = self.refresh_info()
-        for cell in self.cells():
-            if cell.cid in downstream:
-                cell.mark_inputs_stale()
+        for state in self.states:
+            if state.cid in downstream:
+                state.mark_inputs_stale()
         self.run_worker(self.refresh_vars(graph), group="run")
 
     async def undo(self) -> None:
@@ -1202,45 +1445,61 @@ class NotebookPane(Vertical):
             action = self._undo.pop()
             if action[0] == "delete":
                 snapshot = action[1]
-                cells = self.cells()
-                if snapshot.index < len(cells):
-                    cell = await self._insert(cells[snapshot.index], above=True, snapshot=snapshot, record=False)
+                states = self.states
+                if snapshot.index < len(states):
+                    cell = await self._insert(states[snapshot.index], above=True, snapshot=snapshot, record=False)
                 else:
-                    cell = await self._insert(cells[-1] if cells else None, snapshot=snapshot, record=False)
-                self.select(cell, "auto")
+                    cell = await self._insert(states[-1] if states else None, snapshot=snapshot, record=False)
+                self.select_state(cell.state, "auto")
                 return
-            cell = next((c for c in self.cells() if c.cid == action[1]), None)
-            if cell is None:
+            state = self._state_by_id(action[1])
+            if state is None:
                 continue
             if action[0] == "move":
-                self._move_to(cell, action[2])
-                self.select(cell, "auto")
+                self._move_to(state, action[2])
+                self.select_state(state, "auto")
             elif action[0] == "insert":
-                await self._remove_cells([cell], record=False)
+                await self._remove_cells([state], record=False)
             elif action[0] == "kind":
-                await self.set_cell_kind(cell, action[2], record=False)
-                self.select(cell, "auto")
+                await self.set_cell_kind(state, action[2], record=False)
+                self.select_state(state, "auto")
             return
         self.notify("Nothing to undo")
 
-    def _move_to(self, cell: Cell, index: int) -> None:
-        """Put `cell` at display position `index` (0-based); renumber; mark dirty."""
-        others = [c for c in self.cells() if c is not cell]
-        if not others:
+    def _move_to(self, cell: Cell | CellState, index: int) -> None:
+        """Put `cell` at display position `index` (0-based); renumber; mark dirty.
+
+        Inside the window the widget moves; a move out of it (a counted J or K in a long
+        notebook) remounts a small window at the new place."""
+        state = state_of(cell)
+        states = self.states
+        if len(states) < 2:
             return
-        if index < len(others):
-            self._cells_box.move_child(cell, before=others[index])
+        start = states.index(state)
+        states.pop(start)
+        index = max(0, min(len(states), index))
+        states.insert(index, state)
+        lo, hi = self._window
+        box = self._cells_box
+        if state.widget is not None and lo <= start < hi and lo <= index < hi:
+            if index + 1 < hi:
+                box.move_child(state.widget, before=states[index + 1].widget)
+            else:
+                box.move_child(state.widget, after=states[index - 1].widget)
         else:
-            self._cells_box.move_child(cell, after=others[-1])
+            self._window = self._mounted_span()
+            end = min(len(states), max(0, index - JUMP_WINDOW // 2) + JUMP_WINDOW)
+            self._jump_window(max(0, end - JUMP_WINDOW), end)
         self.relabel()
         self.refresh_info()
         self.mark_dirty()
-        cell.scroll_visible(animate=False)
+        if state.widget is not None and state.widget.is_mounted:
+            state.widget.scroll_visible(animate=False)
 
     def copy_cell(self) -> None:
         """yy / x in cell mode: keep the cell for p / P, and put its text on the system clipboard."""
         if cell := self.current_cell():
-            self.app._cell_clipboard = self._snapshot(cell, self.cells().index(cell))
+            self.app._cell_clipboard = self._snapshot(cell, self.states.index(cell.state))
             self.app.copy_to_clipboard(cell.source)
 
     async def cut_cell(self) -> None:
@@ -1254,56 +1513,60 @@ class NotebookPane(Vertical):
             return
         clip = dataclasses.replace(clip, spec=None)
         cell = await self._insert(self.current_cell(), above, snapshot=clip)
-        self.select(cell, "auto")
+        self.select_state(cell.state, "auto")
 
     def move_cell(self, step: int) -> None:
         cell = self.current_cell()
-        cells = self.cells()
-        if cell is None or cell not in cells:
+        states = self.states
+        if cell is None or cell.state not in states:
             return
-        start = cells.index(cell)
+        start = states.index(cell.state)
         target = start + step
-        if not 0 <= target < len(cells):
+        if not 0 <= target < len(states):
             return
         self._move_to(cell, target)
         self._push_undo(("move", cell.cid, start, target))
+        if cell.state.widget is not cell:
+            self.select_state(cell.state, "auto")
 
     def focus_cell(self, step: int) -> None:
-        cells = self.cells()
+        states = self.states
         current = self.current_cell()
-        index = cells.index(current) + step if current in cells else 0
+        index = states.index(current.state) + step if current is not None else 0
         if abs(step) > 1:
-            index = max(0, min(len(cells) - 1, index))
-        if 0 <= index < len(cells) and cells[index] is not current:
-            self.select(cells[index], "auto", row=0 if step > 0 else -1)
+            index = max(0, min(len(states) - 1, index))
+        if 0 <= index < len(states) and (current is None or states[index] is not current.state):
+            self.select_state(states[index], "auto", row=0 if step > 0 else -1)
 
     def focus_edge(self, last: bool) -> None:
         if last:
-            self._after_loaded(lambda: self.goto_cell(len(self.cells()), "auto", row=-1))
+            self.goto_cell(len(self.states), "auto", row=-1)
         else:
             self.goto_cell(1, "auto")
 
-    async def set_cell_kind(self, cell: Cell, kind: str, record: bool = True) -> None:
+    async def set_cell_kind(self, cell: Cell | CellState, kind: str, record: bool = True) -> None:
         """Switch a cell between code and markdown; selection stays on the cell.
 
         code → markdown works like deleting the code: its variables leave the kernel
         and the cells that used them re-run (and now fail, as in marimo).
         """
-        if kind == cell.kind or kind not in ("code", "markdown"):
+        state = state_of(cell)
+        if kind == state.kind or kind not in ("code", "markdown"):
             return
-        if record and kind == "markdown" and not self._confirmed_to_markdown(cell):
+        if record and kind == "markdown" and not self._confirmed_to_markdown(state):
             return
         if record:
-            self._push_undo(("kind", cell.cid, cell.kind))
+            self._push_undo(("kind", state.cid, state.kind))
         self.mark_dirty()
+        widget = self._reveal(state)
         if kind == "code":
-            await cell.set_kind("code")
+            await widget.set_kind("code")
             self.refresh_info()
             return
         graph = self.graph()
-        downstream = graph.descendants([cell.cid]) - {cell.cid}
-        defs = set(cell.last_defs)
-        await cell.set_kind("markdown")
+        downstream = graph.descendants([state.cid]) - {state.cid}
+        defs = set(state.last_defs)
+        await widget.set_kind("markdown")
         self.refresh_info()
         if not defs:
             return
@@ -1312,7 +1575,7 @@ class NotebookPane(Vertical):
 
     MARKDOWN_CONFIRM_SECONDS = 3.0
 
-    def _confirmed_to_markdown(self, cell: Cell) -> bool:
+    def _confirmed_to_markdown(self, cell: CellState) -> bool:
         """False, with a warning, the first time a display-only marimo cell is turned into markdown.
 
         Such a cell (hidden code like `mo.vstack([mo.md(...), mo.Html(...)])`) already shows as
@@ -1371,10 +1634,10 @@ class NotebookPane(Vertical):
     def _kernel_reset(self) -> None:
         """A fresh kernel process: every cell that ran is stale, the variables panel is empty."""
         self.tried.clear()
-        for cell in self.cells():
-            cell.last_defs = set()
-            if cell.ran_source is not None:
-                cell.mark_inputs_stale()
+        for state in self.states:
+            state.last_defs = set()
+            if state.ran_source is not None:
+                state.mark_inputs_stale()
         self._values = {}
         self._var_rows = {}
         if self.outline_visible:
@@ -1382,8 +1645,8 @@ class NotebookPane(Vertical):
         self._refresh_variables()
 
     def clear_outputs(self) -> None:
-        for cell in self.cells():
-            cell.clear_output()
+        for state in self.states:
+            state.clear_output()
         self.outputs_changed()
 
     def outputs_changed(self) -> None:
@@ -1421,14 +1684,10 @@ class NotebookPane(Vertical):
 
     def jump(self, target: str, mode: str, backward: bool = False) -> None:
         """'3' focuses the third cell by display position; 'text' searches forward (? backward) for text."""
-
-        def go() -> None:
-            if target.isdigit() and not backward:
-                self.goto_cell(int(target), mode, clamp=False)
-            else:
-                self.search(target, -1 if backward else 1, mode)
-
-        self._after_loaded(go)
+        if target.isdigit() and not backward:
+            self.goto_cell(int(target), mode, clamp=False)
+        else:
+            self.search(target, -1 if backward else 1, mode)
 
     def search(self, pattern: str, step: int, mode: str) -> None:
         """Make `pattern` the search of this pane, highlight it and go `step` matches on."""
@@ -1453,7 +1712,7 @@ class NotebookPane(Vertical):
         self.search_highlight = True
         regex = search_regex(self.search_pattern)
         self.app.show_search(regex)
-        self._after_loaded(lambda: self._go_to_match(regex, step, mode))
+        self._go_to_match(regex, step, mode)
 
     def clear_search_highlight(self) -> bool:
         """:noh / escape in cell mode: stop highlighting (the pattern stays for n). False if it was off."""
@@ -1464,16 +1723,16 @@ class NotebookPane(Vertical):
         return True
 
     def _go_to_match(self, regex, step: int, mode: str) -> None:
-        cells = self.cells()
-        if not cells:
+        states = self.states
+        if not states:
             return
         current = self.current_cell()
-        index = cells.index(current) if current in cells else 0
+        index = states.index(current.state) if current is not None and current.state in states else 0
         offset = None
-        if mode != "cell" and not cells[index].editor_hidden:
-            editor = cells[index].editor
+        if mode != "cell" and current is not None and current._editor is not None and not states[index].editor_hidden:
+            editor = current.editor
             offset = editor._offset(editor.cursor_location)
-        sources = [cell.source for cell in cells]
+        sources = [state.source for state in states]
         position = (index, offset)
         for _ in range(abs(step)):
             found = _find_match(regex, sources, *position, forward=step > 0)
@@ -1482,14 +1741,17 @@ class NotebookPane(Vertical):
                 return
             position = found if offset is not None else (found[0], None)
         index, start = position
-        cell = cells[index]
-        if start is None or cell.editor_hidden:
-            self.select(cell, "auto")
+        state = states[index]
+        if start is None or state.editor_hidden:
+            self.select_state(state, "auto")
             return
-        self.select(cell, "keep")
         row, column = _location_in(sources[index], start)
-        cell.editor.move_cursor((row, column))
-        self.call_after_refresh(self._reveal_row, cell, row)
+        self.select_state(state, "keep", row=row, column=column)
+        self.call_after_refresh(self._reveal_row_of, state, row)
+
+    def _reveal_row_of(self, state: CellState, row: int) -> None:
+        if state.widget is not None and state.widget._editor is not None:
+            self._reveal_row(state.widget, row)
 
     def _reveal_row(self, cell: Cell, row: int) -> None:
         """Scroll so line `row` of a tall cell's editor is on screen, not only the cell's top."""
@@ -1546,10 +1808,7 @@ class NotebookPane(Vertical):
             case "k" | "up":
                 self.focus_cell(-n)
             case "G":
-                if had_count:
-                    self.goto_cell(n, "cell")
-                else:
-                    self._after_loaded(lambda: self.goto_cell(len(self.cells()), "cell"))
+                self.goto_cell(n if had_count else len(self.states), "cell")
             case "enter" | "i":
                 cell.start_editing()
                 self.select(cell, "normal" if key == "enter" else "insert")

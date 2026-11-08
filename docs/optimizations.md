@@ -33,7 +33,7 @@ frame is paid in Python, and it has to be kept small by design.
 | gpy | 100 | **0.25 s** | 0.82 s | **0.92 s** | **145 MB** |
 | JupyterLab | 100 | 1.12 s | 1.36 s | 1.64 s | 152 MB |
 | marimo | 100 | 0.46 s | 0.87 s | 0.92 s | 157 MB |
-| gpy | 500 | **0.27 s** | 1.01 s | **1.51 s** | 203 MB |
+| gpy | 500 | **0.27 s** | 0.88 s | **1.40 s** | 168 MB |
 | JupyterLab | 500 | 1.12 s | 1.40 s | 2.81 s | 169 MB |
 | marimo | 500 | 0.52 s | 1.44 s | 1.69 s | 182 MB |
 
@@ -107,25 +107,27 @@ about 1 s.
 
 ## What the others do better, and what is planned
 
-**Memory per cell.** At 500 cells gpython uses 203 MB against 169 (JupyterLab) and 182
+**Memory per cell.** At 500 cells gpython used 203 MB against 169 (JupyterLab) and 182
 (marimo), both without their browser tab. The kernel is not the cause (6 kB per cell).
 Each mounted cell is a `Cell` widget with a `TextArea` editor (about 73 kB) and, once it
 has run, an output container with one `Static` per block (about 35–40 kB per widget):
 Textual's per-widget message queues, style objects, layout caches and render caches. Two
-fixes are planned: fold the text blocks of an output into one `Static` (measured −30 MB
-at 500 cells) and the virtual cell list in `docs/plans/TODO.md`, which keeps only the
-cells near the viewport as widgets (about −100 MB at 500 cells, and it also makes
-keystroke and move cost independent of notebook size, which is the other place a
-500-cell notebook still shows: a cell move costs 45 ms there against 10 ms at 60 cells).
+fixes: fold the text blocks of an output into one `Static` (measured −30 MB at 500
+cells, planned) and the virtual cell list (`docs/plans/12-virtual-cells.md`, done): a
+notebook over 100 cells keeps only a window of 100 cells around the viewport as widgets,
+the rest are plain `CellState` objects, which is 168 MB at 500 cells and makes keystroke
+and move cost independent of the notebook's size (a cell move costs 9–10 ms at 500 cells
+against 6 ms at 60, with the window shifting every eight cells; it was 45 ms).
 
 **First cell.** gpython starts the kernel after the first frame, so the first result
 lands about 0.5 s after the screen is up; marimo and JupyterLab start theirs with the
 server. Starting the kernel alongside the first frame is on the list in #10.
 
-**Load time.** Mounting 500 cells takes about a second (1 ms of CSS and layout per
-widget, three widgets per cell). The virtual cell list fixes this too; pacing the paints
-during the mount was tried and gained nothing, because the cost is the widgets, not the
-reflows.
+**Load time.** Mounting 500 cells took about a second (1 ms of CSS and layout per
+widget, three widgets per cell). With the virtual cell list a 500-cell notebook is loaded
+in 0.31 s and a 1000-cell one in 0.37 s (`loaded_N` in `scripts/bench.py`), since only the
+first hundred cells are mounted; pacing the paints during the mount was tried and gained
+nothing, because the cost is the widgets, not the reflows.
 
 ## How to measure
 

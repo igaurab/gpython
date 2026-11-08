@@ -1136,11 +1136,11 @@ class GPython(App):
     def fold_cells(self, action: str) -> None:
         """Folds are cells: "close" / "toggle" hide this cell's code (markdown: fold it) and select
         the cell; "close_all" / "open_all" do it for every cell; "toggle_all" picks by the current state."""
-        cells = self.cells()
+        states = self.pane.states
         current = self.current_cell()
         if action == "toggle_all":
-            action = "open_all" if any(cell.code_hidden or getattr(cell, "folded", False) for cell in cells) else "close_all"
-        targets = cells if action.endswith("_all") else [current] if current is not None else []
+            action = "open_all" if any(state.code_hidden or state.folded for state in states) else "close_all"
+        targets = states if action.endswith("_all") else [current.state] if current is not None else []
         if action == "toggle":
             hide = current is not None and not (current.code_hidden or getattr(current, "folded", False))
         else:
@@ -1493,7 +1493,8 @@ class GPython(App):
 
     def _ex_image_all(self, action: str) -> None:
         """Save or open every image of every cell, named <notebook>-<cell>[-N].png."""
-        found = [(cell, png, i, len(cell.images)) for cell in self.pane.cells() for i, png in enumerate(cell.images)]
+        pictures = [(state, state.widget.images if state.widget is not None else state.images) for state in self.pane.states]
+        found = [(cell, png, i, len(pngs)) for cell, pngs in pictures for i, png in enumerate(pngs)]
         if not found:
             self.notify("No image in this notebook", severity="warning")
             return
@@ -1753,7 +1754,7 @@ class GPython(App):
         if name.isdigit():
             mode = self._prompt_mode
             pane = self.pane
-            pane._after_loaded(lambda: pane.goto_cell(int(name), mode, clamp=False))
+            pane.goto_cell(int(name), mode, clamp=False)
             return
         commands = self.ex_commands()
         handler = next((h for names, _, h in commands if name in names), None)
