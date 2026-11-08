@@ -1128,15 +1128,24 @@ class NotebookPane(Vertical):
         self.notify(f"{cell.label}: {time_brief(durations)}", timeout=8)
 
     def run_all(self) -> None:
-        self.run_worker(self.run_cells([c.cid for c in self.cells()], downstream=True), group="run")
+        """Run every cell, waiting for the cells still being mounted after a fast open."""
+        self._after_loaded(
+            lambda: self.run_worker(self.run_cells([c.cid for c in self.cells()], downstream=True), group="run")
+        )
 
     def run_stale(self) -> None:
+        self._after_loaded(self._run_stale_now)
+
+    def _run_stale_now(self) -> None:
         stale = [c.cid for c in self.cells() if c.kind == "code" and needs_run(c)]
         if stale:
             self.run_worker(self.run_cells(stale, downstream=True), group="run")
 
     def run_relative(self, below: bool, inclusive: bool = False) -> None:
         """Run the cells below (r a, :runbelow) or above (r C, :runabove) the current one; `inclusive` counts it in."""
+        if below and not self.loaded.is_set():
+            self._after_loaded(lambda: self.run_relative(below, inclusive))
+            return
         cell = self.current_cell()
         cells = self.cells()
         if cell is None or cell not in cells:

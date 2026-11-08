@@ -490,3 +490,25 @@ def test_r_r_reruns_the_cell_run_last_and_r_c_runs_this_one(tmp_path):
         assert last.exec_count > before
 
     ui(tmp_path, test, kernel=True)
+
+
+def test_run_all_pressed_while_cells_are_still_mounting_runs_every_cell(tmp_path):
+    path = tmp_path / "nb.py"
+    cells = many_cells(60)
+    notebook.save(path, cells)
+
+    async def main():
+        app = GPython(path)
+        async with app.run_test(size=(140, 40)) as pilot:
+            assert not app.pane.loaded.is_set()
+            app.action_run_all()
+            await app.pane.loaded.wait()
+            await asyncio.wait_for(app.kernel.ready.wait(), 60)
+            for _ in range(200):
+                await settle(app, pilot)
+                if all(c.status == "ok" for c in app.cells()):
+                    break
+            assert len(app.cells()) == 60
+            assert [c.status for c in app.cells()] == ["ok"] * 60
+
+    asyncio.run(main())
