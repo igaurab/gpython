@@ -1,0 +1,20 @@
+{
+  "commit": "ff0efe9",
+  "tree_changed": true,
+  "date": "2026-11-08T15:20:43-06:00",
+  "cpu": "Apple M3 Max",
+  "cores": 14,
+  "memory_gb": 36.0,
+  "os": "Darwin 24.6.0",
+  "python": "3.13.7",
+  "packages": {
+    "textual": null,
+    "ipykernel": "7.4.0",
+    "jupyter-client": "8.10.0",
+    "jupyterlab": "4.6.6",
+    "jupyter-server": "2.21.1",
+    "marimo": "0.25.2",
+    "pyzmq": "27.3.0"
+  },
+  "load_average_1m": 4.24
+}
