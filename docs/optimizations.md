@@ -184,6 +184,7 @@ block; images are one widget each.
 ## How to measure
 
 ```
+./scripts/eval.sh                                     # the gpy / JupyterLab / marimo comparison, chart and meta.json → docs/benchmarks/
 uv run python3 scripts/bench.py                       # headless: first paint, keys, moves, 60-cell load
 uv run python3 scripts/bench.py --cells 500           # the same at 500 cells
 uv run python3 scripts/ptybench.py                    # a real launch in a pseudo-terminal
