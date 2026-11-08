@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 
 from gpython.kernel import Kernel
 
@@ -109,5 +110,47 @@ def test_run_batch_interrupt_stops_a_blocking_cell_and_the_rest_of_the_batch():
             assert ("a", "error", "KeyboardInterrupt") in outputs and not any(cid == "b" for cid, _, _ in outputs)
         finally:
             await k.shutdown()
+
+    asyncio.run(main())
+
+
+def test_a_kernel_spawned_before_the_ui_is_adopted_and_stays_manageable(tmp_path):
+    from gpython import envs, prespawn
+
+    async def main():
+        file = tmp_path / "nb.py"
+        file.write_text("# %%\nx = 1\n")
+        spawned = prespawn.spawn(envs.builtin(), file)
+        prespawn._pending = spawned
+        k = Kernel(file=file, env=envs.builtin())
+        try:
+            await k.start()
+            assert k.manager.provisioner.process is spawned.process and prespawn._pending is None
+            outputs = []
+            assert await k.execute("import os\nprint(os.getcwd())", lambda kind, c: outputs.append(c.get("text", "")))
+            assert "".join(outputs).strip() == str(file.parent.resolve())
+            task = asyncio.create_task(k.execute("import time\ntime.sleep(30)", None))
+            await asyncio.sleep(0.5)
+            await k.interrupt()
+            assert not await asyncio.wait_for(task, 10)
+            await k.restart()
+            assert await k.execute("1 + 1", None) and k.manager.provisioner.process is not spawned.process
+            assert spawned.process.poll() is not None
+        finally:
+            await k.shutdown()
+        assert not await k.manager.is_alive()
+
+    asyncio.run(main())
+
+
+def test_a_spawn_for_another_env_or_file_is_discarded():
+    from gpython import envs, prespawn
+
+    async def main():
+        spawned = prespawn.spawn(envs.builtin(), None)
+        prespawn._pending = spawned
+        assert prespawn.take(envs.builtin(), Path("/tmp/other.py")) is None
+        assert spawned.process.poll() is not None and not spawned.connection_file.exists()
+        assert prespawn.take(envs.builtin(), None) is None
 
     asyncio.run(main())

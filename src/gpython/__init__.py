@@ -43,6 +43,9 @@ def main() -> None:
         return
 
     os.environ.setdefault("TEXTUAL_FPS", "120")
+    from . import prespawn
+
+    prespawn.start(opts["path"])
     from .app import GPython
 
     kwargs = {} if opts["vim"] else {"vim": False}

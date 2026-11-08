@@ -16,7 +16,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from . import envs
+from . import envs, prespawn
 
 if TYPE_CHECKING:
     from jupyter_client.manager import AsyncKernelManager
@@ -281,12 +281,39 @@ class Kernel:
         if self.manager is None:
             self.manager = self._manager()
         cwd = str(self.file.parent) if self.file and self.file.parent.is_dir() else os.getcwd()
-        await self.manager.start_kernel(
-            cwd=cwd, env=envs.kernel_env(self.env), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
+        launch = dict(cwd=cwd, env=envs.kernel_env(self.env), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        spawned = prespawn.take(self.env, self.file)
+        if spawned is not None:
+            self._adopt(spawned, launch)
+        else:
+            await self.manager.start_kernel(**launch)
         self.client = self.manager.client()
         self.client.start_channels()
         await self._prepare()
+
+    def _adopt(self, spawned: prespawn.Spawned, launch: dict) -> None:
+        """Manage a kernel process started before the UI (prespawn.py) as if start_kernel had
+        launched it: the manager reads its connection file and gets a provisioner that owns
+        the process, so interrupt, restart and shutdown work as usual."""
+        import uuid
+
+        from jupyter_client.provisioning import LocalProvisioner
+
+        manager = self.manager
+        manager.kernel_id = str(uuid.uuid4())
+        manager.connection_file = str(spawned.connection_file)
+        manager.load_connection_file()
+        provisioner = LocalProvisioner(kernel_id=manager.kernel_id, kernel_spec=manager.kernel_spec, parent=manager)
+        provisioner.process = spawned.process
+        provisioner.pid = spawned.process.pid
+        provisioner.pgid = os.getpgid(spawned.process.pid) if hasattr(os, "getpgid") else None
+        provisioner.connection_info = manager.get_connection_info()
+        manager.provisioner = provisioner
+        manager._launch_args = dict(launch)
+        manager._attempted_start = True
+        manager._ready = asyncio.get_running_loop().create_future()
+        manager._ready.set_result(None)
+        manager._connect_control_socket()
 
     async def switch(self, env: envs.Env) -> None:
         """Replace the kernel process with one running in `env`. All variables are lost."""

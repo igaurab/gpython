@@ -694,7 +694,12 @@ class VimTextArea(TextArea):
         """Textual's TextArea watches the app's theme and subscribes to the screen's
         text-selection signal when mounted and never lets go: both keep a strong reference,
         so every editor of a deleted cell stayed alive with its document, parser and caches.
+        A completion worker still waiting for the kernel would keep it alive too.
         """
+        if self._auto_timer is not None:
+            self._auto_timer.stop()
+            self._auto_timer = None
+        self.workers.cancel_node(self)
         watchers = getattr(self.app, "__watchers", None)
         if watchers and "theme" in watchers:
             watchers["theme"] = [pair for pair in watchers["theme"] if pair[0] is not self]
