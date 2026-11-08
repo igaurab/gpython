@@ -1,4 +1,4 @@
-from gpython.graph import analyze, build, mutations
+from gpython.graph import analyze, build, imports, mutations
 
 
 def test_analyze_basic():
@@ -48,6 +48,31 @@ def test_run_order_of_a_wide_fan_out_is_display_order_and_fast():
 def test_multiple_definitions_are_errors():
     g = build({"a": "x = 1", "b": "x = 2", "c": "y = 3"})
     assert set(g.errors) == {"a", "b"}
+
+
+def test_identical_reimport_is_not_a_conflict():
+    g = build({"a": "import seaborn as sns", "b": "import seaborn as sns\nsns.heatmap()", "c": "sns.countplot()"})
+    assert g.errors == {}
+    assert g.owner["sns"] == "a"
+    assert g.parents["c"] == {"a"}
+    assert g.children["b"] == set()
+
+
+def test_reimport_under_a_different_module_is_a_conflict():
+    g = build({"a": "import seaborn as sns", "b": "import seaborn.objects as sns"})
+    assert set(g.errors) == {"a", "b"}
+    g = build({"a": "import seaborn as sns", "b": "sns = 1"})
+    assert set(g.errors) == {"a", "b"}
+    g = build({"a": "import seaborn as sns", "b": "import seaborn as sns\nsns = sns.set_theme()"})
+    assert set(g.errors) == {"a", "b"}
+
+
+def test_imports_map_names_to_what_they_bind():
+    assert imports("import a.b as c\nfrom a import b\nimport x.y\nfrom . import z") == {
+        "c": "a.b", "b": "a.b", "x": "x", "z": "..z"
+    }
+    assert imports("try:\n    import ujson as json\nexcept ImportError:\n    import json") == {}
+    assert imports("def f():\n    import os") == {}
 
 
 def test_cycles_are_errors():

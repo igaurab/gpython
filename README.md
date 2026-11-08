@@ -567,7 +567,8 @@ instead.
 
 ## Rules (same as marimo)
 
-- A name may be defined in only one cell.
+- A name may be defined in only one cell. Repeating the identical import
+  (`import seaborn as sns` in two cells) is allowed; the first cell owns the name.
 - Names starting with `_` are private to their cell.
 - In-place changes (`xs.append(1)`, `d["k"] = v`) at a cell's top level are
   tracked: readers below run after the mutator, and running the mutator first

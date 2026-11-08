@@ -109,6 +109,34 @@ def names(source: str) -> tuple[set[str], set[str]]:
     return defs, refs - defs - _BUILTINS
 
 
+def imports(source: str) -> dict[str, str]:
+    """Names bound only by imports at a cell's top level, mapped to what they import.
+
+    `import a.b as c` -> {"c": "a.b"}, `from a import b` -> {"b": "a.b"}, `import a.b` -> {"a": "a"}.
+    A name that is also assigned, or imported two ways, is left out.
+    """
+    tree = ast.parse(source)
+    bound: dict[str, set[str]] = {}
+
+    def visit(node: ast.AST) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, _SCOPES):
+                continue
+            if isinstance(child, ast.Import):
+                for alias in child.names:
+                    name = alias.asname or alias.name.partition(".")[0]
+                    bound.setdefault(name, set()).add(alias.name if alias.asname else name)
+            elif isinstance(child, ast.ImportFrom):
+                module = "." * child.level + (child.module or "")
+                for alias in child.names:
+                    bound.setdefault(alias.asname or alias.name, set()).add(f"{module}.{alias.name}")
+            visit(child)
+
+    visit(tree)
+    assigned, _ = _module_stores(tree)
+    return {n: next(iter(ps)) for n, ps in bound.items() if len(ps) == 1 and n not in assigned}
+
+
 def _base_name(node: ast.AST) -> str | None:
     """`a.b[0].c` -> "a"."""
     while isinstance(node, (ast.Attribute, ast.Subscript)):
@@ -206,25 +234,50 @@ class Graph:
         return list(dict.fromkeys([*roots, *sorted(extra, key=self.order.index)]))
 
 
+@dataclass(frozen=True)
+class Analysis:
+    """One cell's analysis, memoised by source so a rebuild after an edit re-analyses only
+    the edited cell. Frozen, so `build` hands out fresh sets."""
+
+    defs: frozenset[str] = frozenset()
+    refs: frozenset[str] = frozenset()
+    mutates: frozenset[str] = frozenset()
+    imports: tuple[tuple[str, str], ...] = ()
+    error: str = ""
+
+
 @lru_cache(maxsize=4096)
-def _analyzed(source: str) -> tuple[frozenset[str], frozenset[str], frozenset[str], str]:
-    """(defs, refs, mutates, syntax error) of one cell, memoised by source: a rebuild after an
-    edit re-analyses only the edited cell. Frozen, so `build` hands out fresh sets."""
+def _analyzed(source: str) -> Analysis:
     try:
         defs, refs = analyze(source)
-        return frozenset(defs), frozenset(refs), frozenset(mutations(strip_magics(source)) & refs), ""
+        stripped = strip_magics(source)
+        return Analysis(
+            frozenset(defs),
+            frozenset(refs),
+            frozenset(mutations(stripped) & refs),
+            tuple(sorted(imports(stripped).items())),
+        )
     except SyntaxError as e:
-        return frozenset(), frozenset(), frozenset(), f"SyntaxError: {e.msg} (line {e.lineno})"
+        return Analysis(error=f"SyntaxError: {e.msg} (line {e.lineno})")
+
+
+def _same_import(name: str, cids: list[str], imported: dict[str, dict[str, str]]) -> bool:
+    """True when every cell binds `name` through the identical import, like a repeated
+    `import seaborn as sns`: a harmless repetition, not a conflict."""
+    targets = {imported[cid].get(name) for cid in cids}
+    return len(targets) == 1 and None not in targets
 
 
 def build(cells: dict[str, str]) -> Graph:
     """Build the graph for cells given as {cell_id: source} in display order."""
     g = Graph(order=list(cells))
+    imported: dict[str, dict[str, str]] = {}
     for cid, source in cells.items():
-        defs, refs, changed, error = _analyzed(source)
-        g.defs[cid], g.refs[cid], g.mutates[cid] = set(defs), set(refs), set(changed)
-        if error:
-            g.errors[cid] = error
+        a = _analyzed(source)
+        g.defs[cid], g.refs[cid], g.mutates[cid] = set(a.defs), set(a.refs), set(a.mutates)
+        imported[cid] = dict(a.imports)
+        if a.error:
+            g.errors[cid] = a.error
 
     owners: dict[str, list[str]] = {}
     for cid in g.order:
@@ -232,7 +285,9 @@ def build(cells: dict[str, str]) -> Graph:
             owners.setdefault(name, []).append(cid)
     for name, cids in owners.items():
         g.owner[name] = cids[0]
-        if len(cids) > 1:
+        if len(cids) > 1 and _same_import(name, cids, imported):
+            owners[name] = cids[:1]
+        elif len(cids) > 1:
             for cid in cids:
                 g.errors.setdefault(
                     cid, f"'{name}' is defined in {len(cids)} cells; define it in one"
