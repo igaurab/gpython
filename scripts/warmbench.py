@@ -261,6 +261,14 @@ def available(tool):
         return False
 
 
+def warn_if_busy():
+    """The numbers are only worth comparing on an idle machine: a load average above half the
+    cores (another job compiling or training) slows every tool and widens the error bars."""
+    load, cores = os.getloadavg()[0], os.cpu_count() or 1
+    if load > cores / 2:
+        print(f"warning: load average {load:.1f} on {cores} cores; results will be slow and noisy", file=sys.stderr)
+
+
 def run_once(tool, n, timeout):
     workdir = Path(tempfile.mkdtemp(prefix="gpwarm-"))
     if tool == "gpy":
@@ -278,6 +286,7 @@ def main():
     parser.add_argument("--timeout", type=float, default=120)
     parser.add_argument("--json", metavar="FILE", help="also write every run and the mean/std per cell to FILE")
     args = parser.parse_args()
+    warn_if_busy()
     tools = [tool for tool in args.tools.split(",") if available(tool)]
     sizes = [int(n) for n in args.cells.split(",")]
     metrics = ["ready", "first", "last", "mem_mb"]
