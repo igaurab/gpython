@@ -4,7 +4,8 @@
 
 Writes OUT_STEM.png (300 dpi) and OUT_STEM.pdf, two panels:
   (a) the tool's own cost per cell (mean idle gap between two work cells) for each problem at
-      the largest N, mean ± 1 sample std over the runs;
+      the largest N, mean ± 1 sample std over the runs, problems named on the axis and grouped
+      by domain (CPU, disk, network);
   (b) the share of launch-to-last-cell time that is not the cells' own work, against N, one
       line per tool per domain (CPU solid, IO dashed).
 and OUT_STEM_problems.png/.pdf: launch until the last cell against N, one panel per problem,
@@ -23,10 +24,30 @@ from benchchart import COLOR, HATCH, TOOLS, setup
 
 LABEL = {"gpy": "gpy", "lab": "JupyterLab", "marimo": "marimo"}
 MARKER = {"gpy": "o", "lab": "s", "marimo": "^"}
+SHORT = {"C1": "matmul", "C2": "FFT", "C3": "Python\nloop", "D1": "6 MB\n+ fsync", "D2": "100 small\nfiles",
+         "N1": "HTTP\nsync", "N2": "HTTP\nasync"}
+GROUP = {"C": "CPU", "D": "disk", "N": "network"}
 
 
 def overhead_share(run, n):
     return 1 - n * run["work_ms"] / 1000 / run["last"]
+
+
+def label_groups(ax, problems):
+    """Name each run of problems sharing a first letter (CPU, disk, network) under the ticks,
+    with a thin rule between runs."""
+    import matplotlib.transforms
+
+    below = matplotlib.transforms.blended_transform_factory(ax.transData, ax.transAxes)
+    start = 0
+    for i in range(1, len(problems) + 1):
+        if i < len(problems) and problems[i][0] == problems[start][0]:
+            continue
+        ax.text((start + i - 1) / 2, -0.19, GROUP.get(problems[start][0], ""), transform=below,
+                ha="center", va="top", fontsize=8, fontweight="bold")
+        if i < len(problems):
+            ax.axvline(i - 0.5, color="#bdbdbd", linewidth=0.6, zorder=0)
+        start = i
 
 
 def draw(rows, out):
@@ -45,7 +66,7 @@ def draw(rows, out):
     def row(problem, tool, n):
         return next(r for r in rows if r["problem"] == problem and r["tool"] == tool and r["cells"] == n)
 
-    fig, (left, right) = plt.subplots(1, 2, figsize=(7.2, 2.8), constrained_layout=True,
+    fig, (left, right) = plt.subplots(1, 2, figsize=(7.2, 3.1), constrained_layout=True,
                                       gridspec_kw={"width_ratios": [1.5, 1]})
     width = 0.8 / len(tools)
     x = np.arange(len(problems))
@@ -55,7 +76,8 @@ def draw(rows, out):
         left.bar(x + (i - (len(tools) - 1) / 2) * width, means, width * 0.92, yerr=stds, capsize=1.5,
                  color=COLOR[tool], hatch=HATCH[tool], edgecolor="black", linewidth=0.6, label=LABEL[tool],
                  error_kw={"elinewidth": 0.7, "capthick": 0.7})
-    left.set_xticks(x, problems)
+    left.set_xticks(x, [SHORT.get(p, p) for p in problems], fontsize=7)
+    label_groups(left, problems)
     left.set_ylabel("ms between cells")
     left.set_title(f"(a) Tool cost per cell, {top} cells")
     left.yaxis.grid(True, color="#d9d9d9", linewidth=0.5)
