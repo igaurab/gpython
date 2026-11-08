@@ -31,6 +31,7 @@ from .vim import VimTextArea, search_regex
 
 MIN_INITIAL_CELLS = 4
 MOUNT_BATCH = 10
+DRAW_SCROLLED_EVERY = 0.25
 MAX_UNDO = 50
 DEBUGGABLE_ERRORS = {
     "IndexError", "KeyError", "ZeroDivisionError", "AssertionError", "ValueError", "TypeError",
@@ -601,53 +602,91 @@ class NotebookPane(Vertical):
 
             failed: set[str] = set()
             missing: list[Cell] = []
-            for cid in order:
-                cell = by_id[cid]
-                if not cell.is_mounted:
-                    continue
-                if cid in graph.errors:
-                    cell.show_error(graph.errors[cid])
-                    cell.set_status("error")
-                    failed.add(cid)
-                    continue
-                if graph.parents[cid] & failed:
-                    cell.show_error("not run: an upstream cell failed")
-                    cell.inputs_stale = True
-                    cell.set_status("skipped")
-                    failed.add(cid)
-                    continue
-
-                source = cell.source
-                cell.echo_suppressed = ends_with_string(source)
-                await self.kernel.delete(cell.last_defs | graph.defs[cid])
-                cell.add_output("clear_output", {"wait": True})
-                self.exec_counter += 1
-                cell.begin_run(self.exec_counter)
-                if cid == debug:
-                    await self.kernel.arm(cid)
-                ok = await self.kernel.execute(
-                    source, cell.add_output, cell_id=cid,
-                    on_input=lambda prompt, password, cell=cell: self._input_requested(cell, prompt, password),
-                )
-                self._debug_end()
-                if cell.output_clear_pending:
-                    cell.clear_output()
-                cell.ran_source = source
-                cell.last_defs = graph.defs[cid]
-                cell.end_run("ok" if ok and cell.source == source else "error" if not ok else "stale")
-                self.outputs_changed()
-                cell.missing = self._note_missing(cell) if not ok else None
-                if not ok and not cell.missing:
-                    self._offer_debugger(cell)
-                if not ok:
-                    failed.add(cid)
-                if cell.missing:
-                    missing.append(cell)
-                self._keep_focus_visible(cell)
+            batch = len(order) > 1
+            drawn_at = time.perf_counter()
+            try:
+                for cid in order:
+                    cell = by_id[cid]
+                    if not cell.is_mounted:
+                        continue
+                    if batch:
+                        cell.defer_drawing = not self._on_screen(cell)
+                        if time.perf_counter() - drawn_at > DRAW_SCROLLED_EVERY:
+                            self._draw_deferred(on_screen_only=True)
+                            drawn_at = time.perf_counter()
+                    await self._execute_in_run(cell, cid, graph, failed, missing, debug)
+            finally:
+                if batch:
+                    self._draw_deferred(on_screen_only=False)
+                    self._keep_focus_visible(None)
 
             await self.refresh_vars(graph)
         if missing:
             envpicker.install_missing(self, missing, after_install)
+
+    def _on_screen(self, cell: Cell) -> bool:
+        """Painted in the last frame (the compositor's visible map, as images.py reads it)."""
+        try:
+            return cell in self.screen._compositor.visible_widgets
+        except Exception:
+            return True
+
+    def _draw_deferred(self, on_screen_only: bool) -> None:
+        """Draw the outputs of cells a run left in their logs: the ones now on screen while the
+        run goes on (the user scrolled), or all of them in one layout pass when it ends."""
+        cells = [c for c in self.cells() if c.drawing_deferred or c.defer_drawing]
+        if on_screen_only:
+            cells = [c for c in cells if c.drawing_deferred and self._on_screen(c)]
+        if not cells:
+            return
+        with self.app.batch_update():
+            for cell in cells:
+                cell.draw_deferred_outputs()
+
+    async def _execute_in_run(
+        self, cell: Cell, cid: str, graph: Graph, failed: set[str], missing: list[Cell], debug: str | None,
+    ) -> None:
+        """Run one cell of run_cells' order: skip it after an upstream failure, else execute it."""
+        if cid in graph.errors:
+            cell.show_error(graph.errors[cid])
+            cell.set_status("error")
+            failed.add(cid)
+            return
+        if graph.parents[cid] & failed:
+            cell.show_error("not run: an upstream cell failed")
+            cell.inputs_stale = True
+            cell.set_status("skipped")
+            failed.add(cid)
+            return
+
+        source = cell.source
+        cell.echo_suppressed = ends_with_string(source)
+        await self.kernel.send_delete(cell.last_defs | graph.defs[cid])
+        cell.add_output("clear_output", {"wait": True})
+        self.exec_counter += 1
+        cell.begin_run(self.exec_counter)
+        if cid == debug:
+            await self.kernel.arm(cid)
+        ok = await self.kernel.execute(
+            source, cell.add_output, cell_id=cid,
+            on_input=lambda prompt, password, cell=cell: self._input_requested(cell, prompt, password),
+        )
+        self._debug_end()
+        if cell.output_clear_pending:
+            cell.clear_output()
+        cell.ran_source = source
+        cell.last_defs = graph.defs[cid]
+        cell.end_run("ok" if ok and cell.source == source else "error" if not ok else "stale")
+        self.outputs_changed()
+        cell.missing = self._note_missing(cell) if not ok else None
+        if not ok and not cell.missing:
+            self._offer_debugger(cell)
+        if not ok:
+            failed.add(cid)
+        if cell.missing:
+            missing.append(cell)
+        if not cell.drawing_deferred:
+            self._keep_focus_visible(cell)
 
     def _note_missing(self, cell: Cell) -> str | None:
         """After a failed run: the module a ModuleNotFoundError names, with a hint under the traceback.
@@ -678,7 +717,7 @@ class NotebookPane(Vertical):
         upstream = graph.ancestors(roots) - set(roots)
         return [cid for cid in graph.order if cid in upstream and cid in by_id and needs_run(by_id[cid])]
 
-    def _keep_focus_visible(self, ran: Cell) -> None:
+    def _keep_focus_visible(self, ran: Cell | None) -> None:
         """New output above the focused cell pushes it down; keep the user's cell on screen."""
         current = self.current_cell()
         if current is not None and current is not ran and self.app.focused is not None and current.pane is self:

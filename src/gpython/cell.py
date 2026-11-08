@@ -217,6 +217,9 @@ class Cell(Vertical):
         self._ticker: Timer | None = None
         self._log: list[tuple] = []
         self._log_clear_pending = False
+        self.defer_drawing = False
+        self._drawing_deferred = False
+        self._deferred_hints: list[str] = []
         self._editor: VimTextArea | None = None
         self._outputs: OutputArea | None = None
         self._view: MarkdownView | None = None
@@ -278,7 +281,39 @@ class Cell(Vertical):
 
     @property
     def output_clear_pending(self) -> bool:
-        return self._outputs is not None and self._outputs.clear_pending
+        return self._log_clear_pending or (self._outputs is not None and self._outputs.clear_pending)
+
+    @property
+    def drawing_deferred(self) -> bool:
+        """Outputs are in the log but not on screen yet (see `defer_drawing`)."""
+        return self._drawing_deferred
+
+    def draw_deferred_outputs(self) -> None:
+        """Rebuild the output area from the log and repaint the header and bar, once, after a run
+        skipped drawing this cell.
+
+        Pane.run_cells sets `defer_drawing` on cells that are off screen during a multi-cell run:
+        their outputs only go to the log and their status is not painted, because every mount or
+        resize of an output widget makes Textual lay out the whole notebook again, and every
+        repaint of a widget that is not on screen makes it rebuild its map of every widget
+        (docs/plans/12-run-all-scaling.md)."""
+        self.defer_drawing = False
+        if not self._drawing_deferred:
+            return
+        self._drawing_deferred = False
+        if self._outputs is not None:
+            self._outputs.clear()
+        for kind, content in self.outputs_snapshot():
+            if kind == "_error":
+                self.output_box.show_error(content)
+            else:
+                self.output_box.add(kind, content)
+        hints, self._deferred_hints = self._deferred_hints, []
+        for text in hints:
+            self.output_box.add_hint(text)
+        self._update_note()
+        self._render_header()
+        self.paint_bar()
 
     @property
     def source(self) -> str:
@@ -323,6 +358,8 @@ class Cell(Vertical):
         stale cell, one that needs a rerun, is STALE_BAR, salmon, apart from the yellow of
         normal mode. The cell the debugger is paused in is DEBUG_BAR, the red of the DEBUG
         badge, above everything else."""
+        if self._skip_drawing():
+            return
         colors = getattr(self.app, "bar_colors", None)
         if colors is None:
             return
@@ -492,6 +529,9 @@ class Cell(Vertical):
         self.outputs_version += 1
         self._log.clear()
         self._log_clear_pending = False
+        if self._skip_drawing():
+            self._deferred_hints.clear()
+            return
         if self._outputs is not None:
             self._outputs.clear()
         self._update_note()
@@ -500,14 +540,25 @@ class Cell(Vertical):
         self.outputs_version += 1
         self._log[:] = [("_error", message, None)]
         self._log_clear_pending = False
+        if self._skip_drawing():
+            return
         self.output_box.show_error(message)
         self._update_note()
 
     def show_hint(self, text: str) -> None:
         """A line under the outputs (an install offer, say); it is not saved with them."""
+        if self._skip_drawing():
+            self._deferred_hints.append(text)
+            return
         self.output_box.add_hint(text)
         if self._note is not None:
             self._update_note()
+
+    def _skip_drawing(self) -> bool:
+        """True (and the cell is marked for a later redraw) while `defer_drawing` holds."""
+        if self.defer_drawing:
+            self._drawing_deferred = True
+        return self.defer_drawing
 
     @property
     def last_error(self) -> dict | None:
@@ -524,7 +575,7 @@ class Cell(Vertical):
         log = self._log
         if kind == "clear_output" and content.get("wait"):
             self._log_clear_pending = True
-            if self._outputs is not None:
+            if self._outputs is not None and not self._skip_drawing():
                 self._outputs.add(kind, content)
             return
         if self._log_clear_pending:
@@ -540,11 +591,13 @@ class Cell(Vertical):
                 log.append(("stream", content["name"], [content["text"]]))
         elif kind == "clear_output":
             log.clear()
-            if self._outputs is not None:
+            if self._outputs is not None and not self._skip_drawing():
                 self._outputs.add(kind, content)
             return
         else:
             log.append((kind, content, None))
+        if self._skip_drawing():
+            return
         self.output_box.add(kind, content)
         if self._note is not None:
             self._update_note()
@@ -595,6 +648,8 @@ class Cell(Vertical):
 
 
     def _render_header(self) -> None:
+        if self._skip_drawing():
+            return
         elapsed = int(time.perf_counter() - self._run_start) if self.status == "running" else 0
         key = (self.kind, self.status, self.info, self.label, self.exec_count, self.duration, elapsed, self.selected, self.code_hidden, self.folded, self.show_timing)
         if key == self._header_key:

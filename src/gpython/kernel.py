@@ -348,6 +348,16 @@ class Kernel:
             await self.ready.wait()
             await self._execute(f"_gp_delete({sorted(names)!r})", None, store_history=False)
 
+    async def send_delete(self, names: set[str]) -> None:
+        """Queue the delete without waiting for it, saving a round trip per cell in a run.
+
+        The kernel runs requests in order, so the execute sent next sees the names gone, and
+        `_collect` and `_shell_reply` skip the replies of a request they did not send."""
+        if names:
+            await self.ready.wait()
+            if self.client is not None and self.client.channels_running:
+                self._send(f"_gp_delete({sorted(names)!r})", False, None, False)
+
     async def variables(self, names: set[str]) -> list[list[str]]:
         """Rows [name, type, value, shape/len/dtype, category] for the names that exist in the kernel."""
         rows = await self._print_json(f"print(__import__('json').dumps(_gp_vars({sorted(names)!r})))")

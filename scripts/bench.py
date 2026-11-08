@@ -1,6 +1,6 @@
 """Headless performance benchmark for gpython.
 
-    uv run python3 scripts/bench.py [--cells N] [--json] [--profile keys|mount|moves|stream]
+    uv run python3 scripts/bench.py [--cells N] [--runall N] [--json] [--profile keys|mount|moves|stream|runall]
 
 Prints one `name<TAB>seconds` row per metric (or a JSON dict with --json).
 """
@@ -189,9 +189,37 @@ async def bench(n: int, profile_what: str | None) -> dict[str, float]:
         results["run_print_3000"] = time.perf_counter() - t
         assert cells[3].output_text.endswith("x 2999\n"), cells[3].output_text[-50:]
 
-    if profile_what:
+    if profile_what and profile_what in profiles:
         print(top(profiles[profile_what], 25, "tottime"), file=sys.stderr)
         print(top(profiles[profile_what], 40, "cumulative"), file=sys.stderr)
+    return results
+
+
+async def bench_runall(n: int, profile: bool) -> dict[str, float]:
+    """Run all n cells on the real kernel, each printing one line. A fake kernel that answers
+    at once hides the cost: the real one's messages (delete, busy, stream, idle, reply) arrive
+    in separate event-loop ticks and each tick can run a layout pass over every cell."""
+    path = make_notebook(n)
+    app = gapp.GPython(path)
+    async with app.run_test(size=(140, 45)) as pilot:
+        await app.loaded.wait()
+        await asyncio.wait_for(app.kernel.ready.wait(), 60)
+        await pilot.pause()
+        cells = app.cells()
+        prof = cProfile.Profile() if profile else None
+        t, cpu = time.perf_counter(), time.process_time()
+        if prof:
+            prof.enable()
+        await app.run_cells([c.cid for c in cells], downstream=True)
+        await pilot.pause()
+        if prof:
+            prof.disable()
+        results = {f"runall_{n}": time.perf_counter() - t, f"runall_{n}_proc": time.process_time() - cpu}
+        assert all(c.status == "ok" for c in cells), [c.status for c in cells if c.status != "ok"][:5]
+        assert all(c.output_text for c in cells), "a cell has no output"
+    if prof:
+        print(top(prof, 25, "tottime"), file=sys.stderr)
+        print(top(prof, 40, "cumulative"), file=sys.stderr)
     return results
 
 
@@ -199,9 +227,12 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cells", type=int, default=60)
     parser.add_argument("--json", action="store_true")
-    parser.add_argument("--profile", choices=["keys", "mount", "moves", "stream"])
+    parser.add_argument("--profile", choices=["keys", "mount", "moves", "stream", "runall"])
+    parser.add_argument("--runall", type=int, default=200, help="cells for the run-all row (0 skips it)")
     args = parser.parse_args()
     results = asyncio.run(bench(args.cells, args.profile))
+    if args.runall:
+        results.update(asyncio.run(bench_runall(args.runall, args.profile == "runall")))
     if args.json:
         print(json.dumps(results, indent=2))
     else:
