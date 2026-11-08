@@ -20,6 +20,17 @@ since, or their inputs changed), then the cell. What happens to the cells
 <img width="1372" height="1034" alt="image" src="https://github.com/user-attachments/assets/c93ed22f-cf15-4a26-9322-c62c940febf5" />
 
 
+## Performance
+
+![gpy vs JupyterLab vs marimo: warm-up, run-all scaling, memory](docs/benchmarks/warmup_scaling.png)
+
+On a MacBook (Apple M3 Max), mean of 3 runs:
+- **On screen:** gpy in 0.3 s, against 1.1 s for JupyterLab's server and 0.4 s for marimo's.
+- **Run all 500 cells:** gpy in 1.2 s, against 2.6 s for JupyterLab and 2.9 s for marimo.
+- **Memory:** gpy uses the least at every notebook size.
+
+JupyterLab and marimo are timed without their browser, so their real numbers are higher. `./scripts/eval.sh` reruns the whole comparison and redraws the chart. Its files and conditions are in [`docs/benchmarks/`](docs/benchmarks/), and how gpython got here is in [`docs/optimizations.md`](docs/optimizations.md).
+
 ## Install
 
 The package on PyPI is called `gpynb`; the command it installs is `gpython`,
