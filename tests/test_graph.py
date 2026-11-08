@@ -34,6 +34,17 @@ def test_run_order_follows_dependencies_not_display_order():
     assert g.run_order(["c1", "c2", "c3", "c4"]) == ["c2", "c1", "c3", "c4"]
 
 
+def test_run_order_of_a_wide_fan_out_is_display_order_and_fast():
+    import time
+
+    cells = {"setup": "import math\nk = 2"} | {f"c{i}": f"r{i} = math.sqrt(k + {i})" for i in range(3000)}
+    g = build(cells)
+    start = time.perf_counter()
+    order = g.run_order(list(cells))
+    assert time.perf_counter() - start < 0.5
+    assert order == list(cells)
+
+
 def test_multiple_definitions_are_errors():
     g = build({"a": "x = 1", "b": "x = 2", "c": "y = 3"})
     assert set(g.errors) == {"a", "b"}
