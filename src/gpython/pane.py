@@ -1861,6 +1861,10 @@ class NotebookPane(Vertical):
 
 
     @on(VimTextArea.Changed)
+    def source_changed(self) -> None:
+        """A cell's text changed outside its editor (an ex command on a cell off screen)."""
+        self._edited()
+
     def _edited(self) -> None:
         if not self.dirty:
             self.mark_dirty()

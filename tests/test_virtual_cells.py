@@ -253,3 +253,44 @@ def test_delete_undo_and_counted_moves_work_across_the_window(tmp_path):
         assert mounted(pane) == list(range(*pane._window))
 
     run(tmp_path, test)
+
+
+def test_ex_ranges_over_the_whole_notebook_reach_cells_off_screen(tmp_path):
+    async def test(app, pilot):
+        pane = app.pane
+        far = pane.states[250]
+        assert far.widget is None and "print(250)" in far.source
+        app.pane.select(app.cells()[0], "cell")
+        await app._run_ex("%s/print/show/")
+        await settle(app, pilot)
+        assert "show(250)" in far.source and far.widget is None
+        assert "show(0)" in app.cells()[0].source and pane.dirty
+        await app._run_ex("g/needle/s/True/False/")
+        await settle(app, pilot)
+        assert pane.states[200].source.endswith("needle = False")
+        await app._run_ex("%>")
+        await settle(app, pilot)
+        assert far.source.startswith("    v250 = 250\n    show(250)")
+        await app._run_ex("g/^    v2[0-9][0-9]/d")
+        await settle(app, pilot)
+        assert far.source == "    show(250)" and pane.states[199].source.startswith("    v199 = 199")
+        await app._run_ex("w")
+        await settle(app, pilot)
+        saved = notebook.load_cells(pane.path)[0]
+        assert "show(250)" in saved[250].source and "v250" not in saved[250].source
+        pane.select_state(far, "cell")
+        await settle(app, pilot)
+        assert far.widget is not None and far.widget.source == "    show(250)"
+
+    run(tmp_path, test)
+
+
+def test_normal_over_the_whole_notebook_is_refused_for_cells_off_screen(tmp_path):
+    async def test(app, pilot):
+        app.pane.select(app.cells()[0], "cell")
+        before = [state.source for state in app.pane.states]
+        await app._run_ex("%normal A;")
+        await settle(app, pilot)
+        assert [state.source for state in app.pane.states] == before
+
+    run(tmp_path, test)

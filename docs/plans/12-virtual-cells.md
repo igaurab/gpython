@@ -54,7 +54,7 @@ per move. Design decided in `TODO.md` §1 "Next: a virtual cell list".
 | `relabel`, `refresh_info`, graph, outline, variables owners, `_kernel_reset`, `clear_outputs`, fold all | states |
 | search (`_go_to_match`), `goto_cell`, `focus_cell`, `focus_edge`, `G` | states, then `select_state` |
 | `_insert`, `_remove_cells`, `_move_to`, undo | states + the window (a cell inserted or moved outside the window is revealed) |
-| `select`, `cell_command`, ex ranges, `:img`, debugger highlight | widgets (ex `%` ranges cover mounted cells only, see open questions) |
+| `select`, `cell_command`, ex ranges, `:img`, debugger highlight | widgets (ex `%` ranges reach cells off screen as text, `exlines.py`) |
 
 Undo history: kept (`TextArea.history` is moved to the new editor). Markdown: re-rendered on
 remount. Images: re-decoded from the log.

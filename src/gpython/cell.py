@@ -248,6 +248,16 @@ class CellState:
     def is_mounted(self) -> bool:
         return self.widget is not None
 
+    def replace_source(self, text: str) -> None:
+        """New text for a cell with no editor on screen (exlines.py): the undo history cannot
+        follow a change made outside the editor, so it starts afresh when the cell remounts."""
+        self._source = text
+        self.history = None
+        row, col = self.cursor
+        lines = text.split("\n")
+        row = min(row, len(lines) - 1)
+        self.cursor = (row, min(col, len(lines[row])))
+
     def sleep(self) -> None:
         """Take the editor's text, cursor and undo history back; the widget is about to go."""
         widget = self.widget

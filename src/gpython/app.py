@@ -1002,25 +1002,29 @@ class GPython(App):
         vim's buffer: % (and no range when `default_all`) is every line of every cell, $ the
         notebook's last line, . the cursor line, N line N of the current cell (its gutter number),
         '<,'> the last visual area. No range is the cursor line in the editor and the whole
-        selected cell in cell mode."""
-        cells = [cell for cell in self.cells() if getattr(cell, "editor", None) is not None]
+        selected cell in cell mode. A cell with no editor on screen (a long notebook keeps only
+        a window of cells mounted) is read and changed as text (exlines.py)."""
+        targets = self._ex_targets()
+        self._ex_labels = {target: state.label for state, target in targets}
         current = self.current_cell()
-        if current is None or current not in cells:
+        editors = [target for _, target in targets]
+        if current is None or getattr(current, "editor", None) not in editors:
             raise ValueError("No cell to work on")
-        index = cells.index(current)
         editor = current.editor
+        index = editors.index(editor)
+        cells = editors
         in_editor = self.focused is editor
 
-        def last_row(cell) -> int:
-            return cell.editor.document.line_count - 1
+        def last_row(target) -> int:
+            return target.document.line_count - 1
 
         if span == "%" or (not span and default_all):
-            return [(cell.editor, 0, last_row(cell)) for cell in cells]
+            return [(target, 0, last_row(target)) for target in cells]
         if not span:
             if in_editor:
                 row = editor.cursor_location[0]
                 return [(editor, row, row)]
-            return [(editor, 0, last_row(current))]
+            return [(editor, 0, last_row(editor))]
         if span == "'<,'>":
             top, bottom = editor._range_rows(span)
             return [(editor, top, bottom)]
@@ -1030,17 +1034,31 @@ class GPython(App):
                 return index, editor.cursor_location[0]
             if text == "$":
                 return len(cells) - 1, last_row(cells[-1])
-            return index, max(0, min(last_row(current), int(text) - 1))
+            return index, max(0, min(last_row(editor), int(text) - 1))
 
         first, _, second = span.partition(",")
         start, end = sorted((address(first), address(second or first)))
         pieces = []
         for position in range(start[0], end[0] + 1):
-            cell = cells[position]
+            target = cells[position]
             top = start[1] if position == start[0] else 0
-            bottom = end[1] if position == end[0] else last_row(cell)
-            pieces.append((cell.editor, top, bottom))
+            bottom = end[1] if position == end[0] else last_row(target)
+            pieces.append((target, top, bottom))
         return pieces
+
+    def _ex_targets(self) -> list[tuple["CellState", "VimTextArea | SleepingLines"]]:
+        """Every cell an ex range can cover, in order, with what runs the command on it: the
+        editor of a mounted cell, or the text of one with no widget."""
+        from .exlines import SleepingLines
+
+        targets = []
+        for state in self.pane.states:
+            widget = state.widget
+            if widget is None:
+                targets.append((state, SleepingLines(state, self.pane)))
+            elif widget._editor is not None:
+                targets.append((state, widget.editor))
+        return targets
 
     def _substitute(self, span: str, pattern: str | None, replacement: str | None, flags: str) -> None:
         """:s over the ex range (_ex_segments): :%s changes every cell of the notebook, like vim's whole file."""
@@ -1087,7 +1105,7 @@ class GPython(App):
             self.notify(f"Pattern not found: {pattern}", severity="warning")
             return
         if command in ("", "p", "print", "#", "nu", "number"):
-            labels = {cell.editor: cell.label for cell in self.cells() if getattr(cell, "editor", None) is not None}
+            labels = self._ex_labels
             listing = [f"{labels.get(editor, '?')}:{row + 1}  {editor.document.get_line(row)}" for editor, rows in matches for row in rows]
             self._show_text(f":g/{pattern}/", "\n".join(listing))
             return

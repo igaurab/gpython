@@ -170,8 +170,9 @@ block; images are one widget each.
 
 - **Idle CPU.** gpython sits at 0.14–0.5 % against JupyterLab's 0.03 % (issue #10); the
   cause has not been found yet.
-- **Ex ranges over `%`** (`:%s`, `:g`) see only the mounted window of a notebook over
-  100 cells (open question in `docs/plans/12-virtual-cells.md`).
+- **Ex ranges over `%`** (`:%s`, `:g`, `:%d`, `:%>`) reach every cell of a long notebook:
+  a cell with no editor on screen is read and changed as text (`src/gpython/exlines.py`),
+  which drops that cell's undo history; `:normal` is refused for such cells.
 - **A window shift is a ~25 ms hiccup** every eight cell moves in a long notebook, not
   yet tried in a real terminal.
 - **Memory floor.** 127 MB with one cell: Python 11 MB, Textual 22, gpython 6,
