@@ -81,7 +81,7 @@ the 30 keys arrange 100 cells instead of 60); `keys_30_proc` is 0.045 s at every
 
 ## Open questions
 
-- Ex commands over `%` (`:%s`, `:g`) only see mounted cells of a notebook over the budget.
+- Done 2026-11-08: ex commands over `%` reach cells off screen as text (`exlines.py`); `:normal` on them is refused.
 - `MOUNT_BUDGET` 100 and `WINDOW_STEP` 8 are guesses; tune in a real terminal (the shift of
   eight cells is one hiccup of ~25 ms every eight moves).
 - A window step that changes the top calls `Screen._refresh_layout()` (private) so the
