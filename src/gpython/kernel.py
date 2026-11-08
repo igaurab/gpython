@@ -10,6 +10,7 @@ import asyncio
 import json
 import os
 import queue
+import re
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -22,12 +23,61 @@ if TYPE_CHECKING:
 
 OutputCallback = Callable[[str, dict], None]
 InputCallback = Callable[[str, bool], None]
+CellOutputCallback = Callable[[str, str, dict], None]
+CellInputCallback = Callable[[str, str, bool], None]
+RUN_MARK = re.compile("\x1egpython-run\x1e(\\{.*?\\})\n")
 
 _HELPERS = r"""
 def _gp_delete(names):
     g = globals()
     for n in names:
         g.pop(n, None)
+
+import sys as _gp_sys
+_gp_stdout, _gp_stderr = _gp_sys.stdout, _gp_sys.stderr
+
+async def _gp_run(cells):
+    import asyncio, json, signal, sys, time
+    shell = get_ipython()
+    g = globals()
+    cancel_handler = signal.getsignal(signal.SIGINT)
+    open_cid = None
+
+    def mark(cid, event, **extra):
+        buffered = getattr(_gp_stderr, "_buffer", None)
+        if buffered is not None and buffered.tell():
+            _gp_stderr.flush()
+        payload = dict(cid=cid, event=event, t=time.perf_counter(), **extra)
+        _gp_stdout.write("\x1egpython-run\x1e" + json.dumps(payload) + "\n")
+
+    try:
+        for cid, code, names in cells:
+            for n in names:
+                g.pop(n, None)
+            try:
+                transformed, trouble = shell.transform_cell(code), None
+            except Exception:
+                transformed, trouble = code, sys.exc_info()
+            blocking = not shell.should_run_async(code, transformed_cell=transformed, preprocessing_exc_tuple=trouble)
+            open_cid = cid
+            mark(cid, "begin")
+            if blocking:
+                signal.signal(signal.SIGINT, signal.default_int_handler)
+            try:
+                result = await shell.run_cell_async(
+                    code, store_history=True, cell_id=cid, transformed_cell=transformed, preprocessing_exc_tuple=trouble
+                )
+            finally:
+                if blocking:
+                    signal.signal(signal.SIGINT, cancel_handler)
+            open_cid = None
+            mark(cid, "end", ok=result.success)
+            if not result.success:
+                break
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        if open_cid is not None:
+            mark(open_cid, "end", ok=False)
+    _gp_stdout.flush()
 
 def _gp_vars(names):
     import sys
@@ -342,6 +392,53 @@ class Kernel:
             return json.loads("".join(out))
         except json.JSONDecodeError:
             return None
+
+    async def run_batch(
+        self, cells: list[tuple[str, str, list[str]]], on_event: CellOutputCallback, on_output: CellOutputCallback,
+        on_input: CellInputCallback | None = None,
+    ) -> bool:
+        """Run `cells`, (cell id, code, names to delete first) each, in one request, in order,
+        stopping after the first cell that fails.
+
+        The kernel brackets every cell with a marker line written into its stdout stream:
+        on_event(cid, "begin" | "end", payload), where the payload carries the kernel's clock
+        in `t` and, at the end, `ok`. Outputs in between go to on_output(cid, kind, content)
+        with the same (kind, content) as `execute`; an input() prompt reaches
+        on_input(cid, prompt, password). One request for a whole run costs one round trip
+        instead of two per cell, and a marker in the stream costs nothing where a message of
+        its own would make the kernel wait for a flush, which is what makes run-all fast.
+
+        Returns False when the request ended with a cell still open (the kernel died or was
+        restarted), in which case the cells after it never began."""
+        await self.ready.wait()
+        current: list[str | None] = [None]
+
+        def event(payload: dict) -> None:
+            current[0] = payload["cid"] if payload["event"] == "begin" else None
+            on_event(payload["cid"], payload["event"], payload)
+
+        def text(name: str, chunk: str) -> None:
+            if chunk and current[0] is not None:
+                on_output(current[0], "stream", {"name": name, "text": chunk})
+
+        def dispatch(kind: str, content: dict) -> None:
+            if kind != "stream":
+                if current[0] is not None:
+                    on_output(current[0], kind, content)
+                return
+            name, body, at = content["name"], content["text"], 0
+            for found in RUN_MARK.finditer(body):
+                text(name, body[at : found.start()])
+                event(json.loads(found.group(1)))
+                at = found.end()
+            text(name, body[at:])
+
+        def ask(prompt: str, password: bool) -> None:
+            if current[0] is not None and on_input is not None:
+                on_input(current[0], prompt, password)
+
+        await self._execute(f"await _gp_run({cells!r})", dispatch, store_history=False, on_input=ask if on_input else None)
+        return current[0] is None
 
     async def delete(self, names: set[str]) -> None:
         if names:

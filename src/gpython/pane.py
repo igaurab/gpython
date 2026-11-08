@@ -22,11 +22,13 @@ from textual.widget import Widget
 from textual.widgets import Static
 
 from . import config, envpicker, envs, notebook, packages
-from .cell import Cell, CellSnapshot, ends_with_string, outputs_to_ipynb, time_brief, time_summary
+from .cell import Cell, CellSnapshot, outputs_to_ipynb, time_brief, time_summary
 from .dom import forget_removed
 from .graph import Graph, build
 from .kernel import Kernel
 from .outline import Outline, Value, Values
+from .pacing import PaintPacer
+from .runs import BatchRun
 from .vim import VimTextArea, search_regex
 
 MIN_INITIAL_CELLS = 4
@@ -64,6 +66,8 @@ class NotebookPane(Vertical):
         self._last_run_cid: str | None = None
         self.tried: set[str] = set()
         self.loaded = asyncio.Event()
+        self._focus_scroll_pending = False
+        self._pacer: PaintPacer | None = None
         self._specs: list[notebook.CellSpec] = []
         self._pending_sources: list[notebook.CellSpec] = []
         self._outputs_timer = None
@@ -581,6 +585,10 @@ class NotebookPane(Vertical):
         downstream stale, reactive runs them too. `after_install` marks the re-run that follows
         a package install, so a module that still fails is not offered again at once. `debug`
         names a cell that pauses in the debugger on its first line.
+
+        The cells go to the kernel in batches, one request each (runs.py), and the screen is
+        painted a few times a second while they run (pacing.py); both are what keep a run of
+        hundreds of cells to about a millisecond a cell.
         """
         await self.loaded.wait()
         async with self._run_lock:
@@ -598,56 +606,30 @@ class NotebookPane(Vertical):
                     by_id[cid].mark_inputs_stale()
             for cid in order:
                 by_id[cid].set_status("queued")
-
-            failed: set[str] = set()
-            missing: list[Cell] = []
-            for cid in order:
-                cell = by_id[cid]
-                if not cell.is_mounted:
-                    continue
-                if cid in graph.errors:
-                    cell.show_error(graph.errors[cid])
-                    cell.set_status("error")
-                    failed.add(cid)
-                    continue
-                if graph.parents[cid] & failed:
-                    cell.show_error("not run: an upstream cell failed")
-                    cell.inputs_stale = True
-                    cell.set_status("skipped")
-                    failed.add(cid)
-                    continue
-
-                source = cell.source
-                cell.echo_suppressed = ends_with_string(source)
-                await self.kernel.delete(cell.last_defs | graph.defs[cid])
-                cell.add_output("clear_output", {"wait": True})
-                self.exec_counter += 1
-                cell.begin_run(self.exec_counter)
-                if cid == debug:
-                    await self.kernel.arm(cid)
-                ok = await self.kernel.execute(
-                    source, cell.add_output, cell_id=cid,
-                    on_input=lambda prompt, password, cell=cell: self._input_requested(cell, prompt, password),
-                )
-                self._debug_end()
-                if cell.output_clear_pending:
-                    cell.clear_output()
-                cell.ran_source = source
-                cell.last_defs = graph.defs[cid]
-                cell.end_run("ok" if ok and cell.source == source else "error" if not ok else "stale")
-                self.outputs_changed()
-                cell.missing = self._note_missing(cell) if not ok else None
-                if not ok and not cell.missing:
-                    self._offer_debugger(cell)
-                if not ok:
-                    failed.add(cid)
-                if cell.missing:
-                    missing.append(cell)
-                self._keep_focus_visible(cell)
-
+            run = BatchRun(self, graph, by_id, debug)
+            pending = [cid for cid in order if by_id[cid].is_mounted]
+            with PaintPacer(self.app) as self._pacer:
+                while pending:
+                    batch, pending = run.next_batch(pending)
+                    if not batch:
+                        break
+                    if debug in batch:
+                        await self.kernel.arm(debug)
+                    clean = await self.kernel.run_batch(run.items(batch), run.event, run.output, run.input)
+                    self.outputs_changed()
+                    for cid in batch:
+                        if cid in run.began and cid not in run.ended:
+                            run.finish(cid, False)
+                    left = [cid for cid in batch if cid not in run.ended]
+                    if not clean or len(left) < len(batch):
+                        pending = left + pending
+                    else:
+                        run.abandon(left + pending, "not run: the kernel did not answer")
+                        break
+            self._pacer = None
             await self.refresh_vars(graph)
-        if missing:
-            envpicker.install_missing(self, missing, after_install)
+        if run.missing:
+            envpicker.install_missing(self, run.missing, after_install)
 
     def _note_missing(self, cell: Cell) -> str | None:
         """After a failed run: the module a ModuleNotFoundError names, with a hint under the traceback.
@@ -679,10 +661,22 @@ class NotebookPane(Vertical):
         return [cid for cid in graph.order if cid in upstream and cid in by_id and needs_run(by_id[cid])]
 
     def _keep_focus_visible(self, ran: Cell) -> None:
-        """New output above the focused cell pushes it down; keep the user's cell on screen."""
+        """New output above the focused cell pushes it down; keep the user's cell on screen.
+        One scroll is queued at a time, however many cells end before the next paint."""
+        if self._focus_scroll_pending:
+            return
         current = self.current_cell()
         if current is not None and current is not ran and self.app.focused is not None and current.pane is self:
-            self.call_after_refresh(current.scroll_visible, animate=False, immediate=True)
+            self._focus_scroll_pending = True
+            if self._pacer is not None:
+                self._pacer.after_paint(lambda: self._scroll_focus_into_view(current))
+            else:
+                self.call_after_refresh(self._scroll_focus_into_view, current)
+
+    def _scroll_focus_into_view(self, cell: Cell) -> None:
+        self._focus_scroll_pending = False
+        if cell.is_attached:
+            cell.scroll_visible(animate=False, immediate=True)
 
     async def refresh_vars(self, graph: Graph) -> None:
         names = set().union(*graph.defs.values()) if graph.defs else set()

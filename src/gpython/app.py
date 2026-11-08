@@ -256,6 +256,7 @@ class GPython(App):
         self.lazy = settings.get("run_mode") != "reactive"
         self.autoinstall = settings.get("autoinstall") is True
         self._first_frame_done = False
+        self.pacers: set = set()
         self._first_frame_callbacks: list = []
         self.workspace = Workspace()
         self.explorer: Explorer | None = None
@@ -955,8 +956,16 @@ class GPython(App):
             self._number_sequence = None
             self.update_status()
 
+    def release_paints(self) -> None:
+        """Let the next paint through while runs are pacing them (pacing.py)."""
+        for pacer in list(self.pacers):
+            pacer.release()
+
     async def on_event(self, event: events.Event) -> None:
-        """While a cell-number sequence waits, its keys go to it instead of the focused widget."""
+        """While a cell-number sequence waits, its keys go to it instead of the focused widget.
+        A key or a click while a run paces the paints lets the next one through at once."""
+        if self.pacers and isinstance(event, (events.Key, events.MouseDown, events.MouseScrollDown, events.MouseScrollUp)):
+            self.release_paints()
         if (
             self._number_sequence is not None
             and isinstance(event, events.Key)

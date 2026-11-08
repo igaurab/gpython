@@ -51,3 +51,63 @@ def test_marimo_shim_renders_markdown():
             await k.shutdown()
 
     asyncio.run(main())
+
+
+def test_run_batch_runs_cells_in_order_and_stops_at_the_first_failure():
+    async def main():
+        k = Kernel()
+        await k.start()
+        try:
+            events, outputs = [], []
+            cells = [
+                ("a", "x = 1\nprint('one')\nx", []),
+                ("b", "import sys\nsys.stderr.write('err\\n')\ny = x + 1\ny", ["y"]),
+                ("c", "1/0", []),
+                ("d", "print('never')", []),
+            ]
+            clean = await k.run_batch(
+                cells,
+                lambda cid, event, payload: events.append((cid, event, payload.get("ok"))),
+                lambda cid, kind, content: outputs.append((cid, kind, content.get("text") or content.get("data", {}).get("text/plain") or content.get("ename"))),
+            )
+            assert clean
+            assert events == [("a", "begin", None), ("a", "end", True), ("b", "begin", None), ("b", "end", True), ("c", "begin", None), ("c", "end", False)]
+            assert outputs == [
+                ("a", "stream", "one\n"), ("a", "execute_result", "1"), ("b", "stream", "err\n"), ("b", "execute_result", "2"),
+                ("c", "error", "ZeroDivisionError"),
+            ]
+            assert await k.variables({"x", "y"}) == [["x", "int", "1", "", "data"], ["y", "int", "2", "", "data"]]
+            await k.run_batch([("e", "x = 5", ["x", "y"])], lambda *a: None, lambda *a: None)
+            assert await k.variables({"x", "y"}) == [["x", "int", "5", "", "data"]]
+            assert await k.execute("import asyncio\nawait asyncio.sleep(0)\nx", lambda kind, c: outputs.append(("f", kind, c.get("data", {}).get("text/plain"))))
+            assert outputs[-1] == ("f", "execute_result", "5")
+        finally:
+            await k.shutdown()
+
+    asyncio.run(main())
+
+
+def test_run_batch_interrupt_stops_a_blocking_cell_and_the_rest_of_the_batch():
+    async def main():
+        k = Kernel()
+        await k.start()
+        try:
+            events, outputs = [], []
+            batch = k.run_batch(
+                [("a", "import time\nprint('start')\ntime.sleep(30)", []), ("b", "print('b')", [])],
+                lambda cid, event, payload: events.append((cid, event, payload.get("ok"))),
+                lambda cid, kind, content: outputs.append((cid, kind, content.get("text") or content.get("ename"))),
+            )
+            task = asyncio.create_task(batch)
+            for _ in range(200):
+                await asyncio.sleep(0.05)
+                if ("a", "stream", "start\n") in outputs:
+                    break
+            await k.interrupt()
+            assert await asyncio.wait_for(task, 10)
+            assert events == [("a", "begin", None), ("a", "end", False)]
+            assert ("a", "error", "KeyboardInterrupt") in outputs and not any(cid == "b" for cid, _, _ in outputs)
+        finally:
+            await k.shutdown()
+
+    asyncio.run(main())

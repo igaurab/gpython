@@ -473,8 +473,9 @@ class Cell(Vertical):
         if self._ticker is None:
             self._ticker = self.set_interval(1, self._render_header)
 
-    def end_run(self, status: str) -> None:
-        self.duration = time.perf_counter() - self._run_start
+    def end_run(self, status: str, duration: float | None = None) -> None:
+        """The run is over; `duration` is the kernel's own timing when it has one."""
+        self.duration = time.perf_counter() - self._run_start if duration is None else duration
         if self._ticker is not None:
             self._ticker.stop()
             self._ticker = None
