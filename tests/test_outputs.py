@@ -11,7 +11,7 @@ from textual.widgets import Static
 
 from gpython import outputs
 from gpython.markdown import MarkdownView
-from gpython.outputs import MAX_STREAM_CHARS, OutputArea, collapse_carriage_returns, html_to_text
+from gpython.outputs import MAX_STREAM_CHARS, OutputArea, TextBlocks, collapse_carriage_returns, html_to_text
 
 
 def sync(fn):
@@ -109,17 +109,24 @@ async def test_clear_cancels_pending_flush():
 
 
 @sync
-async def test_stdout_stderr_stdout_three_blocks():
+async def test_stdout_stderr_stdout_share_one_widget_as_three_blocks():
     app = OutApp()
     async with app.run_test() as pilot:
         out = app.query_one(OutputArea)
         out.add(*stream("stdout", "a\n"))
         out.add(*stream("stderr", "b\n"))
         out.add(*stream("stdout", "c\n"))
-        assert len(out._blocks) == 3
+        assert len(out._blocks) == 1
         assert out.text == "a\nb\nc\n"
         await settle(pilot)
-        assert [rendered(b).strip() for b in out._blocks] == ["a", "b", "c"]
+        block = out._blocks[0]
+        assert isinstance(block, TextBlocks)
+        assert block.texts == ["a\n", "b\n"] and out._stream_widget is block
+        assert rendered(block) == "a\n\nb\n\nc\n"
+        red = [span for span in block.closed.spans if str(span.style) == "red"]
+        assert red and block.closed.plain[red[0].start : red[0].end] == "b\n"
+        out.add("execute_result", {"data": {"text/plain": "42"}})
+        assert block.texts == ["a\n", "b\n", "c\n", "42"] and out._stream_widget is None
 
 
 @sync
@@ -132,8 +139,25 @@ async def test_execute_result_after_stream_keeps_order():
         assert out.text == "printed\n42"
         await settle(pilot)
         assert out.text == "printed\n42"
-        assert [rendered(b).strip() for b in out._blocks] == ["printed", "42"]
+        assert len(out._blocks) == 1 and rendered(out._blocks[0]) == "printed\n\n42"
         assert list(out.children) == out._blocks
+
+
+@sync
+async def test_text_after_a_rich_block_starts_a_new_widget_in_order():
+    app = OutApp()
+    async with app.run_test() as pilot:
+        out = app.query_one(OutputArea)
+        out.add(*stream("stdout", "one\n"))
+        out.add("display_data", {"data": {"text/markdown": "## T"}})
+        out.add("display_data", {"data": {"application/x-weird": "?"}})
+        out.add(*stream("stdout", "two\n"))
+        await settle(pilot)
+        assert [type(b) for b in out._blocks] == [TextBlocks, MarkdownView, TextBlocks]
+        assert list(out.children) == out._blocks
+        assert out.text == "one\n## T[cannot show application/x-weird output yet]two\n"
+        assert rendered(out._blocks[2]) == "[cannot show application/x-weird output yet]\ntwo\n"
+        assert str(out._blocks[2].closed.spans[0].style) == "dim italic"
 
 
 @sync

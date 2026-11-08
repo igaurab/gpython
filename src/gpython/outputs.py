@@ -1,5 +1,11 @@
 """The output area under each cell: streamed text, results, errors and images.
 
+Every Textual widget costs tens of kilobytes and a fraction of a millisecond to mount,
+so all the text blocks of a cell (stream text, results, tracebacks, hints, notes) share
+one `TextBlocks` widget: the common print-and-echo cell mounts one child, not two.
+Rich outputs (images, markdown, JSON) are widgets of their own, mounted in order; a text
+block after one of them starts a new `TextBlocks`, so order on screen is kept.
+
 Stream output (stdout/stderr) arrives in many small chunks. Re-rendering the
 whole text for every chunk is O(n^2), so chunks are collected in a list and
 drawn at most 30 times a second by one timer (`_flush`).
@@ -121,29 +127,57 @@ def _tail(text: str, limit: int) -> tuple[str, int]:
     return tail, len(text) - len(tail)
 
 
+class TextBlocks(Static):
+    """One widget for a run of text blocks.
+
+    Each block's rendered `Text` is joined to the previous one with a newline, which
+    paints exactly as one `Static` per block did; `texts` keeps each block's raw text.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.texts: list[str] = []
+        self.closed = Text()
+
+    @property
+    def gp_text(self) -> str:
+        return "".join(self.texts)
+
+    def close_block(self, text: str, rendered: Text) -> None:
+        """Append a finished block and paint."""
+        if self.texts:
+            self.closed.append("\n")
+        self.closed.append(rendered)
+        self.texts.append(text)
+        self.update(self.closed)
+
+    def draw_open(self, rendered: Text) -> None:
+        """Paint the closed blocks followed by `rendered`, the stream still being written."""
+        self.update(Text.assemble(self.closed, "\n", rendered) if self.texts else rendered)
+
+
 class OutputArea(Vertical):
-    """A vertical list of output blocks. `text` is all text output, flushed or not."""
+    """A vertical list of output widgets. `text` is all text output, flushed or not."""
 
     def __init__(self, **kwargs) -> None:
         kwargs.setdefault("classes", "cell-output")
         super().__init__(**kwargs)
         self._blocks: list[Widget] = []
+        self._text_widget: TextBlocks | None = None
         self._stream_kind: str | None = None
         self._stream_parts: list[str] = []
         self._stream_hidden = 0
-        self._stream_widget: Static | None = None
+        self._stream_widget: TextBlocks | None = None
         self._flush_timer: Timer | None = None
         self._clear_pending = False
-
 
     @property
     def text(self) -> str:
         parts = []
         for block in self._blocks:
+            parts.append(getattr(block, "gp_text", ""))
             if block is self._stream_widget:
                 parts.append("".join(self._stream_parts))
-            else:
-                parts.append(getattr(block, "gp_text", ""))
         return "".join(parts)
 
     @property
@@ -165,6 +199,7 @@ class OutputArea(Vertical):
         self._cancel_timer()
         self._close_stream(flush=False)
         self._blocks.clear()
+        self._text_widget = None
         self.remove_children()
         self.call_after_refresh(forget_removed, self)
         self.display = False
@@ -196,7 +231,6 @@ class OutputArea(Vertical):
         elif kind == "error":
             self._add_text("traceback", "\n".join(content["traceback"]))
 
-
     def _add_data(self, data: dict) -> None:
         mime = next((m for m in MIME_PRIORITY if m in data), None)
         if mime is None:
@@ -220,7 +254,7 @@ class OutputArea(Vertical):
     def _add_markdown(self, text: str) -> None:
         widget = MarkdownView(text, placeholder=None, classes="output-markdown")
         widget.gp_text = text
-        self._mount_block(widget)
+        self._mount_rich(widget)
 
     def _add_json(self, payload) -> None:
         if isinstance(payload, str):
@@ -235,26 +269,11 @@ class OutputArea(Vertical):
             return
         widget = Static(JSON(source))
         widget.gp_text = source
-        self._mount_block(widget)
+        self._mount_rich(widget)
 
     def _add_noted(self, text: str, note: str) -> None:
         """Plain text with a dim note after it (the note is not part of `text`)."""
-        rendered = Text.assemble(Text(text), "\n", Text(note, style="dim italic"))
-        widget = Static(rendered)
-        widget.gp_text = text
-        self._mount_block(widget)
-
-
-    def _mount_block(self, widget: Widget) -> None:
-        self.display = True
-        self._blocks.append(widget)
-        self.mount(widget)
-
-    def _add_text(self, kind: str, text: str) -> None:
-        self._close_stream()
-        widget = Static(_render(kind, text))
-        widget.gp_text = text
-        self._mount_block(widget)
+        self._add_text("result", text, Text.assemble(Text(text), "\n", Text(note, style="dim italic")))
 
     def _add_image(self, b64: str) -> None:
         png = base64.b64decode(b64)
@@ -267,8 +286,28 @@ class OutputArea(Vertical):
         else:
             widget = imageview.ImageCard(png, classes="output-image")
         widget.gp_png = png
+        self._mount_rich(widget)
+
+    def _mount_block(self, widget: Widget) -> None:
+        self.display = True
+        self._blocks.append(widget)
+        self.mount(widget)
+
+    def _mount_rich(self, widget: Widget) -> None:
+        """Mount a widget of its own; text after it goes into a new `TextBlocks`."""
+        self._text_widget = None
         self._mount_block(widget)
 
+    def _text_blocks(self) -> TextBlocks:
+        """The `TextBlocks` at the end of the area, mounted on first use."""
+        if self._text_widget is None:
+            self._text_widget = TextBlocks()
+            self._mount_block(self._text_widget)
+        return self._text_widget
+
+    def _add_text(self, kind: str, text: str, rendered: Text | None = None) -> None:
+        self._close_stream()
+        self._text_blocks().close_block(text, _render(kind, text) if rendered is None else rendered)
 
     def _add_stream(self, name: str, text: str) -> None:
         if self._stream_kind != name:
@@ -276,19 +315,18 @@ class OutputArea(Vertical):
             self._stream_kind = name
             self._stream_parts = []
             self._stream_hidden = 0
-            self._stream_widget = Static()
-            self._mount_block(self._stream_widget)
+            self._stream_widget = self._text_blocks()
         self._stream_parts.append(text)
         if self._flush_timer is None:
             self._flush_timer = self.set_timer(FLUSH_INTERVAL, self._flush)
 
     def _close_stream(self, flush: bool = True) -> None:
-        """Draw the open stream block now and stop appending to it."""
-        if self._stream_widget is not None:
-            if flush:
-                self._cancel_timer()
-                self._flush()
-            self._stream_widget.gp_text = "".join(self._stream_parts)
+        """Draw the open stream block as finished and stop appending to it."""
+        widget = self._stream_widget
+        if widget is not None and flush:
+            self._cancel_timer()
+            self._trim_stream()
+            widget.close_block("".join(self._stream_parts), self._stream_rendered())
         self._stream_kind = None
         self._stream_parts = []
         self._stream_widget = None
@@ -298,22 +336,29 @@ class OutputArea(Vertical):
             self._flush_timer.stop()
             self._flush_timer = None
 
-    def _flush(self) -> None:
-        self._flush_timer = None
-        widget = self._stream_widget
-        if widget is None:
-            return
+    def _trim_stream(self) -> None:
+        """Join the chunks, keeping at most `_KEEP_RAW` characters of raw stream."""
         raw = "".join(self._stream_parts)
         if len(raw) > _KEEP_RAW:
             raw, dropped = _tail(raw, _KEEP_RAW // 2)
             self._stream_hidden += dropped
         self._stream_parts = [raw]
-        if not widget.is_attached:
-            return
-        shown, hidden = _tail(collapse_carriage_returns(raw), MAX_STREAM_CHARS)
+
+    def _stream_rendered(self) -> Text:
+        """The open stream as shown: its last `MAX_STREAM_CHARS`, with a note on what is hidden."""
+        shown, hidden = _tail(collapse_carriage_returns("".join(self._stream_parts)), MAX_STREAM_CHARS)
         hidden += self._stream_hidden
         rendered = _render(self._stream_kind or "stdout", shown)
         if hidden:
             note = Text(f"… ({hidden} earlier characters hidden)\n", style="dim italic")
             rendered = Text.assemble(note, rendered)
-        widget.update(rendered)
+        return rendered
+
+    def _flush(self) -> None:
+        self._flush_timer = None
+        widget = self._stream_widget
+        if widget is None:
+            return
+        self._trim_stream()
+        if widget.is_attached:
+            widget.draw_open(self._stream_rendered())
