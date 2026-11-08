@@ -97,10 +97,12 @@ def result(t0, ready, marker, pid):
     return {"ready": ready, "first": min(stamps) - t0, "last": max(stamps) - t0, "mem_mb": tree_mb(pid)}
 
 
-def run_gpy(n, workdir, timeout):
+def run_gpy(n, workdir, timeout, sources=None):
     marker = workdir / "marks"
     notebook = workdir / "nb.py"
-    notebook.write_text("\n\n".join("# %%\n" + source for source in cell_sources(n, marker)) + "\n")
+    sources = sources or cell_sources(n, marker)
+    n = len(sources)
+    notebook.write_text("\n\n".join("# %%\n" + source for source in sources) + "\n")
     t0 = time.time()
     pid, fd = pty.fork()
     if pid == 0:
@@ -168,12 +170,13 @@ def execute_message(session, code):
     })
 
 
-async def run_lab(n, workdir, timeout):
+async def run_lab(n, workdir, timeout, sources=None):
     from tornado.httpclient import AsyncHTTPClient
     from tornado.websocket import websocket_connect
 
     marker = workdir / "marks"
-    sources = cell_sources(n, marker)
+    sources = sources or cell_sources(n, marker)
+    n = len(sources)
     port, token = free_port(), uuid.uuid4().hex
     auth = {"Authorization": f"token {token}"}
     t0 = time.time()
@@ -208,13 +211,14 @@ def marimo_notebook(sources):
     return f"import marimo\n\napp = marimo.App()\n\n\n{cells}if __name__ == '__main__':\n    app.run()\n"
 
 
-async def run_marimo(n, workdir, timeout):
+async def run_marimo(n, workdir, timeout, notebook_text=None, cells=None):
     from tornado.httpclient import AsyncHTTPClient
     from tornado.websocket import websocket_connect
 
     marker = workdir / "marks"
     notebook = workdir / "nb.py"
-    notebook.write_text(marimo_notebook(cell_sources(n, marker)))
+    notebook.write_text(notebook_text or marimo_notebook(cell_sources(n, marker)))
+    n = cells or n
     port = free_port()
     t0 = time.time()
     proc = subprocess.Popen(

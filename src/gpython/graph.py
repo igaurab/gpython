@@ -7,6 +7,7 @@ Names starting with "_" are private to their cell and never create edges.
 from __future__ import annotations
 
 import ast
+import heapq
 import builtins
 import symtable
 from dataclasses import dataclass, field
@@ -165,19 +166,20 @@ class Graph:
 
         Cells stuck in a cycle are appended last (they carry an error anyway).
         """
+        position = {c: i for i, c in enumerate(self.order)}
         indegree = {c: len(self.parents[c] & cells) for c in cells}
         result: list[str] = []
-        ready = [c for c in self.order if c in cells and indegree[c] == 0]
+        ready = [position[c] for c in self.order if c in cells and indegree[c] == 0]
         while ready:
-            cell = ready.pop(0)
+            cell = self.order[heapq.heappop(ready)]
             result.append(cell)
             for child in self.children[cell]:
                 if child in cells:
                     indegree[child] -= 1
                     if indegree[child] == 0:
-                        ready.append(child)
-                        ready.sort(key=self.order.index)
-        return result + [c for c in self.order if c in cells and c not in result]
+                        heapq.heappush(ready, position[child])
+        placed = set(result)
+        return result + [c for c in self.order if c in cells and c not in placed]
 
     def run_order(self, roots: list[str]) -> list[str]:
         """Roots plus everything downstream, parents before children."""
