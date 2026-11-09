@@ -183,3 +183,23 @@ def test_groups_conflict_keeps_source_order():
 
 def test_groups_cap_one_is_sequential():
     assert plan(["a = 1", "b = a", "c = a"], cap=1) == [[1], [2], [3]]
+
+
+def test_report_names_groups_and_reasons():
+    from gpython.concurrency import report
+
+    cells = {"a": "import numpy as np\ndata = np.ones(3)", "b": "m = np.mean(data)", "c": "s = np.std(data)",
+             "d": "data.sort()", "e": "%time 1"}
+    labels = {"a": "c1", "b": "c2", "c": "c3", "d": "c4", "e": "c5"}
+    text = report(cells, labels, 8)
+    assert "group 2: c2 c3   together" in text
+    assert "c4" in text and "both touch data" in text
+    assert "alone: IPython magic" in text
+
+
+def test_watched_names_are_shared_reads():
+    from gpython.concurrency import watched
+
+    cells = notebook("xs = []", "a = len(xs)", "b = len(xs) + 1")
+    access = {"x": cells[1], "y": cells[2]}
+    assert watched(["x", "y"], access) == ["xs"]

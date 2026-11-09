@@ -70,6 +70,8 @@ class NotebookPane(Vertical):
         self.exec_counter = 0
         self.kernel_state = "starting kernel…"
         self.kernel_label = "Python …"
+        self.concurrent_run = False
+        self.raced: set[str] = set()
         remembered = config.load().get(f"env:{path.resolve()}") if path is not None else None
         env, self._env_hint = envs.default_for(path, remembered)
         self.kernel = Kernel(file=path, env=env)
@@ -828,7 +830,8 @@ class NotebookPane(Vertical):
                         break
                     if debug in batch:
                         await self.kernel.arm(debug)
-                    clean = await self.kernel.run_batch(run.items(batch), run.event, run.output, run.input)
+                    groups, watches = run.groups(batch)
+                    clean = await self.kernel.run_batch(groups, run.event, run.output, run.input, watches)
                     self.outputs_changed()
                     for cid in batch:
                         if cid in run.began and cid not in run.ended:
@@ -840,6 +843,7 @@ class NotebookPane(Vertical):
                         run.abandon(left + pending, "not run: the kernel did not answer")
                         break
             self._pacer = None
+            self.concurrent_run = False
             await self.refresh_vars(graph)
         if run.missing:
             envpicker.install_missing(self, run.missing, after_install)
@@ -1619,6 +1623,11 @@ class NotebookPane(Vertical):
                 await result
 
     async def interrupt(self) -> None:
+        if self.concurrent_run:
+            self.app.notify(
+                "Interrupting… each running cell stops at its next line; a call that blocks (sleep, a socket read) finishes first. r k restarts the kernel.",
+                title="Concurrent cells",
+            )
         await self.kernel.interrupt()
 
     async def restart_kernel(self) -> None:

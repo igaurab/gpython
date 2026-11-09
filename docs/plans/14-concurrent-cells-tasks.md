@@ -130,7 +130,7 @@ names) -> dict[str, str]` (Task 5).
   live worker, wait, mark unfinished cells `end ok=False`.
 - After a group with a failed cell, stop (as today after a failed cell).
 
-- [ ] Tests (real kernel, as `tests/test_kernel.py`):
+- [x] Tests (real kernel, as `tests/test_kernel.py`):
   - `test_group_runs_concurrently` — 4 cells `time.sleep(0.5)` in one group: elapsed < 1.2 s, all `ok`.
   - `test_group_outputs_routed` — 3 cells printing their name 50 times with `sleep(0.001)`: each cell's
     collected stream is exactly its own 50 lines.
@@ -141,7 +141,7 @@ names) -> dict[str, str]` (Task 5).
   - `test_sequential_unchanged` — groups of one behave exactly as before (existing kernel tests pass).
   - `test_no_threads_left` — after a run with a group, `threading.active_count()` in the kernel equals its value before.
   - `test_blas_limits_restored` — with numpy loaded, `threadpool_info()` before and after a group match.
-- [ ] Fail → implement → pass; full `uv run pytest -q` green → commit `kernel: run a group on threads`.
+- [x] Fail → implement → pass; full `uv run pytest -q` green → commit `kernel: run a group on threads`.
 
 ### Task 4: Pane schedules groups; `:set concurrent`
 
@@ -162,13 +162,13 @@ passed as `cap` to `concurrency.groups`;
   "Concurrent: independent cells run at the same time. :set noconcurrent to run one by one."
 - The debug cell stays alone (already in `next_batch`).
 
-- [ ] Bench twice, save numbers to the scratchpad.
-- [ ] Tests (UI, as `tests/test_run_mode.py`):
+- [x] Bench twice, save numbers to the scratchpad.
+- [x] Tests (UI, as `tests/test_run_mode.py`):
   - `test_concurrent_off_by_default`.
   - `test_concurrent_run_all` — setup + 4 `sleep(0.5)` cells: run-all < 1.5 s with `:set concurrent`, > 2 s without.
   - `test_failed_cell_skips_descendants` — group `[1/0, ok]`, a child of the failing cell is `skipped`, the other's child runs.
   - `test_setting_saved` — `config.load()["concurrent"] is True` after `:set concurrent`.
-- [ ] Fail → implement → pass; full suite green; bench again, compare → commit `concurrent run mode`.
+- [x] Fail → implement → pass; full suite green; bench again, compare → commit `concurrent run mode`.
 
 ### Task 5: Verify after a group
 
@@ -181,9 +181,9 @@ before and after; differences emit `mark(None, "race", names=[…], cells=[…])
 cells stale and notifies "Concurrent write to x detected: these cells were marked stale". Setting
 `concurrent_verify`, default on.
 
-- [ ] Test `test_race_detected` — force a group through `run_batch` with two cells the analysis would
+- [x] Test `test_race_detected` — force a group through `run_batch` with two cells the analysis would
   reject (`xs.append(1)` via `getattr(xs, "app"+"end")(1)` and `print(len(xs))`): race event with `xs`.
-- [ ] Fail → implement → pass → commit `concurrent: verify shared reads after a group`.
+- [x] Fail → implement → pass → commit `concurrent: verify shared reads after a group`.
 
 ---
 
@@ -196,6 +196,10 @@ cells stale and notifies "Concurrent write to x detected: these cells were marke
 - Execution counts in begin order (already what `BatchRun.begin` does); kernel history skipped.
 - Later: per-cell `# %% [exclusive]`, status-bar group counter, async groups via `asyncio.gather`.
 - Paper evaluation: its own plan after Task 5.
+
+## Also done
+
+- `:groups` and `gpy --groups FILE` (`concurrency.report`).
 
 ## Unresolved questions
 

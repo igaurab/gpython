@@ -40,6 +40,7 @@ class OutputRouter:
 
     def speak_for(self, cid: str | None) -> None:
         if cid is not None and cid != self.last:
+            self.saved[1].flush()
             self.mark(cid, "switch")
             self.saved[0].flush()
             self.last = cid
@@ -166,7 +167,7 @@ class GroupRunner:
             changed = sorted(n for n, v in fingerprint(self.namespace, watch).items() if before.get(n) != v)
             changed += sorted(n for n in before if n not in self.namespace)
             if changed:
-                self.mark(None, "race", names=changed)
+                self.mark(None, "race", names=changed, cells=[cid for cid, *_ in cells])
         return all(results.get(cid, False) for cid, *_ in cells)
 
     def _interrupt(self) -> None:

@@ -143,3 +143,124 @@ def test_race_detected():
         assert [r["names"] for r in races] == [["xs"]]
 
     with_kernel(test)
+
+
+from gpython import config, notebook
+from gpython.app import GPython
+from gpython.notebook import CellSpec
+
+
+def ui(tmp_path, sources, test):
+    path = tmp_path / "nb.py"
+    notebook.save(path, [CellSpec(s) for s in sources])
+
+    async def main():
+        app = GPython(path)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await app.loaded.wait()
+            await asyncio.wait_for(app.kernel.ready.wait(), 60)
+            await pilot.pause()
+            await test(app, pilot)
+
+    asyncio.run(main())
+
+
+async def settle(app, pilot):
+    await pilot.pause()
+    await app.workers.wait_for_complete()
+    await pilot.pause()
+
+
+SLEEPS = ["import time"] + [f"time.sleep(0.5)\nv{i} = {i}" for i in range(4)]
+
+
+def test_concurrent_off_by_default(tmp_path):
+    async def test(app, pilot):
+        assert app.concurrent is False and app.concurrent_verify is True
+
+    ui(tmp_path, ["x = 1"], test)
+
+
+def test_concurrent_run_all_and_setting_saved(tmp_path):
+    async def test(app, pilot):
+        app._ex_set("concurrent")
+        assert config.load()["concurrent"] is True
+        start = time.perf_counter()
+        await pilot.press("f5")
+        await settle(app, pilot)
+        took = time.perf_counter() - start
+        assert all(c.status == "ok" for c in app.cells())
+        assert took < 1.6
+
+    ui(tmp_path, SLEEPS, test)
+
+
+def test_sequential_run_all_is_slower(tmp_path):
+    async def test(app, pilot):
+        start = time.perf_counter()
+        await pilot.press("f5")
+        await settle(app, pilot)
+        assert time.perf_counter() - start > 2
+        assert all(c.status == "ok" for c in app.cells())
+
+    ui(tmp_path, SLEEPS, test)
+
+
+def test_concurrency_one_is_sequential(tmp_path):
+    async def test(app, pilot):
+        app._ex_set("concurrent")
+        app._ex_set("concurrency=1")
+        assert config.load()["concurrency"] == 1
+        start = time.perf_counter()
+        await pilot.press("f5")
+        await settle(app, pilot)
+        assert time.perf_counter() - start > 2
+
+    ui(tmp_path, SLEEPS, test)
+
+
+def test_failed_cell_skips_its_descendants_only(tmp_path):
+    async def test(app, pilot):
+        app._ex_set("concurrent")
+        await pilot.press("f5")
+        await settle(app, pilot)
+        base, bad, good, after_bad, after_good = app.cells()
+        assert base.status == "ok" and bad.status == "error" and good.status == "ok"
+        assert after_bad.status == "skipped" and after_good.status == "ok"
+        assert after_good.output_text == "2\n"
+
+    ui(tmp_path, ["n = 1", "a = n / 0", "b = n + 1", "print(a)", "print(b)"], test)
+
+
+def test_outputs_land_in_their_cells(tmp_path):
+    async def test(app, pilot):
+        app._ex_set("concurrent")
+        await pilot.press("f5")
+        await settle(app, pilot)
+        _, p, q = app.cells()
+        assert p.output_text == "p\n" * 20 and q.output_text == "q\n" * 20
+
+    loop = "for _ in range(20):\n    print('{0}')\n    time.sleep(0.002)\n{0}_done = 1"
+    ui(tmp_path, ["import time", loop.format("p"), loop.format("q")], test)
+
+
+def test_groups_command_shows_the_groups(tmp_path):
+    async def test(app, pilot):
+        app._ex_groups()
+        await pilot.pause()
+        text = app.screen.body.plain
+        assert "Concurrent mode: off" in text and "group 2: c2 c3   together" in text
+
+    ui(tmp_path, ["a = 1", "b = a", "c = a"], test)
+
+
+def test_race_marks_readers_stale_and_runs_them_alone_next_time(tmp_path):
+    async def test(app, pilot):
+        app._ex_set("concurrent")
+        await pilot.press("f5")
+        await settle(app, pilot)
+        _, sneaky, reader = app.cells()
+        assert reader.status == "stale"
+        assert {sneaky.state.cid, reader.state.cid} <= app.pane.raced
+
+    ui(tmp_path, ["import time\nxs = []", "time.sleep(0.2)\nlist(map(xs.append, [1]))", "time.sleep(0.4)\nn = len(xs)"], test)

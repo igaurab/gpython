@@ -557,3 +557,54 @@ def groups(order: list[str], access: dict[str, Access], parents: dict[str, set[s
     for cid in order:
         found[level[cid]].append(cid)
     return found
+
+
+def default_cap() -> int:
+    """How many cells may run at once unless `:set concurrency=N` says otherwise (ThreadPoolExecutor's default)."""
+    import os
+
+    return min(32, (os.cpu_count() or 1) + 4)
+
+
+def watched(group: list[str], access: dict[str, Access]) -> list[str]:
+    """The names a group's cells read that no cell of it writes: checked for changes after it ran."""
+    reads = set().union(*(access[c].reads for c in group))
+    writes = set().union(*(access[c].writes for c in group))
+    return sorted(n for n in reads - writes if not n.startswith("$"))
+
+
+def _why(cid: str, earlier: list[str], access: dict[str, Access], parents: dict[str, set[str]], labels: dict[str, str]) -> str:
+    cell = access[cid]
+    if cell.exclusive:
+        return f"alone: {cell.exclusive}"
+    reasons = []
+    for other in earlier:
+        theirs = access[other]
+        if other in parents.get(cid, ()):
+            shared = sorted(theirs.writes & cell.reads) or ["its output"]
+            reasons.append(f"{labels[other]} (uses {', '.join(shared[:3])})")
+        elif theirs.exclusive:
+            reasons.append(f"{labels[other]} (runs alone)")
+        elif conflict(theirs, cell):
+            shared = sorted((theirs.writes & (cell.reads | cell.writes)) | (cell.writes & theirs.reads))
+            reasons.append(f"{labels[other]} (both touch {', '.join(shared[:3])})")
+    return "after " + "; ".join(reasons[-3:]) if reasons else ""
+
+
+def report(cells: dict[str, str], labels: dict[str, str], cap: int) -> str:
+    """The groups a run of every cell would use, with what each cell waits for: `:groups`, `gpy --groups`."""
+    from .graph import build
+
+    graph = build(cells)
+    access = accesses(cells)
+    order = graph.sort(set(cells))
+    found = groups(order, access, graph.parents, cap)
+    together = sum(len(g) for g in found if len(g) > 1)
+    lines = [f"{len(cells)} code cells in {len(found)} groups; {together} cells share a group (up to {cap} at once)", ""]
+    for n, group in enumerate(found, 1):
+        lines.append(f"group {n}: {' '.join(labels[c] for c in group)}" + ("   together" if len(group) > 1 else ""))
+        for cid in group:
+            first = next((line for line in cells[cid].splitlines() if line.strip()), "")[:56]
+            earlier = order[: order.index(cid)]
+            lines.append(f"  {labels[cid]:<5} {first:<56}  {_why(cid, earlier, access, graph.parents, labels)}".rstrip())
+    return "\n".join(lines)

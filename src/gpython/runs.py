@@ -23,6 +23,7 @@ class BatchRun:
         self.ended: set[str] = set()
         self.failed: set[str] = set()
         self.missing: list[CellState] = []
+        self.access: dict = {}
 
     def next_batch(self, pending: list[str]) -> tuple[list[str], list[str]]:
         """Split `pending` into the cells to send now and the ones for later.
@@ -54,6 +55,37 @@ class BatchRun:
         """What the kernel runs: groups of (cell id, source, names to drop first), one cell each."""
         return [[self.item(cid)] for cid in batch]
 
+    def groups(self, batch: list[str]) -> tuple[list[list[tuple[str, str, list[str]]]], list[list[str]] | None]:
+        """Groups for the kernel, and per group the names to check after it (None: no check).
+
+        Sequential unless the app is concurrent; then concurrency.py splits the batch. The cell to
+        debug and cells that raced before run alone."""
+        app = self.pane.app
+        if not app.concurrent or len(batch) < 2:
+            return self.items(batch), None
+        from .concurrency import Access, accesses, default_cap, groups, watched
+
+        self.access = accesses({s.cid: s.source for s in self.pane.states if s.kind == "code"})
+        for cid in {self.debug, *self.pane.raced} & self.access.keys():
+            self.access[cid] = Access(self.access[cid].reads, self.access[cid].writes, "runs alone")
+        found = groups(batch, self.access, self.graph.parents, app.concurrency or default_cap())
+        self.pane.concurrent_run = any(len(g) > 1 for g in found)
+        watches = [watched(g, self.access) if len(g) > 1 else [] for g in found] if app.concurrent_verify else None
+        return [[self.item(cid) for cid in group] for group in found], watches
+
+    def race(self, names: list[str], cells: list[str]) -> None:
+        """Watched names changed while a group ran: a write the analysis missed. The cells of that
+        group that read them are stale and run alone from now on."""
+        hit = [cid for cid in cells if cid in self.by_id and self.access.get(cid) and set(names) & self.access[cid].reads]
+        for cid in hit:
+            self.by_id[cid].mark_inputs_stale()
+        self.pane.raced.update(cells)
+        labels = ", ".join(self.by_id[cid].label for cid in hit) or "no cell"
+        self.pane.app.notify(
+            f"{', '.join(names)} changed while cells ran at the same time; {labels} marked stale. These cells now run one by one.",
+            title="Concurrent cells", severity="warning",
+        )
+
     def item(self, cid: str) -> tuple[str, str, list[str]]:
         cell = self.by_id[cid]
         self.sources[cid] = cell.source
@@ -61,7 +93,9 @@ class BatchRun:
         return cid, cell.source, sorted(cell.last_defs | self.graph.defs[cid])
 
     def event(self, cid: str, event: str, payload: dict) -> None:
-        if event == "begin":
+        if event == "race":
+            self.race(payload.get("names", []), payload.get("cells", []))
+        elif event == "begin":
             self.begin(cid, payload["t"])
         else:
             self.finish(cid, payload.get("ok", False), payload.get("t"))

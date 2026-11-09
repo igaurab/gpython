@@ -42,6 +42,10 @@ LAZY_MESSAGE = (
     "Lazy mode: a run runs this cell and the out-of-date cells it needs. Cells that use its variables "
     "become stale, which means they need a run. Use r 6 to run one, or f4 to run all stale cells. Press f3 for reactive mode."
 )
+CONCURRENT_MESSAGE = (
+    "Concurrent: cells that share no state run at the same time. :groups shows which. :set noconcurrent runs them one by one."
+)
+SEQUENTIAL_MESSAGE = "Cells run one by one. :set concurrent runs the ones that share no state at the same time."
 REACTIVE_MESSAGE = (
     "Reactive mode: a run also runs again each cell that uses its variables. Press f3 for lazy mode."
 )
@@ -254,6 +258,9 @@ class GPython(App):
         self._initial_panes = [NotebookPane(p) for p in notebooks] or [NotebookPane(None)]
 
         self.lazy = settings.get("run_mode") != "reactive"
+        self.concurrent = settings.get("concurrent") is True
+        self.concurrency = settings.get("concurrency") if isinstance(settings.get("concurrency"), int) else 0
+        self.concurrent_verify = settings.get("concurrent_verify") is not False
         self.autoinstall = settings.get("autoinstall") is True
         self._first_frame_done = False
         self.pacers: set = set()
@@ -1316,6 +1323,40 @@ class GPython(App):
         self.update_status()
         self.notify(LAZY_MESSAGE if on else REACTIVE_MESSAGE, title="Run mode")
 
+    def set_concurrent(self, on: bool) -> None:
+        """On: a run sends the cells that share no state to the kernel together, and they run at the
+        same time on threads (concurrency.py, kernel_concurrency.py). Off (the default): one by one. Saved."""
+        self.concurrent = on
+        config.save({"concurrent": on})
+        self.notify(CONCURRENT_MESSAGE if on else SEQUENTIAL_MESSAGE, title="Concurrent cells")
+
+    def set_concurrency(self, value: str) -> None:
+        """:set concurrency=N: at most N cells at once (1 runs them one by one); empty: the default. Saved."""
+        from .concurrency import default_cap
+
+        if value and not (value.isdigit() and int(value) > 0):
+            self.notify("concurrency takes a whole number of cells, 1 or more (empty for the default)", severity="error")
+            return
+        self.concurrency = int(value) if value else 0
+        config.save({"concurrency": self.concurrency})
+        self.notify(f"At most {self.concurrency or default_cap()} cells run at once", title="Concurrent cells")
+
+    def set_concurrent_verify(self, on: bool) -> None:
+        """On (the default): after a group, the names its cells shared are checked for changes. Saved."""
+        self.concurrent_verify = on
+        config.save({"concurrent_verify": on})
+        self.notify("Shared names are checked after each group" if on else "Shared names are not checked after a group", title="Concurrent cells")
+
+    def _ex_groups(self, arg: str = "") -> None:
+        from .concurrency import default_cap, report
+
+        states = [s for s in self.pane.states if s.kind == "code"]
+        cells = {s.cid: s.source for s in states}
+        labels = {s.cid: s.label for s in states}
+        mode = "on" if self.concurrent else "off (:set concurrent turns it on)"
+        text = report(cells, labels, self.concurrency or default_cap())
+        self._show_text("Groups", f"Concurrent mode: {mode}\n\n{text}")
+
     async def action_restart_kernel(self) -> None:
         await self.pane.restart_kernel()
 
@@ -1430,7 +1471,7 @@ class GPython(App):
             (("restart",), "Restart the kernel", lambda arg="": self.action_restart_kernel()),
             (("clear",), "Clear all outputs", lambda arg="": self.pane.clear_outputs()),
             (("img", "image"), "Show this cell's image on the full screen (v in cell mode; :img 2 shows the second). :img save [N] [file] saves it as PNG next to the notebook. :img open [N] opens it in the browser. :img save all and :img open all use all cells", self._ex_image),
-            (("set",), "Options: vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall statusbar nostatusbar cursor=bar|underline|block. Debugger history: debug_detail=full|balanced|lean|auto (full is the default; auto is full until 10,000 steps, then balanced), debug_history=200MB debug_events debug_thinning=on|off debug_repr_chars debug_strip_items debug_grid_size debug_stats=watched|cpu|off. debug_<key>? shows the current value", self._ex_set),
+            (("set",), "Options: vim novim lazy nolazy concurrent noconcurrent concurrency=N concurrent_verify noconcurrent_verify nu nonu time notime autoinstall noautoinstall statusbar nostatusbar cursor=bar|underline|block. Debugger history: debug_detail=full|balanced|lean|auto (full is the default; auto is full until 10,000 steps, then balanced), debug_history=200MB debug_events debug_thinning=on|off debug_repr_chars debug_strip_items debug_grid_size debug_stats=watched|cpu|off. debug_<key>? shows the current value", self._ex_set),
             (("copy", "yank"), "Copy to the clipboard. :copy copies this cell. :copy all copies the notebook as code, with markdown as comments. :copy all metadata also keeps the # %% cell lines", self._ex_copy),
             (("time", "timing"), "Show or hide the run time in each cell header (t in cell mode; gpython keeps the setting)", lambda arg="": self.set_timing(not Cell.show_timing)),
             (("outline", "tags"), "Outline panel: each cell, the names it defines, their types after a run and the cells it uses. Enter goes to the cell (ctrl+o)", lambda arg="": self.action_toggle_outline()),
@@ -1447,7 +1488,8 @@ class GPython(App):
             (("code",), "Change the cell to code", lambda arg="": self._ex_kind("code")),
             (("hide",), "Hide this cell's code, or fold a markdown cell (h in cell mode; saved as marimo hide_code)", lambda arg="": self._ex_hide(True)),
             (("show",), "Show this cell's code, or unfold a markdown cell", lambda arg="": self._ex_hide(False)),
-            (("interrupt",), "Stop the running code", lambda arg="": self.pane.kernel.interrupt()),
+            (("interrupt",), "Stop the running code", lambda arg="": self.pane.interrupt()),
+            (("groups",), "Show which cells may run at the same time (:set concurrent) and what each one waits for", self._ex_groups),
             (("theme",), "Set the theme (:theme name) or show the current theme", self._ex_theme),
             (("version", "ver"), "Show the gpython version", self._ex_version),
             (("env", "kernel", "envs"), "Choose the Python environment for this kernel (f6). :env name or :env path changes to it", lambda arg="": envpicker.ex_env(self.pane, arg)),
@@ -1581,6 +1623,12 @@ class GPython(App):
             self.set_timing(not option.startswith("no"))
         elif option in ("autoinstall", "noautoinstall"):
             self.set_autoinstall(option == "autoinstall")
+        elif option in ("concurrent", "noconcurrent"):
+            self.set_concurrent(option == "concurrent")
+        elif option.startswith("concurrency"):
+            self.set_concurrency(option.partition("=")[2].strip())
+        elif option in ("concurrent_verify", "noconcurrent_verify"):
+            self.set_concurrent_verify(option == "concurrent_verify")
         elif option in ("statusbar", "nostatusbar"):
             self.set_status_bar(option == "statusbar")
         elif option.startswith("cursor"):
@@ -1588,7 +1636,7 @@ class GPython(App):
         elif option.startswith("debug_"):
             self.set_debug_option(option)
         else:
-            self.notify(f"Unknown option: {option or '(none)'}. The options are: vim novim lazy nolazy nu nonu time notime autoinstall noautoinstall statusbar nostatusbar cursor=bar|underline|block debug_detail=full|balanced|lean|auto debug_<limit>=…", severity="error")
+            self.notify(f"Unknown option: {option or '(none)'}. The options are: vim novim lazy nolazy concurrent noconcurrent concurrency=N concurrent_verify noconcurrent_verify nu nonu time notime autoinstall noautoinstall statusbar nostatusbar cursor=bar|underline|block debug_detail=full|balanced|lean|auto debug_<limit>=…", severity="error")
 
     def set_debug_option(self, option: str) -> None:
         """:set debug_detail=full|balanced|lean|auto picks the recorder's preset; :set debug_<limit>=value
