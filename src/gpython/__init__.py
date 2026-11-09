@@ -12,7 +12,7 @@ Several files open in tabs (gt / gT switch); a directory opens the file
 explorer there (ctrl+b toggles it). Plain scripts are split into cells
 automatically; `# %%` markers and .ipynb files are honoured.
 
-  -V, --version  print the version and exit
+  -v, --version  print the version and exit
   --no-vim       plain editing, no modal keys
   --theme NAME   colour theme (e.g. monokai, catppuccin, gruvbox)"""
 
@@ -23,7 +23,7 @@ def parse_args(argv: list[str]) -> dict:
     for arg in it:
         if arg in ("-h", "--help"):
             opts["help"] = True
-        elif arg in ("-V", "--version"):
+        elif arg in ("-v", "-V", "--version"):
             opts["version"] = True
         elif arg == "--no-vim":
             opts["vim"] = False

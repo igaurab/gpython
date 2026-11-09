@@ -7,7 +7,7 @@ import pytest
 from gpython import main, parse_args
 
 
-@pytest.mark.parametrize("flag", ["-V", "--version"])
+@pytest.mark.parametrize("flag", ["-v", "-V", "--version"])
 def test_version_flag_is_parsed(flag):
     assert parse_args([flag])["version"] is True
 
