@@ -5,7 +5,7 @@ import os
 import sys
 from pathlib import Path
 
-USAGE = """usage: gpython [--version] [--no-vim] [--theme NAME] [FILE | DIR ...]
+USAGE = """usage: gpython [--version] [--no-vim] [--theme NAME] [--groups] [FILE | DIR ...]
 
 With no file, opens an empty untitled notebook (ctrl+s or :w asks for a name).
 Several files open in tabs (gt / gT switch); a directory opens the file
@@ -14,17 +14,20 @@ automatically; `# %%` markers and .ipynb files are honoured.
 
   -v, --version  print the version and exit
   --no-vim       plain editing, no modal keys
-  --theme NAME   colour theme (e.g. monokai, catppuccin, gruvbox)"""
+  --theme NAME   colour theme (e.g. monokai, catppuccin, gruvbox)
+  --groups       print which cells of each FILE may run at the same time (:set concurrent) and exit"""
 
 
 def parse_args(argv: list[str]) -> dict:
-    opts = {"vim": True, "theme": None, "path": None, "paths": [], "help": False, "version": False}
+    opts = {"vim": True, "theme": None, "path": None, "paths": [], "help": False, "version": False, "groups": False}
     it = iter(argv)
     for arg in it:
         if arg in ("-h", "--help"):
             opts["help"] = True
         elif arg in ("-v", "-V", "--version"):
             opts["version"] = True
+        elif arg == "--groups":
+            opts["groups"] = True
         elif arg == "--no-vim":
             opts["vim"] = False
         elif arg == "--theme":
@@ -37,6 +40,30 @@ def parse_args(argv: list[str]) -> dict:
             opts["paths"].append(Path(arg))
     opts["path"] = opts["paths"][0] if opts["paths"] else None
     return opts
+
+
+def print_groups(paths: list[Path]) -> int:
+    """`gpython --groups FILE ...`: the groups concurrent mode would run, without starting a kernel."""
+    from . import config
+    from .concurrency import default_cap, report
+    from .notebook import load_cells
+
+    if not paths:
+        print("gpython --groups needs a notebook file", file=sys.stderr)
+        return 2
+    cap = config.load().get("concurrency") or default_cap()
+    for n, path in enumerate(paths):
+        if n:
+            print()
+        if not path.is_file():
+            print(f"{path}: not a file", file=sys.stderr)
+            return 1
+        specs, _ = load_cells(path)
+        cells = {str(i): s.source for i, s in enumerate(specs, 1) if s.kind == "code"}
+        if len(paths) > 1:
+            print(f"== {path}")
+        print(report(cells, {cid: f"c{cid}" for cid in cells}, int(cap)))
+    return 0
 
 
 def installed_version() -> str:
@@ -56,6 +83,8 @@ def main() -> None:
     if opts["version"]:
         print(f"gpython {installed_version()}")
         return
+    if opts["groups"]:
+        sys.exit(print_groups(opts["paths"]))
 
     os.environ.setdefault("TEXTUAL_FPS", "120")
     from . import prespawn

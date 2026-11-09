@@ -36,12 +36,23 @@ def _gp_delete(names):
 import sys as _gp_sys
 _gp_stdout, _gp_stderr = _gp_sys.stdout, _gp_sys.stderr
 
-async def _gp_run(cells):
+def _gp_group(cells, mark, watch):
+    import sys, threading, types
+    mod = sys.modules.get("_gpython_concurrency")
+    if mod is None:
+        mod = types.ModuleType("_gpython_concurrency")
+        with open(_GP_CONCURRENCY, encoding="utf-8") as source:
+            exec(compile(source.read(), "<gpython-concurrency>", "exec"), mod.__dict__)
+        sys.modules["_gpython_concurrency"] = mod
+    return mod.GroupRunner(get_ipython(), globals(), mark, threading.RLock()).run(cells, watch)
+
+async def _gp_run(groups, watches=None):
     import asyncio, json, signal, sys, time
     shell = get_ipython()
     g = globals()
     cancel_handler = signal.getsignal(signal.SIGINT)
     open_cid = None
+    watches = watches or [None] * len(groups)
 
     def mark(cid, event, **extra):
         buffered = getattr(_gp_stderr, "_buffer", None)
@@ -51,7 +62,12 @@ async def _gp_run(cells):
         _gp_stdout.write("\x1egpython-run\x1e" + json.dumps(payload) + "\n")
 
     try:
-        for cid, code, names in cells:
+        for group, watch in zip(groups, watches):
+            if len(group) > 1:
+                if not _gp_group(group, mark, watch):
+                    break
+                continue
+            cid, code, names = group[0]
             for n in names:
                 g.pop(n, None)
             try:
@@ -241,8 +257,9 @@ def _helpers() -> str:
     from .markdown import html_to_markdown
 
     side = str(Path(__file__).with_name("kernel_side.py"))
+    concurrency = str(Path(__file__).with_name("kernel_concurrency.py"))
     shim = inspect.getsource(html_to_markdown).replace("def html_to_markdown", "def _gp_html_to_md", 1)
-    return _HELPERS + shim + f"\n_gp_install({side!r})\n"
+    return _HELPERS + shim + f"\n_GP_CONCURRENCY = {concurrency!r}\n_gp_install({side!r})\n"
 
 
 def debug_settings() -> dict:
@@ -421,11 +438,13 @@ class Kernel:
             return None
 
     async def run_batch(
-        self, cells: list[tuple[str, str, list[str]]], on_event: CellOutputCallback, on_output: CellOutputCallback,
-        on_input: CellInputCallback | None = None,
+        self, groups: list[list[tuple[str, str, list[str]]]], on_event: CellOutputCallback, on_output: CellOutputCallback,
+        on_input: CellInputCallback | None = None, watches: list[list[str]] | None = None,
     ) -> bool:
-        """Run `cells`, (cell id, code, names to delete first) each, in one request, in order,
-        stopping after the first cell that fails.
+        """Run `groups` of cells, (cell id, code, names to delete first) each, in one request: the
+        groups in order, the cells of a group of more than one at the same time on threads
+        (kernel_concurrency.py), stopping after the first group with a cell that fails.
+        `watches` names, per group, the shared names checked for changes after it ran.
 
         The kernel brackets every cell with a marker line written into its stdout stream:
         on_event(cid, "begin" | "end", payload), where the payload carries the kernel's clock
@@ -435,14 +454,27 @@ class Kernel:
         instead of two per cell, and a marker in the stream costs nothing where a message of
         its own would make the kernel wait for a flush, which is what makes run-all fast.
 
+        Cells of a group interleave their output: a `switch` marker says which cell the stream
+        speaks for next, and a `race` event (cell id None) names watched names that changed.
+
         Returns False when the request ended with a cell still open (the kernel died or was
         restarted), in which case the cells after it never began."""
         await self.ready.wait()
         current: list[str | None] = [None]
+        open_cells: set[str] = set()
 
         def event(payload: dict) -> None:
-            current[0] = payload["cid"] if payload["event"] == "begin" else None
-            on_event(payload["cid"], payload["event"], payload)
+            cid, kind = payload["cid"], payload["event"]
+            if kind == "switch":
+                current[0] = cid
+                return
+            if kind == "begin":
+                open_cells.add(cid)
+                current[0] = cid
+            elif kind == "end":
+                open_cells.discard(cid)
+                current[0] = None
+            on_event(cid, kind, payload)
 
         def text(name: str, chunk: str) -> None:
             if chunk and current[0] is not None:
@@ -464,8 +496,9 @@ class Kernel:
             if current[0] is not None and on_input is not None:
                 on_input(current[0], prompt, password)
 
-        await self._execute(f"await _gp_run({cells!r})", dispatch, store_history=False, on_input=ask if on_input else None)
-        return current[0] is None
+        code = f"await _gp_run({groups!r}, {watches!r})" if watches else f"await _gp_run({groups!r})"
+        await self._execute(code, dispatch, store_history=False, on_input=ask if on_input else None)
+        return not open_cells
 
     async def delete(self, names: set[str]) -> None:
         if names:

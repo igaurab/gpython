@@ -17,6 +17,22 @@ since, or their inputs changed), then the cell. What happens to the cells
   The same keys work in the editor's normal mode, where `space r …` is a synonym.
 - **reactive**: they re-run automatically, like marimo.
 
+**Concurrent cells** (`:set concurrent`, off by default, saved): cells of a run that share no
+state run at the same time, on threads in the one kernel. A cell may join others only if neither
+writes anything the other reads or writes (Bernstein's conditions); gpython works this out from
+the code, counting as a write every assignment, in-place change (`xs.append`, `d[k] = v`, a
+function that changes a global), call it does not know, and effect such as writing a file,
+seeding `random` or drawing with `plt`. Magics, top-level `await`, `input()` and `breakpoint()`
+run alone. Each cell's output, errors and `r i` still work per cell. `:groups` (or
+`gpy --groups nb.py`) shows the groups and what each cell waits for; `:set concurrency=N` caps
+how many run at once (1 runs them one by one). After a group, the names its cells shared are
+checked: if one changed anyway, its readers are marked stale and run one by one from then on
+(`:set noconcurrent_verify` turns the check off). Network calls, sleeps and NumPy run in
+parallel; pure-Python loops take turns (the GIL); cells that write files run one at a time.
+While a group runs, NumPy's math libraries are held to their share of the cores with
+`threadpoolctl` (a gpython dependency); a kernel in a project `.venv` or conda env needs it
+installed there too, or parallel NumPy cells may oversubscribe the cores.
+
 <img width="1372" height="1034" alt="image" src="https://github.com/user-attachments/assets/c93ed22f-cf15-4a26-9322-c62c940febf5" />
 
 

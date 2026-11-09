@@ -1,0 +1,107 @@
+# 14 — Concurrent cells: independent cells run at the same time
+
+Run mode `concurrent` (beside lazy and reactive): a run-all, a stale run or a reactive re-run sends
+cells in groups; the cells of one group share no state and run on threads in the one kernel.
+
+## Architecture
+
+| Layer | Process | Module |
+|---|---|---|
+| dependencies | gpython | `graph.py` (unchanged; `_MUTATORS` moves to `calls.json`) |
+| analysis + policy (pure) | gpython | `concurrency.py`: `Access`, `accesses`, `conflict` (Bernstein), `groups`; tables in `calls.json` |
+| orchestration | gpython | `pane.run_cells`, `runs.BatchRun` |
+| transport | gpython | `Kernel.run_batch(groups, …)`, stdout marker protocol + `switch` |
+| mechanism | kernel | `kernel_concurrency.py` as `_gpython_concurrency` (stdlib only), loaded on the first group of more than one cell: `GroupRunner`, `OutputRouter`, `GroupLimits`, `fingerprint` |
+
+## Rule
+
+Bernstein's conditions (1966). Cells A, B may share a group iff
+R(A) ∩ W(B) = W(A) ∩ R(B) = W(A) ∩ W(B) = ∅. Reads of shared objects are free; any write
+(rebind, in-place change, external effect) serialises. Wrong "dependent" costs speed; wrong
+"independent" is a race, so every doubt counts as a write.
+
+## What exists
+
+- `graph.analyze`: defs / refs per cell (symtable). `graph.mutations`: top-level `x[..] =`, `x.a =`,
+  `del x[..]`, `x.<_MUTATORS>()`; `build` already adds mutator → later-reader edges.
+- `Kernel.run_batch` / `runs.BatchRun`: cells go in batches, one `execute_request` each, events per cell.
+- The debugger has none of this: it records values at stops, not read/write sets. Reusable from it:
+  `kernel_side` cheap summaries (fingerprints) and the `sys.monitoring` plumbing.
+
+## Write set W(cell), conservative (`concurrency.accesses`)
+
+- defs (assign, import, `del`, `global`), plus `mutations` widened:
+  - any method call on a shared name unless the method is on a pure allowlist (`copy`, `head`, `sum`,
+    `mean`, `keys`, `items`, `get`, `str.*`, …), in place of the `_MUTATORS` denylist;
+  - a shared name passed to a call not on a pure-function list (`len`, `print`, `sum`, `sorted`,
+    `np.mean`, …);
+  - aliases: `b = a` / `b = a[0]` makes later writes to `b` writes to `a`.
+- Effect pseudo-names, written when touched: `$fs` (`open(..., "w"|"a")`, `Path.write_*`, `os`,
+  `shutil`), `$random`, `$plt`, `$cwd`, `$env`, `$sys`, `$stdin`. Reading files is `R($fs)`.
+- A cell is **exclusive** (runs alone) if: calls a function defined in the notebook that writes a
+  global, uses `global`/`exec`/`eval`/`globals()`/magics/`!shell`, `input()`, `breakpoint()`, has a
+  syntax error, or anything unclassified. Exclusive-cell count is a reported metric.
+- Lives in `graph.py`, memoised like `_analyzed`; no cost unless the mode is on.
+
+## Scheduler (`runs.py`)
+
+- Groups = topological levels of the run's subgraph, filtered pairwise by the rule; exclusive cells
+  form a group of one. Group cap = `concurrency` setting (default `os.cpu_count()`).
+- Failure in a group: siblings finish, descendants skip (as today).
+
+## Kernel side (`kernel_side.run_group`)
+
+- One `execute_request` per group; `ThreadPoolExecutor` runs each cell's compiled code in the shared
+  namespace; top-level `await` cells run on one event loop with `asyncio.gather`.
+- Output routing: `sys.stdout`/`stderr`/`display` replaced once by a proxy that writes to the
+  stream of the cell in a `contextvars.ContextVar`; events carry the cell id (as `cellId` does now).
+- Interrupt cancels the group (`KeyboardInterrupt` to the main thread; worker threads checked via
+  `sys.monitoring` or left to finish, see questions).
+- Optional verify: fingerprint (id, len, buffer hash for arrays) of every shared name read in the
+  group, before and after; a change marks the group's cells stale with a "concurrent write detected"
+  note and makes them exclusive next time.
+
+## UI
+
+- Running cells of a group show their bars together (existing per-cell status, no new widgets).
+- Later: status bar `group 3/7 · 4 running`; per-cell override `# %% [exclusive]`.
+- Debugger: arming it makes the run sequential.
+
+## Evaluation (paper)
+
+- Workbench problems as N independent cells after one setup cell: N1/N2 (network), D1/D2 (disk)
+  expect ~min(N, cap)× speedup; C1/C2 (BLAS/FFT, GIL released) partial; C3 (pure Python) none on
+  CPython, measured again on free-threaded 3.13t/3.14t.
+- Analysis precision on real notebooks: parallelism in principle (true read/write sets from a
+  traced run) vs what the conservative analysis allowed; races found by verify (target 0).
+- Overhead with the mode on and nothing parallel: must be within noise of lazy.
+- Bench rules of CLAUDE.md apply (`first_paint`, `keys_30_net`, `moves_30_proc`, `loaded_60`).
+
+## Prior art (related work)
+
+- Vizier (Deo, Glavic, Kennedy, TaPP 2022): static + runtime-refined dataflow, parallel cells,
+  separate processes and artifacts per shared object. Closest prior work.
+- marimo issue #1103 "Parallel Execution": proposed, not shipped as far as found.
+- ipyparallel DAG dependencies, IPython background jobs, Datalore / Databricks requests.
+
+## Decided
+
+- Threads in the one kernel. `:set concurrent` is orthogonal to lazy / reactive.
+- Pure lists, effect calls and graph's mutating methods in `calls.json`.
+- Interrupt: async `KeyboardInterrupt` into each worker thread.
+- Top-level `await` and magic cells are exclusive in v1.
+- Outputs live per cell, so finish order does not affect the file.
+- Tasks: `14-concurrent-cells-tasks.md`.
+
+## Unresolved questions
+
+- See the tasks file.
+
+## Known limits of the analysis
+
+- `$fs` is one name for the whole file system: cells that write any file run one at a time, even
+  when the paths differ (paths are rarely constants).
+- State hidden inside a library (`pd.set_option`, `torch.set_num_threads`, a library cache) is
+  invisible unless `calls.json` names the call; verify (Task 5) sees the notebook's names only.
+- Libraries that are not thread-safe need an effect name (`matplotlib.pyplot` → `$plt`).
+- A function stored in a variable or passed as an argument is an unknown call: it writes its arguments.

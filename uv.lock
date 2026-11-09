@@ -161,6 +161,7 @@ dependencies = [
     { name = "psutil" },
     { name = "textual", extra = ["syntax"] },
     { name = "textual-image" },
+    { name = "threadpoolctl" },
 ]
 
 [package.dev-dependencies]
@@ -177,6 +178,7 @@ requires-dist = [
     { name = "psutil", specifier = ">=7.2.2" },
     { name = "textual", extras = ["syntax"], specifier = ">=8.2.8" },
     { name = "textual-image", specifier = ">=0.14.2" },
+    { name = "threadpoolctl", specifier = ">=3.5" },
 ]
 
 [package.metadata.requires-dev]
@@ -720,6 +722,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e8/32/7844d7c06cfc540caeb3ad8e7f96e66a12daac8934f4d45a86cab879e7e1/textual_image-0.14.2.tar.gz", hash = "sha256:0ec2ac1e2a9b30bfc478708ea011eb31e7844c377322ed2094976c1a84c131ba", size = 181319, upload-time = "2026-10-20T20:15:50.992Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/66/da/80883aab94e35ff27b3fc6f28eeb1824c19422090344b15d54d24e9dd02f/textual_image-0.14.2-py3-none-any.whl", hash = "sha256:f698d883959637515ab6c7086ffbc17fffc204a90010562b4f3bd1fba963ade4", size = 183633, upload-time = "2026-10-20T20:15:49.47Z" },
+]
+
+[[package]]
+name = "threadpoolctl"
+version = "3.8.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/56/97/b4748951a683e369513691c8eea33d100298d556308dcb0ab66b132a67f0/threadpoolctl-3.8.0.tar.gz", hash = "sha256:01080674ad7ac6182429c918a79de92da789bb448acc02fc0b620b1abd6b6137", size = 39424, upload-time = "2026-11-05T11:08:51.112Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/54/1b/831f2de4840a25db1dd7b1afea433ccafe6bb10aca07e13264f2079462d0/threadpoolctl-3.8.0-py3-none-any.whl", hash = "sha256:f1b49c82704d50f13ffae019c727b0fa4f6791a58f48f06a09c45face1be66da", size = 32091, upload-time = "2026-11-05T11:08:49.773Z" },
 ]
 
 [[package]]
