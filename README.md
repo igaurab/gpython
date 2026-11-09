@@ -607,7 +607,17 @@ via jupyter_client · `notebook.py` file formats (`# %%`, scripts, marimo,
 uv run pytest -q
 ```
 
-Releases: add the version's section to `CHANGELOG.md`, bump `version` in
-`pyproject.toml`, run `uv lock`, commit, then push a `vX.Y.Z` tag. GitHub Actions
-builds, uploads to PyPI through trusted publishing, and creates the GitHub release
-with the wheel and sdist attached and that changelog section as its notes.
+Releases go through a reviewed pull request:
+
+1. From an up-to-date `main`, branch `release/X.Y.Z`.
+2. In `CHANGELOG.md`, move `[Unreleased]` entries under `## [X.Y.Z] - YYYY-MM-DD`, fill in
+   anything merged without an entry, and add the compare link at the bottom.
+3. Bump `version` in `pyproject.toml`, run `uv lock` and `uv run pytest -q`.
+4. Commit `Release X.Y.Z: <summary>`, push, open a PR titled `Release X.Y.Z` and ask the
+   other maintainer to review it.
+5. After the merge, tag the merge commit on `main` and push the tag:
+   `git switch main && git pull && git tag vX.Y.Z && git push origin vX.Y.Z`.
+
+The tag runs `.github/workflows/publish.yml`: it builds, uploads to PyPI through trusted
+publishing, and creates the GitHub release with the wheel and sdist attached and that
+changelog section as its notes. It fails if the changelog has no section for the version.
