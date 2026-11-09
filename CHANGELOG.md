@@ -8,7 +8,19 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-09
+
 ### Changed
+- Running all cells is much faster: a run sends its cells to the kernel as one request and
+  repaints a few times a second while results stream. 500 cells from launch to the last
+  cell: 25.8 s before, 1.5 s now. A run of 1000 cells fed by one setup cell is ordered in
+  milliseconds (was 1.3 s).
+- The kernel starts a few milliseconds after launch, before the UI, so the first cell is
+  ready about 0.2 s sooner.
+- A notebook over 100 cells mounts only the cells around the viewport. Keys, cell moves and
+  loading stay fast at 500 and 1000 cells; `:%s`, `:g` and other ex ranges still reach every
+  cell.
+- Text outputs of a cell share one widget: about 30 % less memory per printing cell.
 - The bottom bar is a tmux-style status line: the mode badge (NORMAL, INSERT, CELL, …)
   on the left and modules on the right: clock, host, cpu, ram, gpu (README, "Bottom
   bar"). cpu and gpu are btop-style sparklines of the last samples, ram a block meter,
@@ -41,6 +53,25 @@ this file as its notes.
   per mode.
 
 ### Added
+- Concurrent cells (`:set concurrent`, off by default): cells of a run that share no state
+  run at the same time, on threads in the one kernel. A cell joins a group only if no other
+  cell in it writes what it reads or writes; magics, top-level `await`, `input()` and
+  `breakpoint()` run alone. `:set concurrency=N` caps a group, `:groups` (and
+  `gpy --groups nb.py`) shows the groups and what each cell waits for. After a group,
+  a shared name that changed marks its readers stale and the run falls back to one cell at
+  a time. `threadpoolctl` is a new dependency.
+- Outline panel (`ctrl+o` in cell mode, `:outline`): one node per cell with its imports, variables,
+  functions and classes, the kernel's types once the cell ran, the cell's dependency edges,
+  and enter to jump. It replaces the `f2` variables table.
+- Variables panel (`ctrl+v`) and a `breakpoint()` debugger: loop views with iteration k of
+  n, pointer strips over sequences, locals with their history, watches, the stack, time
+  travel over recorded steps (`h` / `l`), a timeline (`T`) and post-mortem where a cell
+  failed (`r d`, `:debug`). `debug_detail` (`auto`, `full`, `balanced`, `lean`) caps what is
+  recorded. `input()` asks at the bottom of the screen.
+- Plain `.py` notebooks: new files and scripts are saved without `# %%` lines; where cells
+  start and end is kept in `~/.gpython/cells` (`GPYTHON_HOME` moves it). Files that already
+  have `# %%` markers keep them. `:copy all` copies the whole notebook.
+- `r r` reruns the cell run last; `r c` runs the current cell.
 - `gpy --version` (or `-v`) and `:version` (`:ver`) show the installed version, read from the package metadata (the `version` in pyproject.toml).
 - Vim: `r`, `J`, `U`, `gi gI gp gP g_ gm g0 g$ ga gd gD g; g, g* g# g& g?`, `gq` / `gw`,
   `( )`, `is as`, `[( [{ ]) ]} [[ ]] [] ][ [m ]m`, the jump list (`ctrl+o`, `tab`, `''`),
@@ -67,6 +98,7 @@ this file as its notes.
 
 ### Fixed
 - `ctrl+w + - < >` resized the layout only after the next unrelated change.
+- A removed cell's editor stayed in memory while its completion request waited for the kernel.
 
 ## [0.1.2] - 2026-10-30
 
@@ -126,6 +158,8 @@ First release on PyPI as `gpynb`: `uv tool install gpynb` gives the `gpython` co
 - Performance work so a keystroke paints in under 10 ms and the first frame is on screen
   within about 0.3 s of launch, with `scripts/bench.py` to keep it that way.
 
+[Unreleased]: https://github.com/igaurab/gpython/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/igaurab/gpython/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/igaurab/gpython/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/igaurab/gpython/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/igaurab/gpython/releases/tag/v0.1.0
