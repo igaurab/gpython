@@ -1,0 +1,76 @@
+{
+  "mutating_methods": [
+    "append", "extend", "insert", "pop", "remove", "clear", "sort", "reverse",
+    "update", "setdefault", "popitem", "add", "discard", "appendleft", "extendleft",
+    "popleft", "rotate", "fillna", "drop", "rename", "set_index", "reset_index"
+  ],
+  "readonly_builtins": [
+    "abs", "all", "any", "ascii", "bin", "bool", "bytes", "callable", "chr", "complex", "dict",
+    "divmod", "enumerate", "filter", "float", "format", "frozenset", "getattr", "hasattr", "hash",
+    "hex", "id", "int", "isinstance", "issubclass", "iter", "len", "list", "map", "max", "min",
+    "oct", "ord", "pow", "print", "range", "repr", "reversed", "round", "set", "slice", "sorted",
+    "str", "sum", "tuple", "type", "zip"
+  ],
+  "fresh_builtins": [
+    "abs", "ascii", "bin", "bool", "callable", "chr", "complex", "divmod", "format", "hasattr",
+    "hash", "hex", "id", "int", "isinstance", "issubclass", "len", "oct", "open", "ord", "pow",
+    "print", "range", "repr", "round", "str", "float", "type"
+  ],
+  "exclusive_builtins": [
+    "exec", "eval", "globals", "locals", "vars", "input", "breakpoint", "__import__", "compile"
+  ],
+  "readonly_methods": [
+    "copy", "count", "index", "get", "keys", "values", "items", "startswith", "endswith", "split",
+    "rsplit", "splitlines", "join", "strip", "lstrip", "rstrip", "lower", "upper", "title",
+    "replace", "format", "find", "rfind", "encode", "decode", "isdigit", "isalpha", "isspace",
+    "head", "tail", "describe", "info", "sum", "mean", "median", "std", "var", "min", "max",
+    "argmin", "argmax", "cumsum", "prod", "any", "all", "round", "abs", "astype", "to_numpy",
+    "tolist", "to_dict", "to_list", "groupby", "agg", "aggregate", "value_counts", "unique",
+    "nunique", "isna", "notna", "isnull", "notnull", "dropna", "sort_values", "sort_index",
+    "merge", "query", "filter", "select", "loc", "iloc", "apply", "dot",
+    "reshape", "flatten", "ravel", "transpose", "squeeze", "sample", "corr", "cov", "quantile",
+    "issubset", "issuperset", "union", "intersection", "difference", "symmetric_difference",
+    "json", "text", "raise_for_status", "result", "done"
+  ],
+  "receiver_only_methods": [
+    "write", "writelines", "send", "sendall", "sendto", "flush", "close", "seek", "truncate"
+  ],
+  "readonly_functions": [
+    "math.*", "cmath.*", "statistics.*", "operator.*", "itertools.*", "functools.reduce",
+    "json.dumps", "json.loads", "re.*", "string.*", "textwrap.*", "copy.*", "hashlib.*",
+    "base64.*", "binascii.*", "zlib.*", "datetime.*", "decimal.*", "fractions.*", "time.*",
+    "os.path.*", "urllib.parse.*", "urllib.request.urlopen", "requests.*", "httpx.*",
+    "numpy.*", "pandas.*", "scipy.*", "polars.*", "collections.*", "dataclasses.*", "typing.*"
+  ],
+  "effects": {
+    "write": {
+      "random.*": "$random", "numpy.random.*": "$random", "torch.manual_seed": "$random",
+      "matplotlib.pyplot.*": "$plt", "seaborn.*": "$plt",
+      "os.chdir": "$cwd", "os.environ*": "$env", "os.putenv": "$env", "os.unsetenv": "$env",
+      "os.remove": "$fs", "os.unlink": "$fs", "os.rename": "$fs", "os.replace": "$fs",
+      "os.mkdir": "$fs", "os.makedirs": "$fs", "os.rmdir": "$fs", "os.removedirs": "$fs",
+      "os.write": "$fs", "os.fsync": "$fs", "shutil.*": "$fs", "pickle.dump": "$fs",
+      "json.dump": "$fs", "numpy.save*": "$fs", "numpy.savetxt": "$fs", "tempfile.*": "$fs",
+      "sys.*": "$sys", "logging.*": "$sys", "warnings.*": "$sys", "signal.*": "$sys",
+      "locale.setlocale": "$sys"
+    },
+    "read": {
+      "pandas.read_*": "$fs", "polars.read_*": "$fs", "numpy.load*": "$fs", "numpy.genfromtxt": "$fs",
+      "pickle.load": "$fs", "json.load": "$fs", "os.listdir": "$fs", "os.scandir": "$fs",
+      "os.walk": "$fs", "os.stat": "$fs", "os.path.exists": "$fs", "os.path.isfile": "$fs",
+      "os.path.isdir": "$fs", "os.path.getsize": "$fs", "glob.*": "$fs", "os.getcwd": "$cwd",
+      "os.path.abspath": "$cwd", "os.getenv": "$env"
+    },
+    "write_methods": {
+      "write_text": "$fs", "write_bytes": "$fs", "mkdir": "$fs", "unlink": "$fs", "rmdir": "$fs",
+      "touch": "$fs", "rename": "$fs", "open": "$fs", "to_csv": "$fs", "to_parquet": "$fs",
+      "to_json": "$fs", "to_excel": "$fs", "to_pickle": "$fs", "to_feather": "$fs",
+      "to_hdf": "$fs", "to_sql": "$fs", "write_csv": "$fs", "write_parquet": "$fs",
+      "savefig": "$fs", "save": "$fs", "seed": "$random"
+    },
+    "read_methods": {
+      "read_text": "$fs", "read_bytes": "$fs", "exists": "$fs", "is_file": "$fs", "is_dir": "$fs",
+      "iterdir": "$fs", "glob": "$fs", "rglob": "$fs", "stat": "$fs"
+    }
+  }
+}

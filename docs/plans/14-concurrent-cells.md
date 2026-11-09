@@ -96,3 +96,12 @@ R(A) ∩ W(B) = W(A) ∩ R(B) = W(A) ∩ W(B) = ∅. Reads of shared objects are
 ## Unresolved questions
 
 - See the tasks file.
+
+## Known limits of the analysis
+
+- `$fs` is one name for the whole file system: cells that write any file run one at a time, even
+  when the paths differ (paths are rarely constants).
+- State hidden inside a library (`pd.set_option`, `torch.set_num_threads`, a library cache) is
+  invisible unless `calls.json` names the call; verify (Task 5) sees the notebook's names only.
+- Libraries that are not thread-safe need an effect name (`matplotlib.pyplot` → `$plt`).
+- A function stored in a variable or passed as an argument is an unknown call: it writes its arguments.

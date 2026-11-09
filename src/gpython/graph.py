@@ -8,18 +8,15 @@ from __future__ import annotations
 
 import ast
 import heapq
+import json
 import builtins
 import symtable
 from dataclasses import dataclass, field
 from functools import lru_cache
+from pathlib import Path
 
 _SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
 _BUILTINS = set(dir(builtins))
-_MUTATORS = {
-    "append", "extend", "insert", "pop", "remove", "clear", "sort", "reverse",
-    "update", "setdefault", "popitem", "add", "discard", "appendleft", "extendleft",
-    "popleft", "rotate", "fillna", "drop", "rename", "set_index", "reset_index",
-}
 _COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
 
 
@@ -61,8 +58,28 @@ def strip_magics(source: str) -> str:
     return "\n".join(out)
 
 
+@lru_cache(maxsize=1)
+def calls_table() -> dict:
+    """calls.json: what calls do to their arguments (mutating methods here, the rest for concurrency.py)."""
+    with Path(__file__).with_name("calls.json").open("rb") as f:
+        return json.load(f)
+
+
+@lru_cache(maxsize=1)
+def _mutators() -> frozenset[str]:
+    return frozenset(calls_table()["mutating_methods"])
+
+
 def analyze(source: str) -> tuple[set[str], set[str]]:
-    """Return (defs, refs) for one cell. Raises SyntaxError."""
+    """Return (defs, refs) for one cell, private names left out. Raises SyntaxError."""
+    defs, refs = names(source)
+    public = lambda found: {n for n in found if not n.startswith("_")}
+    defs = public(defs)
+    return defs, public(refs) - defs
+
+
+def names(source: str) -> tuple[set[str], set[str]]:
+    """(defs, refs) for one cell, private names included: they still share the kernel's namespace."""
     source = strip_magics(source)
     table = symtable.symtable(source, "<cell>", "exec")
     _, comp_only = _module_stores(ast.parse(source))
@@ -89,9 +106,7 @@ def analyze(source: str) -> tuple[set[str], set[str]]:
             elif sym.is_referenced():
                 refs.add(sym.get_name())
 
-    public = lambda names: {n for n in names if not n.startswith("_")}
-    defs = public(defs)
-    return defs, public(refs) - defs - _BUILTINS
+    return defs, refs - defs - _BUILTINS
 
 
 def _base_name(node: ast.AST) -> str | None:
@@ -125,7 +140,7 @@ def mutations(source: str) -> set[str]:
             if (
                 isinstance(child, ast.Call)
                 and isinstance(child.func, ast.Attribute)
-                and child.func.attr in _MUTATORS
+                and child.func.attr in _mutators()
             ):
                 found.add(_base_name(child.func.value))
             visit(child)
