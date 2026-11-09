@@ -5,23 +5,26 @@ import os
 import sys
 from pathlib import Path
 
-USAGE = """usage: gpython [--no-vim] [--theme NAME] [FILE | DIR ...]
+USAGE = """usage: gpython [--version] [--no-vim] [--theme NAME] [FILE | DIR ...]
 
 With no file, opens an empty untitled notebook (ctrl+s or :w asks for a name).
 Several files open in tabs (gt / gT switch); a directory opens the file
 explorer there (ctrl+b toggles it). Plain scripts are split into cells
 automatically; `# %%` markers and .ipynb files are honoured.
 
+  -v, --version  print the version and exit
   --no-vim       plain editing, no modal keys
   --theme NAME   colour theme (e.g. monokai, catppuccin, gruvbox)"""
 
 
 def parse_args(argv: list[str]) -> dict:
-    opts = {"vim": True, "theme": None, "path": None, "paths": [], "help": False}
+    opts = {"vim": True, "theme": None, "path": None, "paths": [], "help": False, "version": False}
     it = iter(argv)
     for arg in it:
         if arg in ("-h", "--help"):
             opts["help"] = True
+        elif arg in ("-v", "-V", "--version"):
+            opts["version"] = True
         elif arg == "--no-vim":
             opts["vim"] = False
         elif arg == "--theme":
@@ -36,10 +39,22 @@ def parse_args(argv: list[str]) -> dict:
     return opts
 
 
+def installed_version() -> str:
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("gpynb")
+    except PackageNotFoundError:
+        return "unknown"
+
+
 def main() -> None:
     opts = parse_args(sys.argv[1:])
     if opts["help"]:
         print(USAGE)
+        return
+    if opts["version"]:
+        print(f"gpython {installed_version()}")
         return
 
     os.environ.setdefault("TEXTUAL_FPS", "120")

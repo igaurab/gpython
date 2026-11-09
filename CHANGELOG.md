@@ -41,6 +41,7 @@ this file as its notes.
   per mode.
 
 ### Added
+- `gpy --version` (or `-v`) and `:version` (`:ver`) show the installed version, read from the package metadata (the `version` in pyproject.toml).
 - Vim: `r`, `J`, `U`, `gi gI gp gP g_ gm g0 g$ ga gd gD g; g, g* g# g& g?`, `gq` / `gw`,
   `( )`, `is as`, `[( [{ ]) ]} [[ ]] [] ][ [m ]m`, the jump list (`ctrl+o`, `tab`, `''`),
   scrolling (`ctrl+d ctrl+u ctrl+f ctrl+b ctrl+e ctrl+y zz zt zb z. z<enter> z-`), `ZZ ZQ @: &`,

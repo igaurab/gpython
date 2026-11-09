@@ -1449,6 +1449,7 @@ class GPython(App):
             (("show",), "Show this cell's code, or unfold a markdown cell", lambda arg="": self._ex_hide(False)),
             (("interrupt",), "Stop the running code", lambda arg="": self.pane.kernel.interrupt()),
             (("theme",), "Set the theme (:theme name) or show the current theme", self._ex_theme),
+            (("version", "ver"), "Show the gpython version", self._ex_version),
             (("env", "kernel", "envs"), "Choose the Python environment for this kernel (f6). :env name or :env path changes to it", lambda arg="": envpicker.ex_env(self.pane, arg)),
             (("venv",), "Make a new environment with python -m venv and use it (:venv folder [python])", lambda arg="": envpicker.ex_venv(self.pane, arg)),
             (("uv",), "Run uv for this kernel: :uv add package · :uv pip install package · :uv venv [folder] [python]", lambda arg="": envpicker.ex_uv(self.pane, arg)),
@@ -1749,6 +1750,11 @@ class GPython(App):
         else:
             names = ", ".join(sorted(self.available_themes)[:6])
             self.notify(f"Unknown theme {arg!r}. Try: {names}, …", severity="error")
+
+    def _ex_version(self, arg: str = "") -> None:
+        from . import installed_version
+
+        self.notify(f"gpython {installed_version()}")
 
     async def _run_ex(self, command: str | None) -> None:
         """Run an ex command. A save / quit name (w, q, x ...) that matches nothing exactly is tried
