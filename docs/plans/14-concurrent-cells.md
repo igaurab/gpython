@@ -1,21 +1,21 @@
 # 14 — Concurrent cells: independent cells run at the same time
 
 Run mode `concurrent` (beside lazy and reactive): a run-all, a stale run or a reactive re-run sends
-cells in waves; the cells of one wave share no state and run on threads in the one kernel.
+cells in groups; the cells of one group share no state and run on threads in the one kernel.
 
 ## Architecture
 
 | Layer | Process | Module |
 |---|---|---|
-| analysis (pure) | gpython | `effects.py`: sources → `Access(reads, writes, exclusive)` |
-| policy (pure) | gpython | `schedule.py`: `waves(order, access, parents, cap)` |
+| dependencies | gpython | `graph.py` (unchanged; `_MUTATORS` moves to `calls.json`) |
+| analysis + policy (pure) | gpython | `concurrency.py`: `Access`, `accesses`, `conflict` (Bernstein), `groups`; tables in `calls.json` |
 | orchestration | gpython | `pane.run_cells`, `runs.BatchRun` |
-| transport | gpython | `Kernel.run_batch(waves, …)`, stdout marker protocol + `switch` |
-| mechanism | kernel | `kernel_exec.py` as `_gpython_exec` (stdlib only, like `kernel_side`): `CellExecutor`, `OutputRouter`, `WaveLimits`, `fingerprint`; `_gp_run` delegates to it |
+| transport | gpython | `Kernel.run_batch(groups, …)`, stdout marker protocol + `switch` |
+| mechanism | kernel | `kernel_concurrency.py` as `_gpython_concurrency` (stdlib only), loaded on the first group of more than one cell: `GroupRunner`, `OutputRouter`, `GroupLimits`, `fingerprint` |
 
 ## Rule
 
-Bernstein's conditions (1966). Cells A, B may share a wave iff
+Bernstein's conditions (1966). Cells A, B may share a group iff
 R(A) ∩ W(B) = W(A) ∩ R(B) = W(A) ∩ W(B) = ∅. Reads of shared objects are free; any write
 (rebind, in-place change, external effect) serialises. Wrong "dependent" costs speed; wrong
 "independent" is a race, so every doubt counts as a write.
@@ -28,7 +28,7 @@ R(A) ∩ W(B) = W(A) ∩ R(B) = W(A) ∩ W(B) = ∅. Reads of shared objects are
 - The debugger has none of this: it records values at stops, not read/write sets. Reusable from it:
   `kernel_side` cheap summaries (fingerprints) and the `sys.monitoring` plumbing.
 
-## Write set W(cell), conservative (`graph.effects`)
+## Write set W(cell), conservative (`concurrency.accesses`)
 
 - defs (assign, import, `del`, `global`), plus `mutations` widened:
   - any method call on a shared name unless the method is on a pure allowlist (`copy`, `head`, `sum`,
@@ -45,26 +45,26 @@ R(A) ∩ W(B) = W(A) ∩ R(B) = W(A) ∩ W(B) = ∅. Reads of shared objects are
 
 ## Scheduler (`runs.py`)
 
-- Waves = topological levels of the run's subgraph, filtered pairwise by the rule; exclusive cells
-  form a wave of one. Wave cap = `concurrency` setting (default `os.cpu_count()`).
-- Failure in a wave: siblings finish, descendants skip (as today).
+- Groups = topological levels of the run's subgraph, filtered pairwise by the rule; exclusive cells
+  form a group of one. Group cap = `concurrency` setting (default `os.cpu_count()`).
+- Failure in a group: siblings finish, descendants skip (as today).
 
-## Kernel side (`kernel_side.run_wave`)
+## Kernel side (`kernel_side.run_group`)
 
-- One `execute_request` per wave; `ThreadPoolExecutor` runs each cell's compiled code in the shared
+- One `execute_request` per group; `ThreadPoolExecutor` runs each cell's compiled code in the shared
   namespace; top-level `await` cells run on one event loop with `asyncio.gather`.
 - Output routing: `sys.stdout`/`stderr`/`display` replaced once by a proxy that writes to the
   stream of the cell in a `contextvars.ContextVar`; events carry the cell id (as `cellId` does now).
-- Interrupt cancels the wave (`KeyboardInterrupt` to the main thread; worker threads checked via
+- Interrupt cancels the group (`KeyboardInterrupt` to the main thread; worker threads checked via
   `sys.monitoring` or left to finish, see questions).
 - Optional verify: fingerprint (id, len, buffer hash for arrays) of every shared name read in the
-  wave, before and after; a change marks the wave's cells stale with a "concurrent write detected"
+  group, before and after; a change marks the group's cells stale with a "concurrent write detected"
   note and makes them exclusive next time.
 
 ## UI
 
-- Running cells of a wave show their bars together (existing per-cell status, no new widgets).
-- Later: status bar `wave 3/7 · 4 running`; per-cell override `# %% [exclusive]`.
+- Running cells of a group show their bars together (existing per-cell status, no new widgets).
+- Later: status bar `group 3/7 · 4 running`; per-cell override `# %% [exclusive]`.
 - Debugger: arming it makes the run sequential.
 
 ## Evaluation (paper)
@@ -87,7 +87,7 @@ R(A) ∩ W(B) = W(A) ∩ R(B) = W(A) ∩ W(B) = ∅. Reads of shared objects are
 ## Decided
 
 - Threads in the one kernel. `:set concurrent` is orthogonal to lazy / reactive.
-- Pure lists and effect calls in `effects.json`.
+- Pure lists, effect calls and graph's mutating methods in `calls.json`.
 - Interrupt: async `KeyboardInterrupt` into each worker thread.
 - Top-level `await` and magic cells are exclusive in v1.
 - Outputs live per cell, so finish order does not affect the file.
