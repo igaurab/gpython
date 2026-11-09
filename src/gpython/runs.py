@@ -50,15 +50,15 @@ class BatchRun:
                 return batch, pending[index + 1 :]
         return batch, []
 
-    def items(self, batch: list[str]) -> list[tuple[str, str, list[str]]]:
-        """What the kernel runs: (cell id, source, names to drop first) per cell."""
-        items = []
-        for cid in batch:
-            cell = self.by_id[cid]
-            self.sources[cid] = cell.source
-            cell.echo_suppressed = ends_with_string(cell.source)
-            items.append((cid, cell.source, sorted(cell.last_defs | self.graph.defs[cid])))
-        return items
+    def items(self, batch: list[str]) -> list[list[tuple[str, str, list[str]]]]:
+        """What the kernel runs: groups of (cell id, source, names to drop first), one cell each."""
+        return [[self.item(cid)] for cid in batch]
+
+    def item(self, cid: str) -> tuple[str, str, list[str]]:
+        cell = self.by_id[cid]
+        self.sources[cid] = cell.source
+        cell.echo_suppressed = ends_with_string(cell.source)
+        return cid, cell.source, sorted(cell.last_defs | self.graph.defs[cid])
 
     def event(self, cid: str, event: str, payload: dict) -> None:
         if event == "begin":

@@ -67,7 +67,7 @@ def test_run_batch_runs_cells_in_order_and_stops_at_the_first_failure():
                 ("d", "print('never')", []),
             ]
             clean = await k.run_batch(
-                cells,
+                [[cell] for cell in cells],
                 lambda cid, event, payload: events.append((cid, event, payload.get("ok"))),
                 lambda cid, kind, content: outputs.append((cid, kind, content.get("text") or content.get("data", {}).get("text/plain") or content.get("ename"))),
             )
@@ -78,7 +78,7 @@ def test_run_batch_runs_cells_in_order_and_stops_at_the_first_failure():
                 ("c", "error", "ZeroDivisionError"),
             ]
             assert await k.variables({"x", "y"}) == [["x", "int", "1", "", "data"], ["y", "int", "2", "", "data"]]
-            await k.run_batch([("e", "x = 5", ["x", "y"])], lambda *a: None, lambda *a: None)
+            await k.run_batch([[("e", "x = 5", ["x", "y"])]], lambda *a: None, lambda *a: None)
             assert await k.variables({"x", "y"}) == [["x", "int", "5", "", "data"]]
             assert await k.execute("import asyncio\nawait asyncio.sleep(0)\nx", lambda kind, c: outputs.append(("f", kind, c.get("data", {}).get("text/plain"))))
             assert outputs[-1] == ("f", "execute_result", "5")
@@ -95,7 +95,7 @@ def test_run_batch_interrupt_stops_a_blocking_cell_and_the_rest_of_the_batch():
         try:
             events, outputs = [], []
             batch = k.run_batch(
-                [("a", "import time\nprint('start')\ntime.sleep(30)", []), ("b", "print('b')", [])],
+                [[("a", "import time\nprint('start')\ntime.sleep(30)", [])], [("b", "print('b')", [])]],
                 lambda cid, event, payload: events.append((cid, event, payload.get("ok"))),
                 lambda cid, kind, content: outputs.append((cid, kind, content.get("text") or content.get("ename"))),
             )
