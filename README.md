@@ -85,7 +85,8 @@ marimo notebooks (`@app.cell`) and `.ipynb`; see [Files](#files).
 Three modes, shown in the top bar: **INSERT** (typing), **NORMAL** (vim keys in
 the editor) and **CELL** (Jupyter's command mode: the whole cell is selected and
 keys act on cells). `escape` goes INSERT → NORMAL → CELL; `enter` or `i` goes back
-into the editor. Clicking a cell's header selects it. `f1` (or `?` in cell mode)
+into the editor. Clicking a cell's header selects it; in cell mode any click only
+selects the cell it lands on. `f1` (or `?` in cell mode)
 shows every key; the list lives in `src/gpython/keymap.py`.
 
 The editor is vim: where an app shortcut and a vim key collide, vim wins inside the
@@ -208,7 +209,7 @@ whole cells), `q:`, `gn`.
 Cell mode. Whether you are in cell mode or in the editor is one choice for the whole
 notebook: moving across a rendered markdown or hidden-code cell (which is always
 selected as a cell), deleting, undoing, searching or switching tabs keeps it; `escape`,
-`enter`/`i` and clicks change it.
+`enter`/`i` and a click inside an editor while editing change it.
 
 | Key | Action |
 |---|---|
@@ -223,7 +224,7 @@ selected as a cell), deleting, undoing, searching or switching tabs keeps it; `e
 | `m` / `y` | Markdown / code cell |
 | `h` | Hide / show the cell's code (marimo `hide_code`) |
 | `c` / `C` | Collapse output / clear output |
-| `v` | View the cell's image (a matplotlib figure) full screen: `+` `-` zoom, `0` fit, `1` actual size, `h j k l` pan, `n` `p` next / previous image, `s` save as PNG, `o` open in the browser, `q` closes |
+| `v` | View the cell's image (a matplotlib figure) full screen (the bottom bar offers it when the selected cell has one): `+` `-` zoom, `0` fit, `1` actual size, `h j k l` pan, `n` `p` next / previous image, `s` save as PNG, `o` open in the browser, `q` closes |
 | `l` | Toggle line numbers |
 | `t` | Show / hide each cell's run time in its header (off by default; `:set time`, `timing = true` in the config) |
 | `gt` / `gT` | Next / previous tab |

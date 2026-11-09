@@ -227,3 +227,19 @@ def test_img_all_covers_every_cell(tmp_path, monkeypatch):
         assert (tmp_path / "only-c2.png").read_bytes() == SECOND
 
     ui(tmp_path, test)
+
+
+def test_status_bar_offers_v_when_the_selected_cell_has_an_image(tmp_path):
+    async def test(app, pilot):
+        assert app.ui_mode == "cell" and "v  view image" in app._status.mode.plain
+        await pilot.press("j")
+        await pilot.pause()
+        assert "view image" not in app._status.mode.plain
+        await pilot.press("k")
+        await pilot.pause()
+        assert "v  view image" in app._status.mode.plain
+        await pilot.press("i")
+        await pilot.pause()
+        assert "view image" not in app._status.mode.plain
+
+    ui(tmp_path, test)

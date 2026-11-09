@@ -216,8 +216,29 @@ def test_click_anywhere_in_cell_focuses_it():
             await pilot.click(first, offset=(3, 0))
             assert app.focused is first and app.ui_mode == "cell"
             await pilot.click(first.editor)
+            assert app.focused is first and app.ui_mode == "cell"
+            await pilot.press("i")
             assert app.focused is first.editor
             await pilot.click("#cells", offset=(10, 25))
+            assert app.focused is second.editor
+
+    asyncio.run(main())
+
+
+def test_click_in_cell_mode_selects_the_cell_and_keeps_cell_mode():
+    async def main():
+        app = GPython(None)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.press("escape", "ctrl+n", "escape", "escape")
+            first, second = app.cells()
+            assert app.focused is second and app.ui_mode == "cell"
+            await pilot.click(first.editor)
+            assert app.focused is first and app.ui_mode == "cell"
+            await pilot.click(first.editor)
+            assert app.focused is first and app.ui_mode == "cell"
+            await pilot.press("i")
+            assert app.focused is first.editor
+            await pilot.click(second.editor)
             assert app.focused is second.editor
 
     asyncio.run(main())

@@ -54,6 +54,7 @@ AUTOINSTALL_MESSAGE = (
     "(uv pip install). Then the cell runs again. Use :set noautoinstall to ask first."
 )
 ASK_INSTALL_MESSAGE = "If a module is missing, gpython asks first. Press enter to install it, or esc to skip. Use :set autoinstall to install without a question."
+IMAGE_HINT = "v  view image full screen"
 _MODE_STYLES = {
     "insert": f"bold black on {INSERT_COLOR}",
     "normal": f"bold black on {MODE_CURSOR_COLORS['normal']}",
@@ -271,7 +272,7 @@ class GPython(App):
         self._kernel_chip: Static | None = None
         self._chip_key: tuple | None = None
         self._status: StatusBar | None = None
-        self._status_mode: str | None = None
+        self._status_mode: tuple[str, str] | None = None
         self._mode_chip: Static | None = None
         self._mode_chip_mode: str | None = None
         self._status_key: tuple | None = None
@@ -522,7 +523,8 @@ class GPython(App):
         if pane.debug is not None and mode in ("normal", "cell"):
             mode = "debug"
         name = pane.title
-        key = (mode, VimTextArea.enabled, name, pane.kernel_state, pane.kernel_label)
+        hint = IMAGE_HINT if mode == "cell" and getattr(self.focused, "has_images", False) else ""
+        key = (mode, hint, VimTextArea.enabled, name, pane.kernel_state, pane.kernel_label)
         if key == self._status_key:
             return
         self._status_key = key
@@ -544,9 +546,10 @@ class GPython(App):
                 text = Text.assemble((" EDIT ", _MODE_STYLES["insert"]), (f" {chip_mode.upper()}", _CHIP_VIM_STYLES[chip_mode]))
             self._mode_chip.update(text, layout=False)
         bar_mode = mode if VimTextArea.enabled or mode in ("cell", "files", "outline", "vars", "debug") else ""
-        if self._status is not None and bar_mode != self._status_mode:
-            self._status_mode = bar_mode
-            self._status.set_mode(Text(f" {bar_mode.upper()} ", style=_MODE_STYLES[bar_mode]) if bar_mode else None)
+        if self._status is not None and (bar_mode, hint) != self._status_mode:
+            self._status_mode = (bar_mode, hint)
+            badge = Text(f" {bar_mode.upper()} ", style=_MODE_STYLES[bar_mode]) if bar_mode else Text("")
+            self._status.set_mode(Text.assemble(badge, ("  " + hint, "dim")) if hint else badge if bar_mode else None)
 
     def set_status_bar(self, on: bool) -> None:
         """:set statusbar|nostatusbar: show or hide the bottom bar; saved as `status_bar`."""

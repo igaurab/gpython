@@ -194,6 +194,10 @@ class OutputArea(Vertical):
         """The PNG bytes of every image block, in order."""
         return [block.gp_png for block in self._blocks if getattr(block, "gp_png", None)]
 
+    @property
+    def has_images(self) -> bool:
+        return any(getattr(block, "gp_png", None) for block in self._blocks)
+
     def clear(self) -> None:
         self._clear_pending = False
         self._cancel_timer()
@@ -287,6 +291,8 @@ class OutputArea(Vertical):
             widget = imageview.ImageCard(png, classes="output-image")
         widget.gp_png = png
         self._mount_rich(widget)
+        if getattr(self.app.focused, "output_box", None) is self:
+            self.app.update_status()
 
     def _mount_block(self, widget: Widget) -> None:
         self.display = True

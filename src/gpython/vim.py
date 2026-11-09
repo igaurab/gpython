@@ -873,6 +873,15 @@ class VimTextArea(TextArea):
         self.app.cell_mode = False
         return super().focus(scroll_visible)
 
+    def focus_on_click(self) -> bool:
+        """In cell mode a click selects the cell (`Cell.on_click`) instead of opening its editor."""
+        return not self.app.cell_mode
+
+    async def _on_mouse_down(self, event: events.MouseDown) -> None:
+        if self.app.cell_mode:
+            return
+        await super()._on_mouse_down(event)
+
     def _on_focus(self, event: events.Focus) -> None:
         super()._on_focus(event)
         self._apply_mode()

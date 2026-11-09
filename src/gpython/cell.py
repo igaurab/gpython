@@ -630,6 +630,13 @@ class Cell(Vertical):
         return shown + (self._outputs.images if self._outputs is not None else [])
 
     @property
+    def has_images(self) -> bool:
+        """Whether `v` has anything to show, without decoding or copying a picture."""
+        if self._outputs is not None and self._outputs.has_images:
+            return True
+        return self._view is not None and bool(self._view.pictures)
+
+    @property
     def last_error(self) -> dict | None:
         return self.state.last_error
 
@@ -975,8 +982,9 @@ class Cell(Vertical):
         self.focus(scroll_visible=False)
 
     def on_click(self, event) -> None:
-        """Clicking the header (or rendered markdown) selects the cell; anywhere else focuses its editor."""
-        if event.widget is self or self.editor_hidden:
+        """Clicking the header (or rendered markdown) selects the cell; anywhere else focuses its
+        editor, except in cell mode, where any click only selects the cell."""
+        if event.widget is self or self.editor_hidden or self.app.cell_mode:
             self.focus(scroll_visible=False)
         else:
             self.app.cell_mode = False
