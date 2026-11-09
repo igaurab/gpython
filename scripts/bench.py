@@ -1,6 +1,6 @@
 """Headless performance benchmark for gpython.
 
-    uv run python3 scripts/bench.py [--cells N] [--json] [--profile keys|mount|moves|stream]
+    uv run python scripts/bench.py [--cells N] [--json] [--profile keys|mount|moves|stream]
 
 Prints one `name<TAB>seconds` row per metric (or a JSON dict with --json).
 """

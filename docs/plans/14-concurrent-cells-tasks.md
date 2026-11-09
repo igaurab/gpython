@@ -13,13 +13,13 @@ a set of cells that run at the same time; groups run one after another.
 
 ## Global constraints
 
-- No comments in code (CLAUDE.md). `uv run python3`, `uv run pytest -q`.
+- No comments in code (CLAUDE.md). `uv run python`, `uv run pytest -q`.
 - Static tables in `src/gpython/calls.json`, loaded on first use and cached (like `packages.json`):
   `mutating_methods` (graph.py, staleness; today's `_MUTATORS`), `pure_builtins`, `pure_methods`,
   `pure_functions`, `effect_calls` (concurrency.py).
 - Nothing imported or computed when `concurrent` is off; `concurrency` imported inside the function
   that first needs it. The sequential `_gp_run` path is not changed.
-- Before touching `app.py` / `pane.py`: `uv run python3 scripts/bench.py` twice, keep numbers;
+- Before touching `app.py` / `pane.py`: `uv run python scripts/bench.py` twice, keep numbers;
   again at the end. `first_paint`, `keys_30_net`, `moves_30_proc`, `loaded_60` must not regress.
 - Wrong "dependent" is acceptable; wrong "independent" is a bug. Every doubt is a write.
 

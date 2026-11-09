@@ -50,11 +50,11 @@ Rules:
    `GPython.cells()`, `GPython.current_cell()`, `GPython.run_cells()`, `GPython.kernel`,
    `GPython.markers`, `GPython.lazy`, messages `VimTextArea.EdgeReached / ExCommand / ModeChanged`,
    the `Prompt` modal screen, `CompletionPopup`.
-4. Always use `uv run python3 ...` (never bare `python`). Tests: `uv run python3 -m pytest -q`
+4. Always use `uv run python ...` (never bare `python`). Tests: `uv run python -m pytest -q`
    (about 90 s; kernel tests dominate). Run a single file while iterating:
-   `uv run python3 -m pytest -q tests/test_vim.py`.
+   `uv run python -m pytest -q tests/test_vim.py`.
 5. All existing tests must pass when you finish, plus the new tests your plan names.
-6. Benchmark before/after with `uv run python3 scripts/bench.py` (created by plan 01). No metric
+6. Benchmark before/after with `uv run python scripts/bench.py` (created by plan 01). No metric
    may regress by more than 10 % in plans 02–04; report the table in your final message.
 7. Do not add dependencies. Available: textual 8.2.8 (`textual[syntax]`, so tree-sitter
    languages incl. `python` and `markdown`), rich, textual-image, pillow, jupyter_client, ipykernel.

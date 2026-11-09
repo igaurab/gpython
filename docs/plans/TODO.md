@@ -1,11 +1,11 @@
 # gpython – open items (updated 2026-10-30)
 
 State: plans 01–07 implemented (07 = file explorer, splits, tabs; see `docs/plans/07-windows.md`),
-204 tests green (`uv run python3 -m pytest -q`, ~110 s). Read `docs/plans/README.md` first.
+204 tests green (`uv run python -m pytest -q`, ~110 s). Read `docs/plans/README.md` first.
 
 ## 1. Performance (rounds 2 and 3 done 2026-10-30; what is left is Textual-internal)
 
-`uv run python3 scripts/bench.py`, headless, 60 cells, quiet machine (never while the test
+`uv run python scripts/bench.py`, headless, 60 cells, quiet machine (never while the test
 suite runs: every number doubles). "before" = main cad579e. A run takes ~2.5 s since
 2026-10-30, when the pilot's idle-poll tick was cut from 20 ms to 2 ms (`use_fast_idle_tick`
 in the script): the poll's wakeups used to land inside the measured spans, so the keys and
@@ -228,7 +228,7 @@ What the refactor touches (about a day, plan it in `docs/plans/09-virtual-cells.
 
 ### Memory (2026-10-30): two leaks fixed, what a cell costs, what is left
 
-`uv run python3 scripts/memprof.py` (headless, 60 cells, tracemalloc + live object counts
+`uv run python scripts/memprof.py` (headless, 60 cells, tracemalloc + live object counts
 per phase; `--who` walks the referrers of a removed cell or pane that is still alive;
 `--no-trace` for honest RSS, tracemalloc's bookkeeping roughly doubles it). `tests/test_memory.py`
 guards both fixes.

@@ -1,6 +1,6 @@
 """Headless memory profile for gpython: where the bytes go and what does not come back.
 
-    uv run python3 scripts/memprof.py [--cells N] [--cycles N] [--top N] [--who]
+    uv run python scripts/memprof.py [--cells N] [--cycles N] [--top N] [--who]
 
 Every phase prints the process RSS, the Python heap (tracemalloc) and the change in live
 counts of the app's own object types; phases that should be neutral (add then delete, run

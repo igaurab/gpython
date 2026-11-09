@@ -185,14 +185,14 @@ block; images are one widget each.
 
 ```
 ./scripts/eval.sh                                     # the gpy / JupyterLab / marimo comparison, chart and meta.json → docs/benchmarks/
-uv run python3 scripts/bench.py                       # headless: first paint, keys, moves, 60-cell load
-uv run python3 scripts/bench.py --cells 500           # the same at 500 cells
-uv run python3 scripts/ptybench.py                    # a real launch in a pseudo-terminal
-uv run python3 scripts/warmbench.py --tools gpy       # launch → first/last cell, real pty
+uv run python scripts/bench.py                       # headless: first paint, keys, moves, 60-cell load
+uv run python scripts/bench.py --cells 500           # the same at 500 cells
+uv run python scripts/ptybench.py                    # a real launch in a pseudo-terminal
+uv run python scripts/warmbench.py --tools gpy       # launch → first/last cell, real pty
 uv run --with jupyterlab --with marimo python3 scripts/warmbench.py --runs 3
 uv run --with jupyterlab --with marimo python3 scripts/membench.py
-uv run python3 scripts/kernelbench.py
-uv run python3 scripts/memprof.py --who               # where the bytes go, what stays alive
+uv run python scripts/kernelbench.py
+uv run python scripts/memprof.py --who               # where the bytes go, what stays alive
 ```
 
 Never run a benchmark while the tests run.

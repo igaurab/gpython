@@ -2,7 +2,7 @@
 
 Terminal notebook built on Textual. `uv run pytest -q` runs the tests in parallel (pytest-xdist,
 `-n auto` set in pyproject.toml; under a minute on 14 workers, `-n 0` runs them serially in ~5 min);
-`uv run python3 scripts/bench.py` is the headless benchmark and `uv run python3 scripts/ptybench.py`
+`uv run python scripts/bench.py` is the headless benchmark and `uv run python scripts/ptybench.py`
 times a real launch in a pseudo-terminal. Never run a benchmark while the tests run.
 
 ## Rules for every agent
@@ -11,12 +11,12 @@ times a real launch in a pseudo-terminal. Never run a benchmark while the tests 
   shell scripts (the shebang is fine). Explain with names, small functions and docstrings;
   anything that needs more goes in `docs/plans/`. The repo was stripped of comments on
   2026-10-30; keep it that way.
-- Always use `uv run python3`.
+- Always use `uv run python`.
 - Plans: extremely concise; end with unresolved questions.
 - Performance is a feature. gpython must feel instant: a keystroke paints in under 10 ms,
   the first frame is on screen within ~0.3 s of launch, a cell move costs under 20 ms of CPU.
   Before changing `app.py`, `pane.py`, `cell.py`, `vim.py`, `outputs.py` or `app.tcss`, run
-  `uv run python3 scripts/bench.py` twice and keep the numbers; run it again when done. A
+  `uv run python scripts/bench.py` twice and keep the numbers; run it again when done. A
   feature that makes `first_paint`, `keys_30_net`, `moves_30_proc` or `loaded_60` worse is not
   finished: profile it (`--profile keys|mount|moves`) and fix it, or ask before merging.
   Things that cost the most, learned the hard way (details in `docs/plans/TODO.md` §1):

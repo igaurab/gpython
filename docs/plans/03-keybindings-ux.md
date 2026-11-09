@@ -203,7 +203,7 @@ Use a 3-cell notebook without waiting for the kernel where possible (most of the
 12. `:set nu`/`:set nonu` toggles `show_line_numbers` on all editors and writes `line_numbers` to the config
     (XDG_CONFIG_HOME = tmp_path).
 
-Run `uv run python3 scripts/bench.py` – no metric regresses > 10 %; paste the table.
+Run `uv run python scripts/bench.py` – no metric regresses > 10 %; paste the table.
 
 ## Report
 

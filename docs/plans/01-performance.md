@@ -22,7 +22,7 @@ Targets (headless, 60 cells × 10 lines, terminal size 140×45, Apple Silicon):
 
 ## Step 0 – benchmark script (do this first)
 
-Create `scripts/bench.py` (runnable with `uv run python3 scripts/bench.py [--cells N] [--json]`).
+Create `scripts/bench.py` (runnable with `uv run python scripts/bench.py [--cells N] [--json]`).
 It must:
 
 1. Build a temp notebook with N cells (default 60), each `v{i} = {i}\nprint(v{i})` followed by 8
@@ -168,7 +168,7 @@ Profile the 30-key press with cProfile sorted by `tottime` and by `cumtime`. Kno
 - `tests/test_app.py`: keep all existing tests; add `test_progressive_mount_order(tmp_path)`: 40-cell
   file, `await app.loaded.wait()`, `[c.source for c in app.cells()]` equals the file order; and
   `test_focus_class_moves`: after `action_focus_cell(1)` exactly one `Cell` has class `-focused`.
-- All tests green: `uv run python3 -m pytest -q`.
+- All tests green: `uv run python -m pytest -q`.
 
 ## Report
 

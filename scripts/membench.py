@@ -1,9 +1,9 @@
 """Memory and idle CPU of gpy, JupyterLab and marimo, each with its kernel running.
 
-    uv run python3 scripts/membench.py gpy [--cells N]
+    uv run python scripts/membench.py gpy [--cells N]
     uv run --with jupyterlab python3 scripts/membench.py lab
     uv run --with marimo python3 scripts/membench.py marimo
-    uv run python3 scripts/membench.py cache
+    uv run python scripts/membench.py cache
 
 Each tool's process tree is measured after it settles: RSS per process (shared libraries are
 counted in every process, so totals run high) and CPU over five idle seconds. gpy runs in a

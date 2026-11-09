@@ -1,6 +1,6 @@
 """Launch ./gpython in a pseudo-terminal, the way a real terminal would, and time it.
 
-    uv run python3 scripts/ptybench.py [--cells N] [--runs N]
+    uv run python scripts/ptybench.py [--cells N] [--runs N]
 
 Per run: `first_bytes` (the terminal driver starts), `first_frame` (the first cell is fully
 on screen), `first_frame_quiet` (nothing painted for 250 ms: all cells mounted) and the

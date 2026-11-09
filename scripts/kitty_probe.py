@@ -1,6 +1,6 @@
 """Show how this terminal places kitty graphics, to debug image output in a new terminal.
 
-    uv run python3 scripts/kitty_probe.py
+    uv run python scripts/kitty_probe.py
 
 Draws a row ruler and five small images, each with a label saying where it should be:
 
