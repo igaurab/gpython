@@ -905,9 +905,14 @@ class NotebookPane(Vertical):
         self._refresh_variables()
 
     def _offer_debugger(self, cell: Cell) -> None:
-        """Under a traceback raised in the cell's own code: how to open the debugger where it failed."""
+        """Under a traceback: the fix for an error that has one well-known fix, else (raised in
+        the cell's own code) how to open the debugger where it failed."""
+        from . import hints
+
         error = cell.last_error or {}
-        if error.get("ename") in DEBUGGABLE_ERRORS:
+        if (hint := hints.event_loop(error, cell.source)) is not None:
+            cell.show_hint(hint)
+        elif error.get("ename") in DEBUGGABLE_ERRORS:
             cell.show_hint(":debug or r d opens the debugger where it failed: the loops, the indexes, the values")
 
     def _input_requested(self, cell: Cell, prompt: str, password: bool) -> None:
