@@ -4,7 +4,8 @@ Normal mode follows vim: h j k l w b e W B E ge gE 0 ^ $ g_ gm | _ + - H M L gg 
 f F t T ; , % ( ) { } [( [{ ]) ]} [[ ]] [] ][ [m ]m, counts, i a I A gi gI o O R
 r x X s S D C Y p P gp gP J gJ ~ u U ctrl+r . & g&, the operators d c y > < = g~
 gu gU g? gq gw with any motion or text object (iw aw iW aW ip ap is as i" a" i' a'
-i` a` i( a( ib i[ a[ i{ a{ iB i< a<), marks, registers ("a "A "_ "0 "1-"9 "- ". "+),
+i` a` i( a( ib ab i[ a[ i{ a{ iB aB i< a< it at, all with counts; cw acts like ce),
+marks, registers ("a "A "_ "0 "1-"9 "- ". "+),
 macros, the jump list (ctrl+o, tab, '' ``), the change list (g; g,), scrolling
 (ctrl+d ctrl+u ctrl+f ctrl+b ctrl+e ctrl+y zz zt zb z. z<enter> z-), ZZ ZQ, @:,
 ga, gd, ctrl+g, ctrl+a ctrl+x. v, V and ctrl+v start charwise, linewise and
@@ -52,6 +53,8 @@ _INSERT_CTRL = frozenset(("ctrl+w", "ctrl+u", "ctrl+t", "ctrl+d", "ctrl+r", "ctr
 _BRACKET_MOTIONS = {"[(": "()", "[{": "{}", "])": "()", "]}": "{}"}
 _DEFINITION = re.compile(r"\s*(async\s+def|def|class)\b")
 _SENTENCE_START = re.compile(r"(?<=[.!?])[)\]\"']*\s+(?=\S)|\n[ \t]*\n\s*(?=\S)")
+_TAG = re.compile(r"<(/?)([A-Za-z][^\s/<>]*)[^<>]*?(/?)>")
+_GROWING_OBJECTS = frozenset((*_PAIRS, "t"))
 TEXT_WIDTH = 79
 CELL_MODE_COLOR = "#38bdf8"
 INSERT_COLOR = "#a3e635"
@@ -117,6 +120,43 @@ def _rot13_table() -> dict[int, int]:
 
 def rot13(text: str) -> str:
     return text.translate(_rot13_table())
+
+
+def _char_class(char: str, big: bool) -> int:
+    """0 for white space, 1 for word characters (any non-blank when `big`), 2 for other punctuation."""
+    if char.isspace():
+        return 0
+    return 1 if big or char.isalnum() or char == "_" else 2
+
+
+def _runs(classes: list) -> list[tuple[int, int, bool]]:
+    """Stretches of equal consecutive values as (start, end, blank); a falsy value is blank."""
+    runs: list[tuple[int, int, bool]] = []
+    for index, value in enumerate(classes):
+        if runs and classes[index - 1] == value:
+            runs[-1] = (runs[-1][0], index + 1, runs[-1][2])
+        else:
+            runs.append((index, index + 1, not value))
+    return runs
+
+
+def _run_span(runs: list[tuple[int, int, bool]], index: int, around: bool, n: int) -> tuple[int, int]:
+    """Vim's rule for iw/aw, is/as and ip/ap over alternating objects and blanks: the inner form
+    takes n runs starting with the one at `index`; the around form takes n objects each with the
+    blank run after it (before it when the cursor starts on a blank), and when no blank follows
+    the last object it takes the blank run before the first one instead."""
+    last = len(runs) - 1
+    start = runs[index][0]
+    if not around:
+        return start, runs[min(index + n - 1, last)][1]
+    stop = min(index + 2 * n - 1, last)
+    if not runs[index][2] and not runs[stop][2] and index and runs[index - 1][2]:
+        start = runs[index - 1][0]
+    return start, runs[stop][1]
+
+
+def _run_at(runs: list[tuple[int, int, bool]], position: int) -> int:
+    return next(i for i, (start, end, _) in enumerate(runs) if start <= position < end)
 
 
 def vim_regex(pattern: str) -> str:
@@ -2066,89 +2106,63 @@ class VimTextArea(TextArea):
 
 
     def _text_object(self, spec: str, n: int = 1) -> tuple[Location, Location, bool] | None:
-        """iw aw iW aW ip ap i" a" i' a' i( a( ib i[ a[ i{ a{ iB i< a<: (start, end, linewise).
-
-        `end` is exclusive; linewise objects span whole lines. None when there is no such object here.
-        A count on a bracket object takes the n-th enclosing pair (2i( is the pair around the pair).
-        """
+        """iw aw iW aW is as ip ap i" a" i' a' i` a` i( a( ib ab i[ a[ i{ a{ iB aB i< a< it at:
+        (start, end, linewise), `end` exclusive; linewise objects span whole lines. None when
+        there is no such object here. The count takes n words, sentences or paragraphs (around
+        forms with the blanks between them) or the n-th enclosing bracket pair or tag."""
         if len(spec) != 2:
             return None
         around, kind = spec[0] == "a", spec[1]
         row, col = self.cursor_location
         line = self.document.get_line(row)
         if kind in "wW":
-            return self._word_object(row, col, line, around, kind == "W")
+            return self._word_object(row, col, line, around, kind == "W", n)
         if kind == "p":
-            return self._paragraph_object(row, around)
+            return self._paragraph_object(row, around, n)
         if kind == "s":
-            return self._sentence_object(around)
+            return self._sentence_object(around, n)
+        if kind == "t":
+            return self._tag_object(around, n)
         if kind in _QUOTES:
             return self._quote_object(row, col, line, kind, around)
         if kind in _PAIRS:
             return self._bracket_object(_PAIRS[kind], around, n)
         return None
 
-    def _word_object(self, row: int, col: int, line: str, around: bool, big: bool):
+    def _word_object(self, row: int, col: int, line: str, around: bool, big: bool, n: int = 1):
+        """iw aw iW aW on one line: words and white space runs are the alternating objects."""
         if not line:
             return None
-        col = min(col, len(line) - 1)
-
-        def kind(char: str) -> int:
-            if char.isspace():
-                return 0
-            return 1 if big or char.isalnum() or char == "_" else 2
-
-        here = kind(line[col])
-        start, end = col, col + 1
-        while start > 0 and kind(line[start - 1]) == here:
-            start -= 1
-        while end < len(line) and kind(line[end]) == here:
-            end += 1
-        if around and here:
-            trailing = end
-            while trailing < len(line) and line[trailing].isspace():
-                trailing += 1
-            if trailing > end:
-                end = trailing
-            else:
-                while start > 0 and line[start - 1].isspace():
-                    start -= 1
-        elif around and end < len(line):
-            following = kind(line[end])
-            while end < len(line) and kind(line[end]) == following:
-                end += 1
+        runs = _runs([_char_class(char, big) for char in line])
+        start, end = _run_span(runs, _run_at(runs, min(col, len(line) - 1)), around, n)
         return (row, start), (row, end), False
 
-    def _paragraph_object(self, row: int, around: bool):
-        last = self.document.line_count - 1
-        blank = self._blank(row)
-        top = bottom = row
-        while top > 0 and self._blank(top - 1) == blank:
-            top -= 1
-        while bottom < last and self._blank(bottom + 1) == blank:
-            bottom += 1
-        if around:
-            if bottom < last:
-                bottom += 1
-                while bottom < last and self._blank(bottom + 1) != blank:
-                    bottom += 1
-            elif not blank:
-                while top > 0 and self._blank(top - 1):
-                    top -= 1
+    def _paragraph_object(self, row: int, around: bool, n: int = 1):
+        """ip ap: paragraphs and runs of blank lines are the alternating objects; always linewise."""
+        runs = _runs([not self._blank(r) for r in range(self.document.line_count)])
+        top, stop = _run_span(runs, _run_at(runs, row), around, n)
+        bottom = stop - 1
         return (top, 0), (bottom, len(self.document.get_line(bottom))), True
 
-    def _sentence_object(self, around: bool):
-        """is / as: the sentence under the cursor; as also takes the white space after it."""
+    def _sentence_object(self, around: bool, n: int = 1):
+        """is as: sentences and the white space between them are the alternating objects."""
         text = self.text
         here = self._offset(self.cursor_location)
         starts = [0] + [match.end() for match in _SENTENCE_START.finditer(text)]
-        start = max(s for s in starts if s <= here)
-        end = min((s for s in starts if s > here), default=len(text))
-        if not around:
-            end = start + len(text[start:end].rstrip())
+        classes: list[bool] = []
+        for start, following in zip(starts, starts[1:] + [len(text)]):
+            body = len(text[start:following].rstrip())
+            classes += [True] * body + [False] * (following - start - body)
+        if here >= len(classes):
+            return None
+        runs = _runs(classes)
+        start, end = _run_span(runs, _run_at(runs, here), around, n)
         return self._location(start), self._location(end), False
 
     def _quote_object(self, row: int, col: int, line: str, quote: str, around: bool):
+        """i" a" i' a' i` a` on one line, pairing quotes from the line start like vim; a quote
+        object after the cursor is taken when the cursor is not inside one. The around form
+        takes the white space after the closing quote, or before the opening one if there is none."""
         marks = [i for i, char in enumerate(line) if char == quote and (i == 0 or line[i - 1] != "\\")]
         pairs = list(zip(marks[0::2], marks[1::2]))
         chosen = next((p for p in pairs if p[0] <= col <= p[1]), None) or next((p for p in pairs if p[0] > col), None)
@@ -2157,10 +2171,41 @@ class VimTextArea(TextArea):
         first, second = chosen
         if not around:
             return (row, first + 1), (row, second), False
-        end = second + 1
+        start, end = first, second + 1
         while end < len(line) and line[end] in " \t":
             end += 1
-        return (row, first), (row, end), False
+        if end == second + 1:
+            while start > 0 and line[start - 1] in " \t":
+                start -= 1
+        return (row, start), (row, end), False
+
+    def _tag_object(self, around: bool, n: int = 1):
+        """it at: the n-th innermost <tag>...</tag> element around the cursor, across lines;
+        self-closing tags are skipped and the cursor may sit on either tag."""
+        text = self.text
+        here = self._offset(self.cursor_location)
+        elements: list[tuple[int, int, int, int]] = []
+        open_tags: list[tuple[str, int, int]] = []
+        for match in _TAG.finditer(text):
+            closing, name, self_closing = match.group(1), match.group(2).lower(), match.group(3)
+            if self_closing:
+                continue
+            if not closing:
+                open_tags.append((name, match.start(), match.end()))
+                continue
+            for depth in range(len(open_tags) - 1, -1, -1):
+                if open_tags[depth][0] == name:
+                    _, open_start, open_end = open_tags[depth]
+                    del open_tags[depth:]
+                    elements.append((open_start, open_end, match.start(), match.end()))
+                    break
+        enclosing = sorted((e for e in elements if e[0] <= here < e[3]), key=lambda e: e[3] - e[0])
+        if len(enclosing) < n:
+            return None
+        open_start, open_end, close_start, close_end = enclosing[n - 1]
+        if around:
+            return self._location(open_start), self._location(close_end), False
+        return self._location(open_end), self._location(close_start), False
 
     def _bracket_object(self, pair: str, around: bool, n: int = 1):
         row, col = self.cursor_location
@@ -2200,10 +2245,8 @@ class VimTextArea(TextArea):
         if linewise:
             self._apply_operator(op, start, end, True)
             return
-        if op == "c" and key in ("w", "W"):
-            self.move_cursor(start)
-            end = self._word_end(_WORD if key == "w" else _BIG_WORD)
-            end = (end[0], end[1] + 1)
+        if op == "c" and key in ("w", "W") and (word_end := self._change_word_end(start, key == "w", n)) is not None:
+            end = word_end
         elif key in ("w", "W") and end[0] > start[0]:
             end = max(start, (end[0] - 1, len(self.document.get_line(end[0] - 1))))
         elif end >= start and (key in _INCLUSIVE or (isinstance(key, tuple) and key[0] in "ft`")):
@@ -2215,6 +2258,21 @@ class VimTextArea(TextArea):
                 return
             end = (end[0] - 1, len(self.document.get_line(end[0] - 1)))
         self._apply_operator(op, start, end, False)
+
+    def _change_word_end(self, start: Location, small: bool, n: int) -> Location | None:
+        """cw cW inside a word work like ce cE: one past the end of the word under `start`, then
+        of n-1 more words. None on white space, where cw deletes like dw."""
+        pattern = _WORD if small else _BIG_WORD
+        row, col = start
+        here = next((m for m in pattern.finditer(self.document.get_line(row)) if m.start() <= col < m.end()), None)
+        if here is None:
+            return None
+        end = (row, here.end() - 1)
+        for _ in range(n - 1):
+            self.move_cursor(end)
+            end = self._word_end(pattern)
+        self.move_cursor(start)
+        return (end[0], end[1] + 1)
 
     def _object_operator(self, op: str, spec: str, n: int = 1) -> None:
         """An operator on a text object such as iw, a(, ip."""
@@ -2853,7 +2911,7 @@ class VimTextArea(TextArea):
                 self._visual_motion("g" + key, n)
             return True
         if pending in ("i", "a"):
-            self._visual_object(pending + key)
+            self._visual_object(pending + key, n)
             return True
         if pending in _FIND_KEYS:
             if len(key) == 1:
@@ -2963,16 +3021,46 @@ class VimTextArea(TextArea):
         self._show_visual()
         return True
 
-    def _visual_object(self, spec: str) -> None:
-        """iw, a(, ip, ... in visual mode: select the object (ip and ap switch to linewise)."""
-        found = self._text_object(spec)
+    def _visual_object(self, spec: str, n: int = 1) -> None:
+        """iw, a(, ip, ... in visual mode: select the object (ip and ap switch to linewise). Once
+        the selection is wider than one character, a word, sentence or paragraph object adds the
+        n objects after it and a bracket or tag object the selection already covers grows to the
+        next enclosing one, as in vim."""
+        found = self._text_object(spec, n)
         if found is None:
             return
         start, end, linewise = found
         if end <= start:
             return
+        low, high = sorted([self._anchor, self.cursor_location])
+        if low != high:
+            if spec[1] not in _GROWING_OBJECTS and spec[1] not in _QUOTES:
+                found = self._object_after(spec, high, n)
+            elif spec[1] in _GROWING_OBJECTS and low <= start and self._before(end) <= high:
+                found = self._text_object(spec, n + 1)
+            if found is None:
+                return
+            start, end, linewise = found
+            start = min(start, low)
         kind = "V" if linewise else self.visual
         self._enter_visual(kind, start, self._before(end) if not linewise else end)
+
+    def _object_after(self, spec: str, high: Location, n: int) -> tuple[Location, Location, bool] | None:
+        """The text object at the first position after `high` (the next line for a linewise one)."""
+        row, col = high
+        cursor = self.cursor_location
+        if spec[1] == "p":
+            following = (row + 1, 0)
+        elif col < len(self.document.get_line(row)):
+            following = (row, col + 1)
+        else:
+            following = (row + 1, 0)
+        if following[0] >= self.document.line_count:
+            return None
+        self.move_cursor(following)
+        found = self._text_object(spec, n)
+        self.move_cursor(cursor)
+        return found
 
     def _visual_operator(self, op: str, lines: bool) -> None:
         """y, d or c on the selection; `lines` makes it linewise like V (Y, D, X, C, S, R)."""

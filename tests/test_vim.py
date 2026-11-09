@@ -273,3 +273,89 @@ def test_equals_operator_reindents():
     assert run(messy, "j", "=", "=")[0] == "def f(x):\n    if x:\n            y = 1\n      return y"
     assert run(messy, "j", "=", "=", "j", ".")[0] == "def f(x):\n    if x:\n        y = 1\n      return y"
     assert run(messy, "G", "=", "=")[2] == (3, 4)
+
+
+def test_operators_on_text_objects():
+    assert run("foo bar baz", "w", "c", "i", "w", "X", "escape")[0] == "foo X baz"
+    assert run("foo bar baz", "w", "d", "i", "w")[0] == "foo  baz"
+    assert run("foo bar baz", "w", "d", "a", "w")[0] == "foo baz"
+    assert run("foo bar", "w", "d", "a", "w")[0] == "foo"
+    assert run("    foo", "$", "d", "a", "w")[0] == ""
+    assert run("foo   bar", "3", "l", "d", "i", "w")[0] == "foobar"
+    assert run("foo b.r baz", "f", "b", "d", "i", "W")[0] == "foo  baz"
+    assert run("foo b.r baz", "f", "b", "d", "a", "W")[0] == "foo baz"
+    assert run("foo bar", "y", "i", "w", "$", "p")[0] == "foo barfoo"
+    assert run("a\nb\n\nc", "d", "i", "p")[0] == "\nc"
+    assert run("a\nb\n\nc", "d", "a", "p")[0] == "c"
+    assert run("One two. Three four.", "d", "i", "s")[0] == " Three four."
+    assert run("One two. Three four.", "d", "a", "s")[0] == "Three four."
+    assert run("A b. C d.", "$", "d", "a", "s")[0] == "A b."
+    assert run("foo bar", "c", "i", "w", "X", "escape", "w", ".")[0] == "X X"
+
+
+def test_quote_and_bracket_objects():
+    assert run('x = "hello world"', "f", "h", "c", "i", '"', "y", "escape")[0] == 'x = "y"'
+    assert run('say "hi" now', "d", "i", '"')[0] == 'say "" now'
+    assert run('say "hi" now', "f", "h", "d", "a", '"')[0] == "say now"
+    assert run('say "hi"', "f", "h", "d", "a", '"')[0] == "say"
+    assert run("a 'b' c", "f", "b", "d", "a", "'")[0] == "a c"
+    assert run(r"x 'a\'b' y", "f", "a", "c", "i", "'", "z", "escape")[0] == "x 'z' y"
+    assert run("a `b c` d", "f", "b", "d", "i", "`")[0] == "a `` d"
+    assert run("f(a, (b, c))", "f", "b", "c", "i", "(", "z", "escape")[0] == "f(a, (z))"
+    assert run("f(a, (b, c))", "f", "a", "c", "i", "(", "z", "escape")[0] == "f(z)"
+    assert run("f(a, (b))", "f", ")", "d", "a", "(")[0] == "f(a, )"
+    assert run("f(ab)", "l", "d", "i", "(")[0] == "f()"
+    assert run("f()", "l", "c", "i", "(", "x", "escape")[0] == "f(x)"
+    assert run("f(\n    a,\n    b\n)", "j", "d", "i", "(")[0] == "f(\n)"
+    assert run("x[1, 2]", "f", "1", "d", "i", "[")[0] == "x[]"
+    assert run("a {b} c", "f", "b", "c", "a", "{", "z", "escape")[0] == "a z c"
+    assert run("f(a b)", "f", "a", "d", "i", "b")[0] == "f()"
+    assert run("f{a b}", "f", "a", "d", "a", "B")[0] == "f"
+    assert run("a <b c> d", "f", "b", "d", "i", "<")[0] == "a <> d"
+    assert run("foo bar", "c", "i", "(", "z", "escape")[0] == "foo bar"
+
+
+def test_tag_objects():
+    assert run("<a><b>x</b></a>", "f", "x", "d", "i", "t")[0] == "<a><b></b></a>"
+    assert run("<a><b>x</b></a>", "f", "x", "d", "a", "t")[0] == "<a></a>"
+    assert run("<a><b>x</b></a>", "f", "x", "d", "2", "i", "t")[0] == "<a></a>"
+    assert run("<a>xy</a>", "d", "i", "t")[0] == "<a></a>"
+    assert run("<a><br/>x</a>", "f", "x", "d", "i", "t")[0] == "<a></a>"
+    assert run("<a></a>", "c", "i", "t", "z", "escape")[0] == "<a>z</a>"
+    assert run('<a href="x/">y</a>', "f", "y", "d", "a", "t")[0] == ""
+    assert run("<div>\n  <p>x</p>\n</div>", "j", "f", "x", "d", "i", "t")[0] == "<div>\n  <p></p>\n</div>"
+    assert run("<div>\n  <p>x</p>\n</div>", "j", "f", "x", "d", "2", "a", "t")[0] == ""
+    assert run("foo bar", "d", "i", "t")[0] == "foo bar"
+
+
+def test_counted_word_sentence_and_paragraph_objects():
+    assert run("foo bar baz", "c", "2", "i", "w", "X", "escape")[0] == "Xbar baz"
+    assert run("foo bar baz", "2", "c", "i", "w", "X", "escape")[0] == "Xbar baz"
+    assert run("foo bar baz", "d", "3", "i", "w")[0] == " baz"
+    assert run("foo bar baz", "d", "2", "a", "w")[0] == "baz"
+    assert run("foo bar baz", "w", "d", "2", "a", "w")[0] == "foo"
+    assert run("a\n\nb\n\nc", "d", "2", "a", "p")[0] == "c"
+    assert run("a\n\nb\n\nc", "d", "2", "i", "p")[0] == "b\n\nc"
+    assert run("A b. C d. E f.", "d", "2", "a", "s")[0] == "E f."
+
+
+def test_change_word_acts_like_change_to_word_end():
+    assert run("foo bar", "c", "w", "X", "escape")[0] == "X bar"
+    assert run("foo bar", "2", "l", "c", "w", "X", "escape")[0] == "foX bar"
+    assert run("foo   bar", "3", "l", "c", "w", "X", "escape")[0] == "fooXbar"
+    assert run("foo bar baz", "c", "2", "w", "X", "escape")[0] == "X baz"
+    assert run("foo bar baz", "2", "c", "w", "X", "escape")[0] == "X baz"
+    assert run("a.b c.d e", "c", "2", "W", "X", "escape")[0] == "X e"
+
+
+def test_visual_text_objects():
+    assert run("foo bar baz", "w", "v", "i", "w", "d")[0] == "foo  baz"
+    assert run("foo bar baz", "w", "v", "a", "w", "d")[0] == "foo baz"
+    assert run("foo bar baz", "v", "2", "i", "w", "d")[0] == "bar baz"
+    assert run("foo bar baz", "v", "i", "w", "i", "w", "d")[0] == "bar baz"
+    assert run("foo bar baz", "v", "a", "w", "a", "w", "d")[0] == "baz"
+    assert run("a\nb\n\nc\n\nd", "v", "i", "p", "i", "p", "d")[0] == "c\n\nd"
+    assert run("f(a, (bc))", "f", "b", "v", "i", "(", "i", "(", "d")[0] == "f()"
+    assert run("f(a, (bc)) x", "f", "b", "v", "a", "(", "a", "(", "d")[0] == "f x"
+    assert run("<a><b>xy</b></a>", "f", "x", "v", "i", "t", "i", "t", "d")[0] == "<a></a>"
+    assert run('x "ab" y', "v", "i", '"', "d")[0] == 'x "" y'
