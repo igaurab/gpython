@@ -63,7 +63,7 @@ Rules (per cell, top level; function bodies analysed when defined, applied when 
   "$random", "matplotlib.pyplot": "$plt", "os.chdir": "$cwd", "os.environ": "$env", "os": "$fs",
   "shutil": "$fs", "pathlib.Path.write_text": "$fs", "sys": "$sys"}`).
 
-- [ ] Write tests (`accesses` on small notebooks; `conflict` between named cells):
+- [x] Write tests (`accesses` on small notebooks; `conflict` between named cells):
   - `test_independent_reads_share` — `a = 1` / `print(a)` / `print(a + 1)`: cells 2, 3 no conflict.
   - `test_mutating_method_conflicts` — `xs.append(1)` vs `print(xs)`: conflict; `xs.copy()` vs `print(xs)`: none.
   - `test_subscript_write_conflicts` — `d["k"] = 1` vs `len(d)`: conflict.
@@ -75,9 +75,9 @@ Rules (per cell, top level; function bodies analysed when defined, applied when 
   - `test_exclusive_reasons` — `%time 1`, `await x`, `exec("1")`, `input()`, `breakpoint()`,
     `from os import *`: each `exclusive != ""`.
   - `test_unknown_call_writes_args` — `g(df)` with unknown `g` vs `print(df)`: conflict.
-- [ ] Run `uv run pytest tests/test_concurrency.py -q -n 0` → fails (no module).
-- [ ] Implement; memoise per-cell facts by source (`lru_cache`, as `graph._analyzed`).
-- [ ] Tests pass, `tests/test_graph.py` unchanged and green; commit `concurrency: conservative read/write sets per cell`.
+- [x] Run `uv run pytest tests/test_concurrency.py -q -n 0` → fails (no module).
+- [x] Implement; memoise per-cell facts by source (`lru_cache`, as `graph._analyzed`).
+- [x] Tests pass, `tests/test_graph.py` unchanged and green; commit `concurrency: conservative read/write sets per cell`.
 
 ### Task 2: Groups
 
@@ -90,10 +90,10 @@ Algorithm: for each cell c in `order` (already topological), `g(c) = 1 + max(g(p
 cells p that are parents of c or `conflict`; exclusive cells conflict with all, so sit alone. If group
 `g(c)` holds `cap` cells, use the next with room. Cells inside a group keep `order`.
 
-- [ ] Tests: `test_groups_parallel_siblings` (`a=1`, `b=a`, `c=a` → `[[1],[2,3]]`),
+- [x] Tests: `test_groups_parallel_siblings` (`a=1`, `b=a`, `c=a` → `[[1],[2,3]]`),
   `test_groups_exclusive_alone`, `test_groups_cap` (5 independent, cap 2 → sizes 2,2,1),
   `test_groups_conflict_keeps_source_order` (`xs.append(1)` then `print(xs)` → separate, in order).
-- [ ] Fail → implement → pass → commit `concurrency: groups`.
+- [x] Fail → implement → pass → commit `concurrency: groups`.
 
 ### Task 3: Kernel runs a group on threads
 

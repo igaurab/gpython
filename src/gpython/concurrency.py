@@ -516,3 +516,44 @@ def accesses(cells: dict[str, str]) -> dict[str, Access]:
         exclusive = found.exclusive or effects.exclusive
         result[cid] = Access(frozenset(reads), frozenset(writes), exclusive)
     return result
+
+
+def groups(order: list[str], access: dict[str, Access], parents: dict[str, set[str]], cap: int) -> list[list[str]]:
+    """Split `order` (parents first) into groups that run one after another; the cells of a group
+    run at the same time. A cell goes to the first group after every earlier cell it depends on or
+    conflicts with, and after a full group; an exclusive cell gets a group of its own.
+
+    Earlier cells are indexed by the names they read and write, so this is linear in the names, not
+    quadratic in the cells."""
+    level: dict[str, int] = {}
+    last_read: dict[str, int] = {}
+    last_write: dict[str, int] = {}
+    sizes: list[int] = []
+    floor = 0
+    for cid in order:
+        cell = access[cid]
+        if cell.exclusive:
+            need = len(sizes)
+        else:
+            need = max(
+                floor,
+                *(level[p] + 1 for p in parents.get(cid, ()) if p in level),
+                *(last_write[n] + 1 for n in cell.reads if n in last_write),
+                *(max(last_write.get(n, -1), last_read.get(n, -1)) + 1 for n in cell.writes),
+            )
+            while need < len(sizes) and sizes[need] >= cap:
+                need += 1
+        if need == len(sizes):
+            sizes.append(0)
+        sizes[need] += 1
+        level[cid] = need
+        for name in cell.reads:
+            last_read[name] = max(last_read.get(name, -1), need)
+        for name in cell.writes:
+            last_write[name] = max(last_write.get(name, -1), need)
+        if cell.exclusive:
+            floor = need + 1
+    found: list[list[str]] = [[] for _ in sizes]
+    for cid in order:
+        found[level[cid]].append(cid)
+    return found

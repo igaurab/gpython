@@ -149,3 +149,37 @@ def test_network_cells_share():
              "def work(i):\n    return len(urllib.request.urlopen(f'{URL}{i}').read())",
              "r1 = work(1)", "r2 = work(2)"]
     assert not clash(cells, 3, 4)
+
+
+def plan(sources: list[str], cap: int = 8) -> list[list[int]]:
+    from gpython.concurrency import groups
+    from gpython.graph import build
+
+    cells = {f"c{i}": source for i, source in enumerate(sources, 1)}
+    graph = build(cells)
+    found = groups(graph.sort(set(cells)), accesses(cells), graph.parents, cap)
+    return [[int(cid[1:]) for cid in group] for group in found]
+
+
+def test_groups_parallel_siblings():
+    assert plan(["a = 1", "b = a", "c = a"]) == [[1], [2, 3]]
+
+
+def test_groups_follow_dependencies():
+    assert plan(["a = 1", "b = a", "c = a", "d = b + c"]) == [[1], [2, 3], [4]]
+
+
+def test_groups_exclusive_alone():
+    assert plan(["a = 1", "b = a", "%time c = a", "d = a"]) == [[1], [2], [3], [4]]
+
+
+def test_groups_cap():
+    assert [len(g) for g in plan([f"v{i} = {i}" for i in range(5)], cap=2)] == [2, 2, 1]
+
+
+def test_groups_conflict_keeps_source_order():
+    assert plan(["xs = []", "xs.append(1)", "n = len(xs)"]) == [[1], [2], [3]]
+
+
+def test_groups_cap_one_is_sequential():
+    assert plan(["a = 1", "b = a", "c = a"], cap=1) == [[1], [2], [3]]
