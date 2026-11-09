@@ -450,7 +450,9 @@ class Kernel:
         on_event(cid, "begin" | "end", payload), where the payload carries the kernel's clock
         in `t` and, at the end, `ok`. Outputs in between go to on_output(cid, kind, content)
         with the same (kind, content) as `execute`; an input() prompt reaches
-        on_input(cid, prompt, password). One request for a whole run costs one round trip
+        on_input(cid, prompt, password). The prompt travels on the stdin socket and the marker
+        on iopub, so a prompt that arrives before its cell's begin (or switch) marker waits for
+        it. One request for a whole run costs one round trip
         instead of two per cell, and a marker in the stream costs nothing where a message of
         its own would make the kernel wait for a flush, which is what makes run-all fast.
 
@@ -462,11 +464,18 @@ class Kernel:
         await self.ready.wait()
         current: list[str | None] = [None]
         open_cells: set[str] = set()
+        early_prompts: list[tuple[str, bool]] = []
+
+        def deliver_prompts() -> None:
+            while early_prompts and current[0] is not None and on_input is not None:
+                prompt, password = early_prompts.pop(0)
+                on_input(current[0], prompt, password)
 
         def event(payload: dict) -> None:
             cid, kind = payload["cid"], payload["event"]
             if kind == "switch":
                 current[0] = cid
+                deliver_prompts()
                 return
             if kind == "begin":
                 open_cells.add(cid)
@@ -475,6 +484,8 @@ class Kernel:
                 open_cells.discard(cid)
                 current[0] = None
             on_event(cid, kind, payload)
+            if kind == "begin":
+                deliver_prompts()
 
         def text(name: str, chunk: str) -> None:
             if chunk and current[0] is not None:
@@ -493,7 +504,11 @@ class Kernel:
             text(name, body[at:])
 
         def ask(prompt: str, password: bool) -> None:
-            if current[0] is not None and on_input is not None:
+            if on_input is None:
+                return
+            if current[0] is None:
+                early_prompts.append((prompt, password))
+            else:
                 on_input(current[0], prompt, password)
 
         code = f"await _gp_run({groups!r}, {watches!r})" if watches else f"await _gp_run({groups!r})"

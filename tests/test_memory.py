@@ -10,6 +10,17 @@ def collect() -> None:
         gc.collect()
 
 
+async def freed(pilot, gone: weakref.WeakSet, seconds: float = 8.0) -> bool:
+    """Collect until nothing in gone is left. A cancelled kernel request keeps its asyncio
+    timer handle, and through it the task's context and widget, until the timeout runs out."""
+    for _ in range(int(seconds * 10)):
+        collect()
+        if not gone:
+            return True
+        await pilot.pause(0.1)
+    return False
+
+
 def test_removed_cells_and_their_editors_are_freed(tmp_path):
     """The cell list's arrangement cache keeps the last four layouts, so the most recently
     removed cell lingers until a few more layouts happen; the resizes force them."""
@@ -33,7 +44,7 @@ def test_removed_cells_and_their_editors_are_freed(tmp_path):
             for step in range(1, 6):
                 await pilot.resize_terminal(120 + step, 40)
                 await pilot.pause()
-            collect()
+            await freed(pilot, gone)
             assert not [type(x).__name__ for x in gone]
             watchers = getattr(app, "__watchers")["theme"]
             assert len(watchers) == len(app.cells())
@@ -62,7 +73,7 @@ def test_closed_notebook_is_freed(tmp_path):
             for step in range(1, 6):
                 await pilot.resize_terminal(120 + step, 40)
                 await pilot.pause()
-            collect()
+            await freed(pilot, gone)
             assert not [type(x).__name__ for x in gone]
 
     asyncio.run(main())

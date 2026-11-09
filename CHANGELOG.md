@@ -99,6 +99,8 @@ this file as its notes.
 ### Fixed
 - `ctrl+w + - < >` resized the layout only after the next unrelated change.
 - A removed cell's editor stayed in memory while its completion request waited for the kernel.
+- A `breakpoint()` stop or `input()` prompt that reached gpython before the cell's begin
+  marker was dropped, and the cell waited forever; the two travel on separate sockets.
 
 ## [0.1.2] - 2026-10-30
 

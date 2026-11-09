@@ -114,6 +114,43 @@ def test_run_batch_interrupt_stops_a_blocking_cell_and_the_rest_of_the_batch():
     asyncio.run(main())
 
 
+def test_run_batch_delivers_an_input_request_that_arrives_before_the_begin_marker():
+    """stdin and iopub are separate sockets: a prompt can reach the client before the stream
+    chunk with the cell's begin marker. Holding every iopub message back forces that order."""
+
+    async def main():
+        k = Kernel()
+        await k.start()
+        try:
+            real = k.client.get_iopub_msg
+
+            async def late(*args, **kwargs):
+                msg = await real(*args, **kwargs)
+                await asyncio.sleep(0.3)
+                return msg
+
+            k.client.get_iopub_msg = late
+            prompts, outputs = [], []
+
+            def ask(cid, prompt, password):
+                prompts.append((cid, prompt, password))
+                k.reply("42")
+
+            clean = await asyncio.wait_for(
+                k.run_batch(
+                    [[("a", "print(input('n? '))", [])]], lambda *a: None,
+                    lambda cid, kind, content: outputs.append((cid, content.get("text"))), ask,
+                ),
+                20,
+            )
+            assert clean and prompts == [("a", "n? ", False)] and ("a", "42\n") in outputs
+        finally:
+            k.client.get_iopub_msg = real
+            await k.shutdown()
+
+    asyncio.run(main())
+
+
 def test_a_kernel_spawned_before_the_ui_is_adopted_and_stays_manageable(tmp_path):
     from gpython import envs, prespawn
 
