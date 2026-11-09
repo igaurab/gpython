@@ -87,3 +87,54 @@ def _imported(source: str) -> list[str]:
             names.append(node.module)
             names += [f"{node.module}.{alias.name}" for alias in node.names if alias.name.islower()]
     return names
+
+
+def _normal(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+_REQUIREMENT = re.compile(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
+
+
+def _names(requirements) -> set[str]:
+    out = set()
+    for requirement in requirements or ():
+        if isinstance(requirement, str) and (m := _REQUIREMENT.match(requirement)):
+            out.add(_normal(m.group(1)))
+    return out
+
+
+def _pyproject(root: Path) -> dict:
+    import tomllib
+
+    try:
+        with (root / "pyproject.toml").open("rb") as f:
+            return tomllib.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def dependency_table(root: Path, name: str) -> str | None:
+    """"extra" or "group" when `name` is one of the project's optional-dependency tables or
+    dependency groups (an extra wins), else None."""
+    data = _pyproject(root)
+    if name in ((data.get("project") or {}).get("optional-dependencies") or {}):
+        return "extra"
+    return "group" if name in (data.get("dependency-groups") or {}) else None
+
+
+def declared(root: Path, distribution: str) -> tuple[str, str] | None:
+    """Where the project at `root` declares `distribution`: ("main", ""), ("extra", name),
+    ("group", name), or None (no pyproject.toml, or not in it). Names compare as pip does."""
+    data = _pyproject(root)
+    if not data:
+        return None
+    wanted = _normal(distribution)
+    project = data.get("project") or {}
+    if wanted in _names(project.get("dependencies")):
+        return ("main", "")
+    for kind, table in (("extra", project.get("optional-dependencies")), ("group", data.get("dependency-groups"))):
+        for name, requirements in (table or {}).items():
+            if wanted in _names(requirements):
+                return (kind, name)
+    return None

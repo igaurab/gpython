@@ -279,6 +279,8 @@ class Kernel:
         self.ready = asyncio.Event()
         self._lock = asyncio.Lock()
         self._generation = 0
+        self._log: Path | None = None
+        self.warning: str | None = None
 
     def _manager(self) -> AsyncKernelManager:
         from jupyter_client.manager import AsyncKernelManager
@@ -288,25 +290,59 @@ class Kernel:
             from jupyter_client.kernelspec import KernelSpec
 
             manager._kernel_spec = KernelSpec(
-                argv=[str(self.env.python), "-m", "ipykernel_launcher", "-f", "{connection_file}"],
+                argv=envs.kernel_argv(self.env, "{connection_file}"),
                 display_name=self.env.short,
                 language="python",
             )
         return manager
 
     async def start(self) -> None:
+        """Start the kernel. A uv project whose sync fails starts again with `--no-sync` on the
+        environment as it is; `warning` then says what uv said."""
+        self.warning = None
+        try:
+            await self._start()
+        except Exception as error:
+            said = envs.read_log(self._log)
+            if self.env.kind != "uv-project":
+                raise
+            if "--no-sync" in self.env.uv_args:
+                raise RuntimeError("\n".join([str(error), *said])) from error
+            await self._discard_failed()
+            self.env = envs.without_sync(self.env)
+            await self._start()
+            self.warning = "\n".join(["uv could not sync the project, so the kernel uses it as it is:", *said[-4:]])
+        envs.read_log(self._log)
+        self._log = None
+
+    async def _start(self) -> None:
         if self.manager is None:
             self.manager = self._manager()
         cwd = str(self.file.parent) if self.file and self.file.parent.is_dir() else os.getcwd()
-        launch = dict(cwd=cwd, env=envs.kernel_env(self.env), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         spawned = prespawn.take(self.env, self.file)
-        if spawned is not None:
-            self._adopt(spawned, launch)
-        else:
-            await self.manager.start_kernel(**launch)
+        self._log = spawned.log if spawned is not None else envs.launch_log(self.env)
+        errors = open(self._log, "w") if spawned is None and self._log is not None else subprocess.DEVNULL
+        try:
+            launch = dict(cwd=cwd, env=envs.kernel_env(self.env), stdout=subprocess.DEVNULL, stderr=errors)
+            if spawned is not None:
+                self._adopt(spawned, launch)
+            else:
+                await self.manager.start_kernel(**launch)
+        finally:
+            if errors is not subprocess.DEVNULL:
+                errors.close()
+                if isinstance(self.manager._launch_args, dict):
+                    self.manager._launch_args["stderr"] = subprocess.DEVNULL
         self.client = self.manager.client()
         self.client.start_channels()
         await self._prepare()
+
+    async def _discard_failed(self) -> None:
+        if self.client is not None:
+            self.client.stop_channels()
+        if self.manager is not None and self.manager.has_kernel:
+            await self.manager.shutdown_kernel(now=True)
+        self.client, self.manager = None, None
 
     def _adopt(self, spawned: prespawn.Spawned, launch: dict) -> None:
         """Manage a kernel process started before the UI (prespawn.py) as if start_kernel had

@@ -22,6 +22,7 @@ asking questions**. Read this file first, then the plan you were assigned.
 | 08 | `08-missing-packages.md` | `ModuleNotFoundError` → install the package into the kernel's env (uv) and run the cell again, like marimo | 07 |
 | 09 | `09-outline.md` | Outline panel on the right: cells, their definitions with live types, dependency edges, jump-to (replaces the f2 variables table) | 08 |
 | 11 | `11-full-vim.md` | Full vim in the editor; colliding app keys move to cell mode; cursor coloured by mode | 03 |
+| 15 | `15-uv-projects.md` | uv projects: kernel runs through `uv run --with ipykernel`, uv-style `--extra`/`--with` flags, `:sync` hint for extras | 08 |
 
 Plans run **sequentially** in the order above because they all edit `app.py`.
 

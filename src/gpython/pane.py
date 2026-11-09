@@ -177,9 +177,20 @@ class NotebookPane(Vertical):
         self.render_status()
         if self.load_error:
             self.notify(self.load_error, severity="warning")
-        if self._env_hint is not None:
-            self.notify(f"Found {self._env_hint.name}, but it has no ipykernel. Press f6 to run the kernel there. gpython installs ipykernel for you", timeout=8)
+        if (hint := self._env_hint_text()) is not None:
+            self.notify(hint, timeout=8)
         self.app.after_first_frame(self._after_first_frame)
+
+    def _env_hint_text(self) -> str | None:
+        """Why the kernel is not in the project's environment, and how to get it there."""
+        hint, env = self._env_hint, self.kernel.env
+        if envs.launch_args and env.kind != "uv-project":
+            return f"{' '.join(envs.launch_args)} needs a uv project (pyproject.toml and uv); the kernel uses {env.name}"
+        if hint is None:
+            return None
+        if hint.kind == "uv-project":
+            return f"{hint.project.name} is a uv project without {hint.name.removesuffix(' (uv)')} yet. Run uv sync there (or start gpython with --extra/--with) to use it"
+        return f"Found {hint.name}, but it has no ipykernel. Press f6 to run the kernel there. gpython installs ipykernel for you"
 
     def _after_first_frame(self) -> None:
         self.run_worker(self._restore_outputs_then_fill(), group="mount")
@@ -416,9 +427,13 @@ class NotebookPane(Vertical):
 
     async def _boot_kernel(self) -> None:
         try:
+            if self.kernel.env.kind == "uv-project":
+                self.set_kernel_state(f"starting kernel in {self.kernel.env.name} (uv run)…")
             await self.kernel.start()
             self.kernel_label = await self._kernel_version()
             self.set_kernel_state("kernel ready")
+            if self.kernel.warning:
+                self.notify(self.kernel.warning, severity="warning", timeout=12)
         except Exception as error:
             if not self._shutting_down and self.is_attached:
                 self.set_kernel_state("no kernel")
@@ -431,6 +446,8 @@ class NotebookPane(Vertical):
         self.set_kernel_state(f"starting kernel in {env.name}…")
         try:
             await self.kernel.switch(env)
+            if self.kernel.warning:
+                self.notify(self.kernel.warning, severity="warning", timeout=12)
         except Exception as error:
             self.notify(f"Could not start a kernel in {env.python}: {error}", severity="error", timeout=10)
             if not self.kernel.ready.is_set():
@@ -860,7 +877,13 @@ class NotebookPane(Vertical):
         if packages.is_stdlib(module):
             cell.show_hint(f"{module} is part of Python's standard library, but the interpreter in {env} was built without it")
             return None
-        cell.show_hint(f"{module} is not installed in {env} · :pip {packages.pypi_name(module, cell.source)} installs it")
+        name = packages.pypi_name(module, cell.source)
+        if (declared := envpicker.project_sync(self, [name])) is not None:
+            flags, reason = declared
+            command = " ".join([":sync", *(flag.partition("=")[2] for flag in flags)])
+            cell.show_hint(f"{module} is in {reason} but not installed · {command} installs it")
+        else:
+            cell.show_hint(f"{module} is not installed in {env} · :pip {name} installs it")
         return module
 
     def missing_package(self) -> str:
