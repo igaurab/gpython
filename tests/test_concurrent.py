@@ -123,7 +123,7 @@ def test_no_threads_left():
 
 
 def test_blas_limits_restored():
-    pytest.importorskip("threadpoolctl")
+    pytest.importorskip("numpy")
 
     async def test(k):
         await run(k, [[("t", "import numpy\nfrom threadpoolctl import threadpool_info\nbefore = [i['num_threads'] for i in threadpool_info()]", [])]])
@@ -132,6 +132,43 @@ def test_blas_limits_restored():
         assert [r[2] for r in await k.variables({"same"})] == ["True"]
 
     with_kernel(test)
+
+
+def test_group_limits_hold_blas_to_its_share_and_restore(monkeypatch):
+    import os
+    import sys
+    import types
+
+    import threadpoolctl
+
+    from gpython import kernel_concurrency
+
+    calls = []
+
+    class Limits:
+        def __init__(self, n):
+            calls.append(("limit", n))
+
+        def restore_original_limits(self):
+            calls.append(("restore",))
+
+    monkeypatch.setitem(sys.modules, "numpy", types.ModuleType("numpy"))
+    monkeypatch.setattr(threadpoolctl, "threadpool_limits", Limits)
+    with kernel_concurrency.GroupLimits(2) as pool:
+        assert pool.submit(lambda: 1).result() == 1
+    assert calls == [("limit", max(1, (os.cpu_count() or 1) // 2)), ("restore",)]
+    assert pool._shutdown
+
+
+def test_group_limits_without_numpy_leave_blas_alone(monkeypatch):
+    import sys
+
+    from gpython import kernel_concurrency
+
+    monkeypatch.delitem(sys.modules, "numpy", raising=False)
+    limits = kernel_concurrency.GroupLimits(3)
+    with limits:
+        assert limits.blas is None
 
 
 def test_race_detected():

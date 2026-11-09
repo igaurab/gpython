@@ -29,6 +29,9 @@ how many run at once (1 runs them one by one). After a group, the names its cell
 checked: if one changed anyway, its readers are marked stale and run one by one from then on
 (`:set noconcurrent_verify` turns the check off). Network calls, sleeps and NumPy run in
 parallel; pure-Python loops take turns (the GIL); cells that write files run one at a time.
+While a group runs, NumPy's math libraries are held to their share of the cores with
+`threadpoolctl` (a gpython dependency); a kernel in a project `.venv` or conda env needs it
+installed there too, or parallel NumPy cells may oversubscribe the cores.
 
 <img width="1372" height="1034" alt="image" src="https://github.com/user-attachments/assets/c93ed22f-cf15-4a26-9322-c62c940febf5" />
 

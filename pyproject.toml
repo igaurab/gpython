@@ -14,6 +14,7 @@ dependencies = [
     "psutil>=7.2.2",
     "textual-image>=0.14.2",
     "textual[syntax]>=8.2.8",
+    "threadpoolctl>=3.5",
 ]
 
 [project.scripts]
