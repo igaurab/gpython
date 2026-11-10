@@ -297,23 +297,29 @@ class Kernel:
         return manager
 
     async def start(self) -> None:
-        """Start the kernel. A uv project whose sync fails starts again with `--no-sync` on the
-        environment as it is; `warning` then says what uv said."""
+        """Start the kernel. A uv project that does not start (its sync failed, say) starts
+        again on its environment as it is (`envs.fallback`); `warning` then says what uv said."""
         self.warning = None
-        try:
-            await self._start()
-        except Exception as error:
-            said = envs.read_log(self._log)
-            if self.env.kind != "uv-project":
-                raise
-            if "--no-sync" in self.env.uv_args:
-                raise RuntimeError("\n".join([str(error), *said])) from error
-            await self._discard_failed()
-            self.env = envs.without_sync(self.env)
-            await self._start()
-            self.warning = "\n".join(["uv could not sync the project, so the kernel uses it as it is:", *said[-4:]])
+        sync_error: list[str] | None = None
+        while True:
+            try:
+                await self._start()
+                break
+            except Exception as error:
+                said = envs.read_log(self._log)
+                next_try = envs.fallback(self.env)
+                if next_try is None:
+                    if self.env.kind != "uv-project":
+                        raise
+                    raise RuntimeError("\n".join([str(error), *said])) from error
+                if sync_error is None:
+                    sync_error = said
+                await self._discard_failed()
+                self.env = next_try
         envs.read_log(self._log)
         self._log = None
+        if sync_error is not None:
+            self.warning = "\n".join(["uv could not sync the project, so the kernel uses it as it is:", *sync_error[-4:]])
 
     async def _start(self) -> None:
         if self.manager is None:

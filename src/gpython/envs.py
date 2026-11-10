@@ -343,11 +343,19 @@ def read_log(log: Path | None) -> list[str]:
     return explain(lines)
 
 
-def without_sync(env: Env) -> Env:
-    """The same uv project, started on its environment as it is (`--no-sync`)."""
+def fallback(env: Env) -> Env | None:
+    """The next way to start a uv project whose start failed, or None when there is none left:
+    first without syncing and from uv's cache only (a sync usually fails because the network
+    is down), then without syncing but online (ipykernel was not in the cache)."""
     from dataclasses import replace
 
-    return replace(env, uv_args=(*env.uv_args, "--no-sync"))
+    if env.kind != "uv-project":
+        return None
+    if "--no-sync" not in env.uv_args:
+        return replace(env, uv_args=(*env.uv_args, "--no-sync", "--offline"))
+    if "--offline" in env.uv_args:
+        return replace(env, uv_args=tuple(a for a in env.uv_args if a != "--offline"))
+    return None
 
 
 def kernel_argv(env: Env, connection_file: str) -> list[str]:

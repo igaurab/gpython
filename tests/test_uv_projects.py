@@ -116,6 +116,15 @@ def test_declared_finds_main_extra_and_group_like_pip_names(project):
     assert packages.dependency_table(project, "nope") is None
 
 
+def test_fallback_goes_offline_then_online_then_gives_up(project):
+    env = envs.uv_project(project, ("--extra=synthesis",))
+    first = envs.fallback(env)
+    assert first.uv_args == ("--extra=synthesis", "--no-sync", "--offline")
+    assert envs.fallback(first).uv_args == ("--extra=synthesis", "--no-sync")
+    assert envs.fallback(envs.fallback(first)) is None
+    assert envs.fallback(envs.builtin()) is None
+
+
 def test_sync_is_offered_only_in_the_projects_own_environment(project):
     fake_venv(project / ".venv", ipykernel=False)
     pane = SimpleNamespace(path=project / "nb.py", kernel=SimpleNamespace(env=envs.uv_project(project)))
@@ -130,8 +139,15 @@ def test_sync_is_offered_only_in_the_projects_own_environment(project):
 needs_uv = pytest.mark.skipif(shutil.which("uv") is None, reason="uv is not installed")
 
 
+@pytest.fixture
+def real_uv_cache(monkeypatch):
+    """conftest isolates XDG_CACHE_HOME, which would leave uv an empty cache (a download per test)."""
+    if "UV_CACHE_DIR" not in os.environ:
+        monkeypatch.setenv("UV_CACHE_DIR", str(Path.home() / ".cache" / "uv"))
+
+
 @needs_uv
-def test_missing_package_in_an_extra_offers_sync_in_a_real_uv_kernel(tmp_path, monkeypatch):
+def test_missing_package_in_an_extra_offers_sync_in_a_real_uv_kernel(tmp_path, monkeypatch, real_uv_cache):
     """A real `uv run --with ipykernel` kernel: the project's venv gets no ipykernel, the hint and
     the picker offer `uv sync --extra`, and enter runs it, then the cell again."""
     root = tmp_path / "proj"
@@ -179,7 +195,7 @@ def test_missing_package_in_an_extra_offers_sync_in_a_real_uv_kernel(tmp_path, m
 
 
 @needs_uv
-def test_a_failed_sync_starts_the_kernel_on_the_environment_as_it_is(tmp_path):
+def test_a_failed_sync_starts_the_kernel_on_the_environment_as_it_is(tmp_path, real_uv_cache):
     from gpython.kernel import Kernel
 
     root = tmp_path / "proj"
@@ -190,9 +206,9 @@ def test_a_failed_sync_starts_the_kernel_on_the_environment_as_it_is(tmp_path):
 
     async def main():
         kernel = Kernel(file=root / "nb.py", env=envs.uv_project(root))
-        await kernel.start()
         try:
-            assert kernel.env.uv_args == ("--no-sync",)
+            await kernel.start()
+            assert kernel.env.uv_args == ("--no-sync", "--offline")
             assert kernel.warning.startswith("uv could not sync the project") and "no-such-dir" in kernel.warning
             out = []
             await kernel.execute("print(6 * 7)", lambda kind, c: out.append(c.get("text", "")) if kind == "stream" else None)
