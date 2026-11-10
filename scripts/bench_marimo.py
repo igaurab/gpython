@@ -1,6 +1,6 @@
 """Benchmark of a marimo notebook whose hidden cells show problem text (the static preview).
 
-    uv run python3 scripts/bench_marimo.py [--problems N] [--no-preview] [--profile load|moves] [--json]
+    uv run python scripts/bench_marimo.py [--problems N] [--no-preview] [--profile load|moves] [--json]
 
 Each problem is a hidden mo.vstack([mo.md(...), mo.Html(...)]) cell plus a code cell, like a
 LeetCode study notebook. --no-preview turns the static preview off to get the baseline.

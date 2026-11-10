@@ -30,6 +30,7 @@ class Spawned:
     file: Path | None
     process: subprocess.Popen
     connection_file: Path
+    log: Path | None = None
 
 
 _pending: Spawned | None = None
@@ -60,12 +61,14 @@ def spawn(env: envs.Env, file: Path | None) -> Spawned:
     environment = envs.kernel_env(env)
     environment["JPY_PARENT_PID"] = str(os.getpid())
     cwd = str(file.parent) if file is not None and file.parent.is_dir() else os.getcwd()
-    process = subprocess.Popen(
-        [str(env.python), "-m", "ipykernel_launcher", "-f", str(path)],
-        cwd=cwd, env=environment, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        start_new_session=os.name != "nt",
-    )
-    return Spawned(env, file, process, path)
+    log = envs.launch_log(env)
+    with open(log, "w") if log is not None else open(os.devnull, "w") as errors:
+        process = subprocess.Popen(
+            envs.kernel_argv(env, str(path)),
+            cwd=cwd, env=environment, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=errors,
+            start_new_session=os.name != "nt",
+        )
+    return Spawned(env, file, process, path, log)
 
 
 def take(env: envs.Env, file: Path | None) -> Spawned | None:
@@ -81,13 +84,25 @@ def take(env: envs.Env, file: Path | None) -> Spawned | None:
 
 
 def discard(spawned: Spawned) -> None:
+    """Kill the spawn's whole process group: under `uv run` the kernel is uv's child."""
     if spawned.process.poll() is None:
-        spawned.process.kill()
+        _kill_group(spawned.process)
         spawned.process.wait()
+    for leftover in (spawned.connection_file, spawned.log):
+        if leftover is not None:
+            leftover.unlink(missing_ok=True)
+
+
+def _kill_group(process: subprocess.Popen) -> None:
+    if os.name == "nt":
+        process.kill()
+        return
+    import signal
+
     try:
-        spawned.connection_file.unlink()
+        os.killpg(process.pid, signal.SIGKILL)
     except OSError:
-        pass
+        process.kill()
 
 
 def _kill_unclaimed() -> None:

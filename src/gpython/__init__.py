@@ -5,7 +5,7 @@ import os
 import sys
 from pathlib import Path
 
-USAGE = """usage: gpython [--version] [--no-vim] [--theme NAME] [--groups] [FILE | DIR ...]
+USAGE = """usage: gpython [--version] [--no-vim] [--theme NAME] [--groups] [uv flags] [FILE | DIR ...]
 
 With no file, opens an empty untitled notebook (ctrl+s or :w asks for a name).
 Several files open in tabs (gt / gT switch); a directory opens the file
@@ -15,14 +15,35 @@ automatically; `# %%` markers and .ipynb files are honoured.
   -v, --version  print the version and exit
   --no-vim       plain editing, no modal keys
   --theme NAME   colour theme (e.g. monokai, catppuccin, gruvbox)
-  --groups       print which cells of each FILE may run at the same time (:set concurrent) and exit"""
+  --groups       print which cells of each FILE may run at the same time (:set concurrent) and exit
+
+In a uv project (pyproject.toml) the kernel runs in the project's environment through
+`uv run --with ipykernel`; ipykernel comes from uv's cache, never into the project.
+These flags mean what they mean to `uv run` and apply to this launch:
+
+  --extra NAME   install the project's optional dependencies NAME (repeatable)
+  --all-extras   all of them
+  --group NAME   a dependency group (repeatable); --all-groups for all
+  --with PKG     a package for this session only, outside the project (repeatable)
+  --no-sync      use the environment as it is, install nothing"""
+
+UV_VALUE_FLAGS = ("--extra", "--group", "--with")
+UV_FLAGS = ("--all-extras", "--all-groups", "--no-sync")
 
 
 def parse_args(argv: list[str]) -> dict:
-    opts = {"vim": True, "theme": None, "path": None, "paths": [], "help": False, "version": False, "groups": False}
+    opts = {"vim": True, "theme": None, "path": None, "paths": [], "help": False, "version": False, "groups": False, "uv": []}
     it = iter(argv)
     for arg in it:
-        if arg in ("-h", "--help"):
+        name, eq, value = arg.partition("=")
+        if name in UV_VALUE_FLAGS:
+            value = value if eq else next(it, None)
+            if not value:
+                sys.exit(f"gpython: {name} needs a value\n{USAGE}")
+            opts["uv"].append(f"{name}={value}")
+        elif arg in UV_FLAGS:
+            opts["uv"].append(arg)
+        elif arg in ("-h", "--help"):
             opts["help"] = True
         elif arg in ("-v", "-V", "--version"):
             opts["version"] = True
@@ -87,7 +108,9 @@ def main() -> None:
         sys.exit(print_groups(opts["paths"]))
 
     os.environ.setdefault("TEXTUAL_FPS", "120")
-    from . import prespawn
+    from . import envs, prespawn
+
+    envs.launch_args = tuple(opts["uv"])
 
     prespawn.start(opts["path"])
     from .app import GPython

@@ -1,6 +1,6 @@
 """Kernel round-trip benchmark: the same work through three paths to the same ipykernel.
 
-    uv run python3 scripts/kernelbench.py [--paths raw,gpy,server] [--rtt N] [--starts N] [--json]
+    uv run python scripts/kernelbench.py [--paths raw,gpy,server] [--rtt N] [--starts N] [--json]
     uv run --with jupyter-server python3 scripts/kernelbench.py
 
 Paths:

@@ -31,7 +31,9 @@ from . import config, envs, packages
 KIND_TAGS = {
     "uv": ("uv", "green"), "venv": ("venv", "cyan"), "conda": ("conda", "magenta"),
     "builtin": ("built-in", "blue"), "uv-python": ("uv python", "yellow"), "system": ("python", "yellow"),
+    "uv-project": ("uv run", "green"),
 }
+ASK_MODES = ("install", "add", "sync")
 SECTIONS = {
     "project": "Project",
     "envs": "Environments",
@@ -73,7 +75,7 @@ class EnvPicker(ModalScreen[tuple | None]):
     """Bottom panel: filter Input over actions and environments.
 
     Dismisses with one of: ("use", Env) · ("create", tool, folder, python) ·
-    ("install", packages) · ("add", packages) · ("restart",) · None.
+    ("install", packages) · ("add", packages) · ("sync", flags) · ("restart",) · None.
     """
 
     BINDINGS = [
@@ -83,10 +85,12 @@ class EnvPicker(ModalScreen[tuple | None]):
     ]
 
     def __init__(
-        self, current: envs.Env, start: Path, title: str = "", ask: tuple | None = None, prefill: str = "", after: str = ""
+        self, current: envs.Env, start: Path, title: str = "", ask: tuple | None = None, prefill: str = "", after: str = "",
+        sync: tuple[list[str], str] | None = None,
     ) -> None:
         super().__init__()
         self.current, self.start, self.title_text, self.prefill, self.after_text = current, start, title, prefill, after
+        self.sync = sync
         self.root = envs.project_root(start)
         self.found: list[envs.Env] = _cache.get(start, [])
         self._ask: tuple | None = None
@@ -140,6 +144,7 @@ class EnvPicker(ModalScreen[tuple | None]):
                 path = self.start / path
             rows.append(Option(_row("→", f"Use {_home(path)}", "", ("path", "blue"), "an environment folder or a Python program"), id="path:" + str(path)))
         project = {e.prefix for e in envs.project_venvs(self.start)} if self.found else set()
+        uv_venv = envs.project_env_dir(self.root) if envs.is_uv_project(self.root) else None
         section = None
         for i, env in enumerate(self.found):
             hay = f"{env.name} {env.version} {env.kind} {env.python}".lower()
@@ -148,9 +153,13 @@ class EnvPicker(ModalScreen[tuple | None]):
             if (s := _section(env, project)) != section:
                 section = s
                 rows.append(Option(Text(SECTIONS[s], style="bold dim"), disabled=True))
-            current = env.same(cur)
+            current = env.same(cur) or (cur.kind == "uv-project" and env.prefix == cur.prefix)
             detail = _home(env.prefix or env.python)
-            if env.has_ipykernel is False:
+            if current and cur.kind == "uv-project":
+                detail = f"uv run --with ipykernel {' '.join(cur.uv_args)}".rstrip() + " · " + detail
+            elif env.has_ipykernel is False and env.prefix == uv_venv:
+                detail = "uv project: runs through uv run --with ipykernel, nothing installed into it · " + detail
+            elif env.has_ipykernel is False:
                 detail = "no ipykernel: gpython installs it when you pick it · " + detail
             tag = KIND_TAGS.get(env.kind, (env.kind, ""))
             rows.append(Option(_row("●" if current else " ", env.name, env.version or "?", tag, detail, current), id=f"env:{i}"))
@@ -169,19 +178,19 @@ class EnvPicker(ModalScreen[tuple | None]):
     def _filter(self, event: Input.Changed) -> None:
         if self._ask is None:
             self._fill(event.value)
-        elif self._ask[0] in ("install", "add"):
+        elif self._ask[0] in ASK_MODES:
             self._ask_title()
 
     @on(OptionList.OptionHighlighted)
     def _highlighted(self, event: OptionList.OptionHighlighted) -> None:
-        if self._ask is not None and self._ask[0] in ("install", "add"):
+        if self._ask is not None and self._ask[0] in ASK_MODES:
             options = self.query_one(OptionList)
             for row in self._mode_rows(self._mode()):
                 options.replace_option_prompt(row.id, row.prompt)
             self._ask_title()
 
     def action_move(self, delta: int) -> None:
-        if self._ask is None or self._ask[0] in ("install", "add"):
+        if self._ask is None or self._ask[0] in ASK_MODES:
             options = self.query_one(OptionList)
             options.action_cursor_down() if delta > 0 else options.action_cursor_up()
 
@@ -228,6 +237,11 @@ class EnvPicker(ModalScreen[tuple | None]):
         The chosen row carries the ● marker, like the current env in the list."""
         env = self.current
         rows = []
+        if self.sync is not None:
+            flags, reason = self.sync
+            on = chosen == "sync"
+            detail = f"declared in {reason}: install it into {env.name}, pyproject.toml unchanged"
+            rows.append(Option(_row("●" if on else " ", "uv sync", "", ("project", "green"), detail, on), id="mode:sync"))
         if self.can_add():
             detail = f"write to {_home(self.root / 'pyproject.toml')}, then install into {env.name}"
             on = chosen == "add"
@@ -244,13 +258,15 @@ class EnvPicker(ModalScreen[tuple | None]):
     def _command(self) -> str:
         """What enter runs now: the highlighted way with the typed packages, and where it lands."""
         names = self.query_one(Input).value.strip() or "…"
+        if self._mode() == "sync" and self.sync is not None:
+            return " ".join(["uv sync --inexact", *self.sync[0]]) + f" → {self.current.name}"
         if self._mode() == "add":
             return f"uv add {names} → {_home(self.root / 'pyproject.toml')}"
         return f"{self._pip()} {names} → {self.current.name}"
 
     def _ask_title(self) -> None:
         lead = self.title_text or "Install packages"
-        switch = " · ↑↓: change the way" if self.can_add() else ""
+        switch = " · ↑↓: change the way" if self.can_add() or self.sync is not None else ""
         back = "go back" if self._first_ask is None else "skip" if self.after_text else "close"
         self._title(f"{lead} · enter: {self._command()}{self.after_text}{switch} · esc: {back}")
 
@@ -306,6 +322,9 @@ class EnvPicker(ModalScreen[tuple | None]):
             self.dismiss(("create", tool, words[0], words[1] if len(words) > 1 else None))
             return
         mode = self._mode()
+        if mode == "sync" and self.sync is not None:
+            self.dismiss(("sync", self.sync[0]))
+            return
         if self.can_add() and mode != config.load().get("install_mode"):
             config.save({"install_mode": mode})
         self.dismiss((mode, words))
@@ -348,7 +367,9 @@ def _base(pane) -> Path:
 
 
 async def use(pane, env: envs.Env) -> None:
-    """Switch the pane's kernel to env, installing ipykernel into it first if it is a venv without it."""
+    """Switch the pane's kernel to env, installing ipykernel into it first if it is a venv without it
+    (a uv project's venv runs through `uv run --with ipykernel` instead)."""
+    env = envs.runnable(env, _base(pane))
     if env.same(pane.kernel.env):
         pane.notify(f"The kernel already uses {env.name}")
         return
@@ -413,10 +434,47 @@ async def install(pane, names: list[str], project: bool = False) -> str | None:
         return str(error)
     finally:
         pane.set_kernel_state(state)
-    if pane.kernel.ready.is_set():
-        await pane.kernel._execute("__import__('importlib').invalidate_caches()", None, store_history=False)
+    await _refresh_imports(pane)
     where = f"{_home(envs.project_root(_base(pane)) / 'pyproject.toml')} and {env.name}" if project else env.name
     pane.notify(f"Added {text} to {where}" if project else f"Installed {text} into {where}")
+    return None
+
+
+async def _refresh_imports(pane) -> None:
+    if pane.kernel.ready.is_set():
+        await pane.kernel._execute("__import__('importlib').invalidate_caches()", None, store_history=False)
+
+
+def project_sync(pane, names: list[str]) -> tuple[list[str], str] | None:
+    """When the kernel runs in its uv project's environment and every one of `names` is declared
+    in pyproject.toml: the `uv sync` flags that install them and where they are declared."""
+    env = pane.kernel.env
+    root = envs.project_root(_base(pane))
+    if not names or not envs.is_uv_project(root) or env.prefix != envs.project_env_dir(root):
+        return None
+    places = [packages.declared(root, name) for name in names]
+    if None in places:
+        return None
+    flags = list(dict.fromkeys(flag for where in places for flag in envs.sync_flags(where)))
+    reason = ", ".join(sorted({f"the {name} {kind}" if kind != "main" else "the project's dependencies" for kind, name in places}))
+    return flags, reason
+
+
+async def sync(pane, flags: list[str]) -> str | None:
+    """`uv sync --inexact` with flags into the kernel's project env; remembered for later launches.
+    Returns None when done, else the failure (shown as a notification too)."""
+    root = envs.project_root(_base(pane))
+    shown = " ".join(["uv sync", *flags])
+    state = pane.kernel_state
+    try:
+        await envs.sync(pane.kernel.env, root, flags, _progress(pane, shown))
+    except envs.EnvError as error:
+        pane.notify(str(error), title="Sync failed", severity="error", timeout=15)
+        return str(error)
+    finally:
+        pane.set_kernel_state(state)
+    await _refresh_imports(pane)
+    pane.notify(f"{shown}: done. gpython passes {' '.join(flags)} on later launches" if flags else f"{shown}: done")
     return None
 
 
@@ -447,9 +505,11 @@ def install_missing(pane, cells: list, after_install: bool = False) -> None:
     pane.tried.update(cell.missing for cell in new)
     names = sorted({packages.pypi_name(cell.missing, cell.source) for cell in new})
     cids = [cell.cid for cell in new]
-    mode = default_mode(pane)
+    declared = project_sync(pane, names)
+    mode = "sync" if declared is not None else default_mode(pane)
     if pane.app.autoinstall and not tried_before:
-        pane.app.run_worker(_install_then_run(pane, names, cids, mode == "add"), group="env")
+        work = _sync_then_run(pane, declared[0], cids) if declared is not None else _install_then_run(pane, names, cids, mode == "add")
+        pane.app.run_worker(work, group="env")
         return
     if isinstance(pane.app.screen, ModalScreen):
         return
@@ -459,16 +519,28 @@ def install_missing(pane, cells: list, after_install: bool = False) -> None:
     again = ", then run " + ", ".join(cell.label for cell in new) + " again"
 
     def done(choice: tuple | None) -> None:
-        if choice and choice[0] in ("install", "add"):
+        if choice and choice[0] == "sync":
+            pane.app.run_worker(_sync_then_run(pane, choice[1], cids), group="env")
+        elif choice and choice[0] in ("install", "add"):
             pane.app.run_worker(_install_then_run(pane, choice[1], cids, choice[0] == "add"), group="env")
 
-    picker = EnvPicker(env, _base(pane), title=f"{', '.join(modules)} {verb} not installed", ask=(mode,), prefill=" ".join(names), after=again)
+    picker = EnvPicker(
+        env, _base(pane), title=f"{', '.join(modules)} {verb} not installed", ask=(mode,), prefill=" ".join(names),
+        after=again, sync=declared,
+    )
     pane.app.push_screen(picker, done)
+
+
+async def _sync_then_run(pane, flags: list[str], cids: list[str]) -> None:
+    await _after(pane, await sync(pane, flags), cids)
 
 
 async def _install_then_run(pane, names: list[str], cids: list[str], project: bool) -> None:
     """Install, then run the cells again; a failure is written under each of them as well."""
-    failure = await install(pane, names, project)
+    await _after(pane, await install(pane, names, project), cids)
+
+
+async def _after(pane, failure: str | None, cids: list[str]) -> None:
     if failure is None:
         await pane.run_cells(cids, after_install=True)
         return
@@ -503,6 +575,8 @@ def handle(pane, choice: tuple | None) -> None:
         work = create(pane, *args)
     elif what in ("install", "add"):
         work = install(pane, args[0], project=what == "add")
+    elif what == "sync":
+        work = sync(pane, args[0])
     elif what == "restart":
         work = pane.restart_kernel()
     else:
@@ -569,6 +643,28 @@ def ex_pip(pane, arg: str = "") -> None:
         return
     if words:
         handle(pane, ("install", words))
+
+
+def ex_sync(pane, arg: str = "") -> None:
+    """:sync [extra or group ...]: `uv sync --inexact` in the kernel's uv project. With no names,
+    the extras the current cell's missing package needs, if any."""
+    root = envs.project_root(_base(pane))
+    env = pane.kernel.env
+    if not envs.is_uv_project(root) or env.prefix != envs.project_env_dir(root):
+        pane.notify(f"The kernel does not run in a uv project's environment (it uses {env.name}). :pip installs into it", severity="warning")
+        return
+    flags = []
+    for name in _words(arg):
+        kind = packages.dependency_table(root, name)
+        if kind is None:
+            pane.notify(f"{name} is not an extra or a dependency group in {_home(root / 'pyproject.toml')}", severity="error")
+            return
+        flags.append(f"--{kind}={name}")
+    if not flags and (missing := pane.missing_package()) and (declared := project_sync(pane, [missing])) is not None:
+        flags = declared[0]
+    cell = pane.current_cell()
+    cids = [cell.cid] if cell is not None and cell.missing and not arg else []
+    pane.app.run_worker(_sync_then_run(pane, flags, cids) if cids else sync(pane, flags), group="env")
 
 
 def ex_uv(pane, arg: str = "") -> None:

@@ -1498,6 +1498,7 @@ class GPython(App):
             (("env", "kernel", "envs"), "Choose the Python environment for this kernel (f6). :env name or :env path changes to it", lambda arg="": envpicker.ex_env(self.pane, arg)),
             (("venv",), "Make a new environment with python -m venv and use it (:venv folder [python])", lambda arg="": envpicker.ex_venv(self.pane, arg)),
             (("uv",), "Run uv for this kernel: :uv add package · :uv pip install package · :uv venv [folder] [python]", lambda arg="": envpicker.ex_uv(self.pane, arg)),
+            (("sync",), "Install what the uv project declares into the kernel's environment, removing nothing (:sync synthesis installs that extra or group; gpython passes it on later launches)", lambda arg="": envpicker.ex_sync(self.pane, arg)),
             (("pip",), "Install packages into the kernel environment (:pip numpy). :pip alone offers the packages this cell needs. It uses uv if it can. Also :pip list and :pip uninstall", lambda arg="": envpicker.ex_pip(self.pane, arg)),
             (("find", "fin", "Telescope"), "Find files by part of the name (space f f; :find text starts the search)", lambda arg="": self.action_find_files(arg)),
             (("help", "h"), "Show the keys and commands", lambda arg="": self.action_help()),

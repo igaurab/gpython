@@ -40,15 +40,18 @@ class Env:
     kind: str
     version: str = ""
     prefix: Path | None = None
+    project: Path | None = None
+    uv_args: tuple[str, ...] = ()
 
     @property
     def is_venv(self) -> bool:
-        return self.kind in ("uv", "venv", "conda", "builtin") and self.prefix is not None
+        return self.kind in ("uv", "venv", "conda", "builtin", "uv-project") and self.prefix is not None
 
     @property
     def has_ipykernel(self) -> bool | None:
-        """True/False for envs we can look inside cheaply; None when only running it would tell."""
-        if self.kind == "builtin":
+        """True/False for envs we can look inside cheaply; None when only running it would tell.
+        A uv project gets ipykernel from uv's cache (`uv run --with ipykernel`), never in its venv."""
+        if self.kind in ("builtin", "uv-project"):
             return True
         if self.prefix is None:
             return None
@@ -67,7 +70,8 @@ class Env:
 
 
 def _key(env: Env) -> str:
-    return str(env.prefix) if env.prefix is not None else os.path.realpath(env.python)
+    where = str(env.prefix) if env.prefix is not None else os.path.realpath(env.python)
+    return f"{where} uv {' '.join(env.uv_args)}" if env.kind == "uv-project" else where
 
 
 @cache
@@ -224,19 +228,142 @@ def project_venvs(start: Path) -> list[Env]:
     return out
 
 
+launch_args: tuple[str, ...] = ()
+"""`uv run` flags given on gpython's command line (`--extra`, `--with`, ...), for this launch."""
+
+
+def is_uv_project(root: Path) -> bool:
+    return uv() is not None and (root / "pyproject.toml").is_file()
+
+
+def project_env_dir(root: Path) -> Path:
+    """Where uv keeps the project's environment: `UV_PROJECT_ENVIRONMENT`, else `<root>/.venv`."""
+    custom = os.environ.get("UV_PROJECT_ENVIRONMENT")
+    return (root / custom).resolve() if custom else root / ".venv"
+
+
+def uv_project(root: Path, uv_args: tuple[str, ...] = ()) -> Env:
+    """The project's own environment, run through `uv run --with ipykernel`: uv syncs what the
+    project declares (removing nothing) and lays ipykernel over it from its cache."""
+    prefix = project_env_dir(root)
+    venv = venv_at(prefix)
+    version = venv.version if venv is not None else ""
+    return Env(prefix / BIN / EXE, f"{_rel(prefix, root)} (uv)", "uv-project", version, prefix, root, tuple(uv_args))
+
+
+def saved_uv_args(root: Path) -> tuple[str, ...]:
+    """The extras and groups synced into this project from gpython (`:sync`), as uv flags; later
+    launches pass them so a plain `uv sync` that dropped them is undone."""
+    from . import config
+
+    saved = config.load().get(f"uv:{root}")
+    return tuple(saved.split()) if isinstance(saved, str) else ()
+
+
+def remember_sync(root: Path, flags: list[str] | tuple[str, ...]) -> None:
+    from . import config
+
+    kept = [*saved_uv_args(root), *(f for f in flags if f.startswith(("--extra=", "--group=")))]
+    config.save({f"uv:{root}": " ".join(dict.fromkeys(kept))})
+
+
+def sync_flags(where: tuple[str, str]) -> list[str]:
+    """`packages.declared`'s answer as `uv sync` flags: [] for the main dependencies."""
+    kind, name = where
+    return [f"--{kind}={name}"] if kind in ("extra", "group") else []
+
+
+def sync_argv(root: Path, flags: list[str] | tuple[str, ...]) -> list[str]:
+    """Install what the project declares, removing nothing (`--inexact`)."""
+    return [uv() or "uv", "sync", "--inexact", "--project", str(root), *flags]
+
+
+async def sync(env: Env, root: Path, flags: list[str], on_line: LineCallback | None = None) -> None:
+    await _check(sync_argv(root, flags), on_line, cwd=root, env=kernel_env(env))
+    remember_sync(root, flags)
+
+
+def runnable(env: Env, start: Path, uv_args: tuple[str, ...] = ()) -> Env:
+    """`env` itself, or the uv project around `start` when env is that project's venv without
+    ipykernel: the kernel then runs there without installing anything into it."""
+    if env.has_ipykernel is not False or env.prefix is None:
+        return env
+    root = project_root(start)
+    if is_uv_project(root) and env.prefix == project_env_dir(root):
+        return uv_project(root, saved_uv_args(root) + tuple(uv_args))
+    return env
+
+
 def default_for(file: Path | None, remembered: str | None = None) -> tuple[Env, Env | None]:
     """The env a notebook starts in, and a project venv worth suggesting (it lacks ipykernel).
 
-    Order: the env last chosen for this notebook, the nearest project venv that has
-    ipykernel (like VS Code picks .venv), then gpython's own interpreter.
+    Order: uv flags on the command line (the uv project, whatever else is there), the env
+    last chosen for this notebook, the nearest project venv that has ipykernel (like VS Code
+    picks .venv), the uv project through `uv run --with ipykernel` once its environment exists
+    (a project never synced is suggested, not built), then gpython's own interpreter.
+    Nothing is ever installed into a project to pick it.
     """
+    start = file.resolve().parent if file else Path.cwd()
+    root = project_root(start)
+    uv_ok = is_uv_project(root)
+    if launch_args and uv_ok:
+        return uv_project(root, saved_uv_args(root) + launch_args), None
     if remembered and Path(remembered).exists():
-        return from_python(Path(remembered)), None
-    near = project_venvs(file.parent if file else Path.cwd())
+        return runnable(from_python(Path(remembered)), start), None
+    near = project_venvs(start)
     for env in near:
         if env.has_ipykernel:
             return env, None
+    if uv_ok and project_env_dir(root).is_dir():
+        return uv_project(root, saved_uv_args(root)), None
+    if uv_ok:
+        return builtin(), uv_project(root)
     return builtin(), (near[0] if near else None)
+
+
+def launch_log(env: Env) -> Path | None:
+    """For a uv project, a fresh file for uv's output: it is what explains a kernel that did not start."""
+    if env.kind != "uv-project":
+        return None
+    import secrets
+    import tempfile
+
+    return Path(tempfile.gettempdir()) / f"gpython-uv-{os.getpid()}-{secrets.token_hex(4)}.log"
+
+
+def read_log(log: Path | None) -> list[str]:
+    """uv's complaint from a launch log, as `explain` sentences; the file is removed."""
+    if log is None:
+        return []
+    try:
+        lines = log.read_text(errors="replace").splitlines()
+        log.unlink()
+    except OSError:
+        return []
+    return explain(lines)
+
+
+def fallback(env: Env) -> Env | None:
+    """The next way to start a uv project whose start failed, or None when there is none left:
+    first without syncing and from uv's cache only (a sync usually fails because the network
+    is down), then without syncing but online (ipykernel was not in the cache)."""
+    from dataclasses import replace
+
+    if env.kind != "uv-project":
+        return None
+    if "--no-sync" not in env.uv_args:
+        return replace(env, uv_args=(*env.uv_args, "--no-sync", "--offline"))
+    if "--offline" in env.uv_args:
+        return replace(env, uv_args=tuple(a for a in env.uv_args if a != "--offline"))
+    return None
+
+
+def kernel_argv(env: Env, connection_file: str) -> list[str]:
+    """The command that starts ipykernel in env."""
+    launcher = ["-m", "ipykernel_launcher", "-f", connection_file]
+    if env.kind == "uv-project" and env.project is not None and uv():
+        return [uv(), "run", "--project", str(env.project), *env.uv_args, "--with", "ipykernel", "python", *launcher]
+    return [str(env.python), *launcher]
 
 
 def kernel_env(env: Env) -> dict[str, str]:
