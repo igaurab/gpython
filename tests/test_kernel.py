@@ -191,3 +191,22 @@ def test_a_spawn_for_another_env_or_file_is_discarded():
         assert prespawn.take(envs.builtin(), None) is None
 
     asyncio.run(main())
+
+
+def test_a_process_pool_in_an_unguarded_cell_does_not_rerun_the_notebook(tmp_path):
+    async def main():
+        code = "import math\nfrom concurrent.futures import ProcessPoolExecutor\nwith ProcessPoolExecutor(2) as ex:\n    print(list(ex.map(math.sqrt, [1, 4, 9])))"
+        file = tmp_path / "nb.py"
+        file.write_text(f"# %%\n{code}\n")
+        k = Kernel(file=file)
+        await k.start()
+        try:
+            outputs = []
+            assert await k.execute(code, lambda kind, c: outputs.append(c.get("text", "")))
+            assert "".join(outputs).strip() == "[1.0, 2.0, 3.0]"
+            assert await k.execute("print(__file__)", lambda kind, c: outputs.append(c.get("text", "")))
+            assert outputs[-1].strip() == str(file.resolve())
+        finally:
+            await k.shutdown()
+
+    asyncio.run(main())
