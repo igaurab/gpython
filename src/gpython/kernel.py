@@ -131,8 +131,10 @@ def _gp_install(path):
 
 def _gp_setup(file):
     import os, sys
+    from importlib.machinery import ModuleSpec
     if file:
         globals()["__file__"] = file
+        globals()["__spec__"] = ModuleSpec("__main__", None, origin=file)
         folder = os.path.dirname(file) or os.getcwd()
         if os.path.isdir(folder):
             os.chdir(folder)
