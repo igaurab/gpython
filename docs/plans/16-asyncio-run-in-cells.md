@@ -44,11 +44,27 @@ nest_asyncio2 replaces the loop's iteration for good and, before Python 3.14, sw
 Future for the pure-Python classes, which is what slows every cell that awaits. Ours changes
 nothing until a nested call is made.
 
+## anyio.run
+
+anyio checks for a running loop itself and raised "Already running asyncio in this thread". A
+finder at the front of `sys.meta_path` waits for `anyio._core._eventloop`, removes itself, and
+wraps `run` right after the module loads: inside a running loop the loop is put aside and anyio
+runs its own. The coroutine gets a new loop, so it cannot use a connection that a cell opened
+with `await`.
+
+## Interrupt
+
+ipykernel 7.4 turns SIGINT into a cancel of the cell's task with a plain `call_soon` from the
+signal handler. That does not wake a loop that sleeps in `select`, so a cell sitting in
+`await asyncio.sleep(30)` stopped only when something else woke the loop (never, on a quiet
+kernel). `wake_on_interrupt` wraps `IPythonKernel._cancel_on_sigint` and adds
+`loop.call_soon_threadsafe` after ipykernel's handler.
+
+While a nested run is driven on the main thread the handler raises KeyboardInterrupt instead.
+The cell's task is running then, not waiting, so a cancel would stay pending, land later at an
+`await` in ipykernel's own code, and the request would never be answered.
+
 ## Known limits
 
-- `anyio.run` has its own check and still says "Already running asyncio in this thread".
 - A coroutine run by `asyncio.run` in a cell shares the kernel's loop; it does not get a new one.
-- Interrupting `asyncio.run` works in a cell without top-level `await`. In a cell that also
-  awaits, and in any cell that sits in a plain `await`, the interrupt waits until something wakes
-  the loop; ipykernel 7.4 alone behaves the same.
 - Not tried: Windows, uvloop, ipykernel 6, `breakpoint()` inside a nested run.

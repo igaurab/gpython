@@ -14,29 +14,134 @@ are, so code that only awaits runs exactly as before (nest_asyncio2, which ipyke
 it 20 to 70 % slower; the comparison is in docs/plans/16-asyncio-run-in-cells.md). A loop that is
 not a plain BaseEventLoop is left alone, which keeps the RuntimeError.
 
+anyio.run has a check of its own ("Already running asyncio in this thread"), so it is wrapped
+when anyio is first imported: the running loop is put aside and anyio runs its own.
+
+Interrupt. ipykernel turns SIGINT into a cancel of the cell's task with a plain call_soon from the
+signal handler, which does not wake a loop that sleeps in select: a cell that sits in `await`
+stopped only when something else woke the loop. `wake_on_interrupt` adds the wake. A cell that
+awaits and is, at that moment, inside a nested run must not be cancelled that way: its task is
+running, not waiting, so the cancel would stay pending and land later in ipykernel's own code,
+which then never answers the request. There SIGINT raises KeyboardInterrupt, as in a cell that
+does not await.
+
 Read by the kernel from this file's path (kernel.py), so nothing here may import gpython.
 """
 
 from __future__ import annotations
 
 import asyncio
+import functools
 import heapq
+import signal
+import sys
+import threading
 from asyncio import base_events, events, runners, tasks
+from contextlib import contextmanager
 
 MAXIMUM_SELECT_TIMEOUT = 24 * 3600
+ANYIO_RUN_MODULE = "anyio._core._eventloop"
 NEEDED = ("_ready", "_scheduled", "_selector", "_process_events", "_clock_resolution", "_stopping", "_timer_cancelled_count")
 
+_main_thread_drives = 0
 _original_run = runners.run
 _original_run_until_complete = base_events.BaseEventLoop.run_until_complete
 _original_runner_run = getattr(getattr(runners, "Runner", None), "run", None)
 
 
-def install() -> None:
-    """Make asyncio.run, run_until_complete and Runner.run work from inside a running loop."""
+def install(shell=None) -> None:
+    """Make asyncio.run, run_until_complete, Runner.run and anyio.run work from inside a running
+    loop, and make an interrupt reach a cell that awaits."""
     asyncio.run = runners.run = run
     base_events.BaseEventLoop.run_until_complete = run_until_complete
     if _original_runner_run is not None:
         runners.Runner.run = runner_run
+    if ANYIO_RUN_MODULE in sys.modules:
+        wrap_anyio(sys.modules[ANYIO_RUN_MODULE])
+    else:
+        sys.meta_path.insert(0, AnyioFinder())
+    wake_on_interrupt(getattr(shell, "kernel", None))
+
+
+def wake_on_interrupt(kernel) -> None:
+    """Wrap ipykernel's SIGINT handler for async cells so the loop wakes up and sees the cancel."""
+    watch = getattr(kernel, "_cancel_on_sigint", None)
+    if watch is None:
+        return
+
+    @contextmanager
+    def waking(future):
+        with watch(future):
+            cancel = signal.getsignal(signal.SIGINT)
+            loop = events._get_running_loop()
+            if loop is None or not callable(cancel):
+                yield
+                return
+
+            def interrupt(signum, frame) -> None:
+                if _main_thread_drives:
+                    raise KeyboardInterrupt
+                cancel(signum, frame)
+                loop.call_soon_threadsafe(int)
+
+            signal.signal(signal.SIGINT, interrupt)
+            try:
+                yield
+            finally:
+                signal.signal(signal.SIGINT, cancel)
+
+    kernel._cancel_on_sigint = waking
+
+
+class AnyioFinder:
+    """Finds anyio's module that holds `run`, once, so `wrap_anyio` runs right after it loads."""
+
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname != ANYIO_RUN_MODULE:
+            return None
+        sys.meta_path.remove(self)
+        from importlib.util import find_spec
+
+        spec = find_spec(fullname)
+        if spec is not None and spec.loader is not None:
+            spec.loader = WrappingLoader(spec.loader)
+        return spec
+
+
+class WrappingLoader:
+    def __init__(self, loader) -> None:
+        self.loader = loader
+
+    def __getattr__(self, name):
+        return getattr(self.loader, name)
+
+    def create_module(self, spec):
+        return self.loader.create_module(spec)
+
+    def exec_module(self, module) -> None:
+        self.loader.exec_module(module)
+        wrap_anyio(module)
+
+
+def wrap_anyio(module) -> None:
+    """anyio.run inside a running loop: that loop is put aside and anyio runs its own loop."""
+    original = getattr(module, "run", None)
+    if original is None or getattr(original, "gpython_nested", False):
+        return
+
+    @functools.wraps(original)
+    def anyio_run(func, *args, **options):
+        running = events._get_running_loop()
+        if running is None:
+            return original(func, *args, **options)
+        with _OuterLoopAside(running):
+            return original(func, *args, **options)
+
+    anyio_run.gpython_nested = True
+    module.run = anyio_run
+    package = sys.modules.get("anyio")
+    if getattr(package, "run", None) is original:
+        package.run = anyio_run
 
 
 def drivable(loop) -> bool:
@@ -133,8 +238,11 @@ def _run_nested(loop, awaitable):
 
 def _drive(loop, future) -> None:
     """Iterate the running loop until `future` is done, then once more for its done callbacks."""
+    global _main_thread_drives
     waiting: list = []
+    on_main = threading.current_thread() is threading.main_thread()
     hidden = _hide_current_task(loop)
+    _main_thread_drives += on_main
     try:
         while not future.done():
             if loop._stopping:
@@ -143,6 +251,7 @@ def _drive(loop, future) -> None:
         if loop._ready:
             _turn(loop, waiting)
     finally:
+        _main_thread_drives -= on_main
         _show_current_task(loop, hidden)
         loop._ready.extendleft(reversed(waiting))
 

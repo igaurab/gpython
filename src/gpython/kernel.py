@@ -135,7 +135,11 @@ def _gp_nested_asyncio(path):
     with open(path, encoding="utf-8") as source:
         exec(compile(source.read(), "<gpython-asyncio>", "exec"), mod.__dict__)
     sys.modules["_gpython_asyncio"] = mod
-    mod.install()
+    try:
+        shell = get_ipython()
+    except NameError:
+        shell = None
+    mod.install(shell)
 
 def _gp_setup(file):
     import os, sys

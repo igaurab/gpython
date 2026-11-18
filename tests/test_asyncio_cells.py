@@ -3,6 +3,8 @@
 import asyncio
 import time
 
+import pytest
+
 from gpython.kernel import Kernel
 
 LIBRARY = '''
@@ -196,5 +198,61 @@ def test_interrupt_stops_asyncio_run_and_the_cells_after_it(tmp_path):
         assert await cell(k, "asyncio.run(lib.fetch(PORT))") == (True, "'pong'")
         left = "await asyncio.sleep(0.05)\nlen([t for t in asyncio.all_tasks() if t is not asyncio.current_task() and 'sleep' in repr(t)])"
         assert await cell(k, left) == (True, "0")
+
+    with_kernel(tmp_path, test)
+
+
+async def interrupted(k, code):
+    events, errors = [], []
+    cells = [[("s", code, [])], [("next", "print('never')", [])]]
+    task = asyncio.create_task(k.run_batch(
+        cells,
+        lambda cid, kind, payload: events.append((cid, kind, payload.get("ok"))),
+        lambda cid, kind, content: errors.append(content.get("ename")) if kind == "error" else None,
+    ))
+    await asyncio.sleep(1)
+    began = time.perf_counter()
+    await k.interrupt()
+    await asyncio.wait_for(task, 10)
+    assert time.perf_counter() - began < 5
+    assert events == [("s", "begin", None), ("s", "end", False)]
+    return errors
+
+
+def test_interrupt_stops_a_cell_that_sits_in_await(tmp_path):
+    async def test(k):
+        assert await interrupted(k, "await asyncio.sleep(30)") == ["CancelledError"]
+        assert await cell(k, "await lib.fetch(PORT)") == (True, "'pong'")
+        outputs = []
+        task = asyncio.create_task(k.execute("await asyncio.sleep(30)", lambda kind, content: outputs.append(kind)))
+        await asyncio.sleep(1)
+        await k.interrupt()
+        assert await asyncio.wait_for(task, 10) is False
+        assert await cell(k, "asyncio.run(lib.fetch(PORT))") == (True, "'pong'")
+
+    with_kernel(tmp_path, test)
+
+
+def test_interrupt_stops_asyncio_run_inside_a_cell_that_awaits(tmp_path):
+    async def test(k):
+        code = "async def outer():\n    asyncio.run(asyncio.sleep(30))\nawait outer()"
+        assert await interrupted(k, code) == ["KeyboardInterrupt"]
+        assert await cell(k, "asyncio.run(lib.fetch(PORT))") == (True, "'pong'")
+        assert await cell(k, "await lib.fetch(PORT)") == (True, "'pong'")
+
+    with_kernel(tmp_path, test)
+
+
+def test_anyio_run_in_a_cell(tmp_path):
+    pytest.importorskip("anyio")
+
+    async def test(k):
+        code = "import anyio\nasync def double(x):\n    await anyio.sleep(0.01)\n    return x * 2\nanyio.run(double, 21)"
+        assert await cell(k, code) == (True, "42")
+        group = "async def many():\n    seen = []\n    async with anyio.create_task_group() as tg:\n        for n in range(3):\n            tg.start_soon(lambda n=n: seen.append(n) or anyio.sleep(0))\n    return sorted(seen)\nanyio.run(many)"
+        assert await cell(k, group) == (True, "[0, 1, 2]")
+        assert await cell(k, "from anyio import run as plain\nplain(double, 4)") == (True, "8")
+        assert await cell(k, "async def outer():\n    return anyio.run(double, 5)\nawait outer()") == (True, "10")
+        assert await cell(k, "(asyncio.run(double(3)), await double(2))") == (True, "(6, 4)")
 
     with_kernel(tmp_path, test)
