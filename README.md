@@ -12,7 +12,7 @@ cells know which variables they define and use, and runs follow that graph.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/screenshot-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="docs/images/screenshot-light.png">
-  <img alt="gpython running a notebook in two panes, with plots drawn in the terminal" src="https://raw.githubusercontent.com/igaurab/gpython/main/docs/images/screenshot-light.png" width="2996" height="2100">
+  <img alt="gpython running a notebook in two panes, with plots drawn in the terminal" src="https://raw.githubusercontent.com/igaurab/gpython/main/docs/images/screenshot-light.png">
 </picture>
 
 ## Performance
