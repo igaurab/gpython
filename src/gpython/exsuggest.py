@@ -93,6 +93,7 @@ STATIC_ARGUMENTS: dict[str, Candidates] = {
         ("all metadata", "Copy the notebook and keep the # %% cell lines"),
     ],
     "foldclose": [("all", "Fold all cells")],
+    "update": [("stable", "The newest release on PyPI"), ("dev", "The newest code on GitHub")],
     "foldopen": [("all", "Unfold all cells")],
     "tabmove": [
         ("0", "To the start"),

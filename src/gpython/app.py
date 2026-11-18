@@ -1586,6 +1586,7 @@ class GPython(App):
             (("sync",), "Install what the uv project declares into the kernel's environment, removing nothing (:sync synthesis installs that extra or group; gpython passes it on later launches)", lambda arg="": envpicker.ex_sync(self.pane, arg)),
             (("pip",), "Install packages into the kernel environment (:pip numpy). :pip alone offers the packages this cell needs. It uses uv if it can. Also :pip list and :pip uninstall", lambda arg="": envpicker.ex_pip(self.pane, arg)),
             (("find", "fin", "Telescope"), "Find files by part of the name (space f f; :find text starts the search)", lambda arg="": self.action_find_files(arg)),
+            (("update",), "Get the newest gpython with the tool that installed it (:update dev gets the newest code on GitHub). Start gpython again to use it", lambda arg="": self._ex_update(arg)),
             (("help", "h"), "Show the keys and commands", lambda arg="": self.action_help()),
         ]
 
@@ -1833,6 +1834,23 @@ class GPython(App):
             pane.save(then=lambda: self.run_worker(self.close_window(force=True)))
         else:
             await self.close_window(save=True)
+
+    def _ex_update(self, arg: str = "") -> None:
+        """:update [stable|dev]: the same as `gpython --update`, without leaving the notebook."""
+        from . import installed_version, update
+
+        channel = update.channel_of(arg)
+        if channel is None:
+            self.notify(":update takes stable (the newest release) or dev (the newest code on GitHub)", severity="warning")
+            return
+        self.notify("Getting the newest gpython…", title="Update")
+        self.run_worker(self._update(channel, installed_version()), group="update", exclusive=True)
+
+    async def _update(self, channel: str, before: str) -> None:
+        from . import update
+
+        outcome = await asyncio.to_thread(update.run, channel, before, True)
+        self.notify(outcome.message, title="Update", severity="information" if outcome.ok else "warning", timeout=12)
 
     async def _ex_edit(self, arg: str = "", force: bool = False) -> None:
         arg = arg.strip()

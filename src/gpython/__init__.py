@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 USAGE = """usage: gpython [--version] [--no-vim] [--theme NAME] [--groups] [uv flags] [FILE | DIR ...]
+       gpython --update [stable|dev]
        gpython --scratchpad DIR
        gpython --install-completions
        gpython --completions bash|zsh|fish|powershell
@@ -21,6 +22,9 @@ automatically; `# %%` markers and .ipynb files are honoured.
   --no-vim       plain editing, no modal keys
   --theme NAME   colour theme (e.g. monokai, catppuccin, gruvbox)
   --groups       print which cells of each FILE may run at the same time (:set concurrent) and exit
+  --update [stable|dev]   get the newest gpython and exit, with the tool that installed it (uv,
+                     pipx or pip). stable, the default, is the newest release on PyPI; dev is
+                     the newest code on GitHub. In gpython: :update
   --scratchpad DIR   remember DIR as the scratchpad folder for every later launch and exit
                      (`--scratchpad .` is the current folder, `--scratchpad ""` forgets it)
   --install-completions   set up tab completion (gpy --th + tab) for your shell and exit. The shell
@@ -63,9 +67,19 @@ def _value_after(name: str, eq: str, value: str, rest) -> str:
     return found
 
 
+def _with_update_channel(argv: list[str]) -> list[str]:
+    """`--update dev` as `--update=dev`: the word after --update is its channel, never a file."""
+    argv = list(argv)
+    if "--update" in argv:
+        at = argv.index("--update")
+        if at + 1 < len(argv) and not argv[at + 1].startswith("-"):
+            argv[at : at + 2] = [f"--update={argv[at + 1]}"]
+    return argv
+
+
 def parse_args(argv: list[str]) -> dict:
-    opts = {"vim": True, "theme": None, "path": None, "paths": [], "help": False, "version": False, "groups": False, "uv": [], "scratchpad": None, "completions": None, "install_completions": None}
-    it = iter(argv)
+    opts = {"vim": True, "theme": None, "path": None, "paths": [], "help": False, "version": False, "groups": False, "uv": [], "scratchpad": None, "completions": None, "install_completions": None, "update": None}
+    it = iter(_with_update_channel(argv))
     for arg in it:
         name, eq, value = arg.partition("=")
         if name in UV_VALUE_FLAGS:
@@ -77,6 +91,8 @@ def parse_args(argv: list[str]) -> dict:
             opts[name[2:]] = _value_after(name, eq, value, it)
         elif name == "--install-completions":
             opts["install_completions"] = value
+        elif name == "--update":
+            opts["update"] = value
         elif arg in UV_FLAGS:
             opts["uv"].append(arg)
         elif arg in SWITCHES:
@@ -166,6 +182,19 @@ def install_completions(shell: str) -> int:
     return 0
 
 
+def run_update(word: str) -> int:
+    """`gpython --update [stable|dev]`: install the newest gpython with the tool that installed this one."""
+    from . import update
+
+    channel = update.channel_of(word)
+    if channel is None:
+        print(f"gpython: --update takes stable (the newest release) or dev (the newest code on GitHub), not {word}", file=sys.stderr)
+        return 2
+    outcome = update.run(channel, installed_version())
+    print(f"gpython: {outcome.message}", file=sys.stdout if outcome.ok else sys.stderr)
+    return 0 if outcome.ok else 1
+
+
 def installed_version() -> str:
     from importlib.metadata import PackageNotFoundError, version
 
@@ -179,6 +208,7 @@ SETUP_COMMANDS = (
     ("install_completions", install_completions),
     ("completions", print_completions),
     ("scratchpad", set_scratchpad),
+    ("update", run_update),
 )
 
 

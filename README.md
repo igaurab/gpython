@@ -30,7 +30,7 @@ Needs Python 3.13 or newer.
 
 ```sh
 uv tool install gpynb        # installs the `gpython` command globally
-uv tool upgrade gpynb        # later, to update
+gpython --update             # later, to get the newest release (--update dev: the newest code on GitHub)
 uvx --from gpynb gpython     # or run it once without installing anything
 pipx install gpynb           # if you use pipx instead of uv
 ```

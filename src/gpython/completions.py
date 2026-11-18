@@ -24,6 +24,7 @@ OPTIONS: tuple[tuple[tuple[str, ...], str | None, str], ...] = (
     (("--no-vim",), None, "plain editing, no modal keys"),
     (("--theme",), THEME, "colour theme"),
     (("--groups",), None, "print which cells may run at the same time and exit"),
+    (("--update",), None, "get the newest gpython and exit (--update dev: the newest code on GitHub)"),
     (("--scratchpad",), FOLDER, "set the folder where a new notebook is saved and exit"),
     (("--completions",), SHELL, "print the completion script for a shell and exit"),
     (("--install-completions",), None, "set up tab completion for your shell and exit"),

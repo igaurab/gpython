@@ -9,6 +9,12 @@ this file as its notes.
 ## [Unreleased]
 
 ### Added
+- An update command. `gpython --update` gets the newest release from PyPI with the tool that
+  installed gpython (uv, pipx or pip), and says which version you have after it.
+  `gpython --update dev` gets the newest code from the main branch on GitHub;
+  `gpython --update stable` goes back to the newest release. In gpython, `:update`,
+  `:update dev` and `:update stable` do the same; start gpython again to use the new version.
+  A gpython that runs from a source folder is not changed: the command says to use `git pull`.
 - Two windows can show the same notebook. When a window shows `sc.py` and you ask for it again
   in another window (`:e sc.py` after a split, `:sp sc.py`, `:vs sc.py`, `:split v sc.py`), that
   window shows the same notebook, where before the cursor went back to the first window. The
