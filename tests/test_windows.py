@@ -233,7 +233,7 @@ def test_ctrl_w_splits_moves_and_closes(tmp_path):
         assert all(p.has_class("-multi") for p in app.workspace.tab_panes())
         assert third.has_class("-active") and not first.has_class("-active")
 
-        await pilot.press("i", "x", "escape")
+        await pilot.press("i", "i", "x", "escape")
         assert third.dirty and not first.dirty
         await pilot.press(":", *"q", "enter")
         await pilot.pause()
@@ -303,7 +303,7 @@ def test_edit_split_and_quit_commands(tmp_path):
         await pilot.press("escape", ":", *f"e {root / 'b.py'}", "enter")
         await pilot.pause()
         assert names(app) == ["b.py"]
-        await pilot.press("i", "z", "escape", ":", *f"e {root / 'a.py'}", "enter")
+        await pilot.press("i", "i", "z", "escape", ":", *f"e {root / 'a.py'}", "enter")
         await pilot.pause()
         assert names(app) == ["b.py"]
         await pilot.press(":", *f"e! {root / 'a.py'}", "enter")
@@ -380,7 +380,7 @@ def test_buffers(tmp_path):
         await pilot.pause()
         assert not a.is_attached and len(ws.buffers) == 1 and ws.buffers[0].path is None
         assert app.return_code is None
-        await pilot.press("i", "x", "escape", ":", *"bd", "enter")
+        await pilot.press("i", "i", "x", "escape", ":", *"bd", "enter")
         await pilot.pause()
         assert ws.buffers and ws.buffers[0].dirty
         await pilot.press("n", "enter")

@@ -85,7 +85,7 @@ marimo notebooks (`@app.cell`) and `.ipynb`; see [Files](#files).
 Three modes, shown in the top bar: **INSERT** (typing), **NORMAL** (vim keys in
 the editor) and **CELL** (Jupyter's command mode: the whole cell is selected and
 keys act on cells). `escape` goes INSERT → NORMAL → CELL; `enter` or `i` goes back
-into the editor. Clicking a cell's header selects it; in cell mode any click only
+into the editor in NORMAL mode (`i` again types). Clicking a cell's header selects it; in cell mode any click only
 selects the cell it lands on. `f1` (or `?` in cell mode)
 shows every key; the list lives in `src/gpython/keymap.py`.
 
@@ -175,7 +175,9 @@ mode `v V ctrl+v` with `o O y d c p > < = J gJ ~ u U r gq g? ctrl+a ctrl+x g ctr
 Ranges read the notebook as one file, like vim's buffer: `%` is every line of every cell, `$`
 the notebook's last line, `.,$` from here to the end of the notebook; no range is the cursor
 line (in cell mode: the selected cell); a plain number is that line of the current cell, as
-its gutter shows. Undo (`u`) works per cell, so undoing a `:%s` takes one `u` in each cell.
+its gutter shows. Undo (`u`) and redo (`ctrl+r`) work on the whole notebook: `u` undoes the newest
+change, in any cell (it goes there), and also cell deletes, moves and adds. A `:%s` takes one `u`
+for each cell it changed.
 
 Insert mode: `ctrl+w` `ctrl+u` delete a word / to the line start, `ctrl+t` `ctrl+d` indent /
 dedent, `ctrl+r x` puts register x, `ctrl+a` the last inserted text, `ctrl+e` `ctrl+y` copy
@@ -215,10 +217,10 @@ selected as a cell), deleting, undoing, searching or switching tabs keeps it; `e
 |---|---|
 | `j` / `k` (`3j`) | Select next / previous cell |
 | `gg` / `G` / `3G` | Select first / last / third cell |
-| `enter` / `i` | Edit the cell (normal / insert mode); on markdown, show its source |
+| `enter` / `i` | Edit the cell (vim normal mode; press `i` again to type); on markdown, show its source |
 | `a` / `b` | Insert a cell above / below |
 | `dd` | Delete cell (`3dd` three; `u` brings them back) |
-| `u` (or `z`) | Undo the last cell action: delete, move, insert, markdown/code switch |
+| `u` (or `z`) / `ctrl+r` | Undo / redo the last change in the notebook: text typed in any cell, cell delete, move, insert, markdown/code switch |
 | `yy` / `x` / `p` / `P` | Copy / cut / paste below / paste above |
 | `J` / `K` | Move the cell down / up |
 | `m` / `y` | Markdown / code cell |

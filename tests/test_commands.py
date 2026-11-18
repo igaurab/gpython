@@ -89,6 +89,8 @@ def test_escape_chain_and_cell_navigation(tmp_path):
         await pilot.press("enter")
         assert app.focused is second.editor and app.ui_mode == "normal"
         await pilot.press("escape", "i")
+        assert app.focused is second.editor and app.ui_mode == "normal"
+        await pilot.press("i")
         assert app.focused is second.editor and app.ui_mode == "insert"
 
         await pilot.press("ctrl+end")
@@ -487,7 +489,7 @@ def test_only_the_focused_editor_paints_a_cursor(tmp_path):
         assert app.focused is second.editor
         assert paints_cursor(second.editor) and second.editor.highlight_cursor_line
         assert not paints_cursor(first.editor) and not first.editor.highlight_cursor_line
-        await pilot.press("escape", "escape", "j", "i")
+        await pilot.press("escape", "escape", "j", "i", "i")
         await pilot.pause()
         assert app.focused is third.editor and app.ui_mode == "insert"
         assert not paints_cursor(first.editor) and not paints_cursor(second.editor)
@@ -565,3 +567,105 @@ def test_cell_timing_toggles_and_persists(tmp_path):
 
 def test_format_duration():
     assert [format_duration(s) for s in (0.0123, 0.42, 1.5, 65)] == ["12ms", "420ms", "1.50s", "1m 05s"]
+
+
+def test_undo_and_redo_are_one_timeline_for_text_and_cells(tmp_path):
+    async def test(app, pilot):
+        def sources():
+            return [c.source for c in app.cells()]
+
+        original = sources()
+        first = app.cells()[0]
+        first.focus()
+        await pilot.press("i")
+        assert app.focused is first.editor and app.ui_mode == "normal"
+        await pilot.press("i", "z", "z", "escape", "escape", "j", "d", "d")
+        await pilot.pause()
+        edited = sources()
+        assert len(edited) == len(original) - 1 and edited[0] == "zz" + original[0]
+
+        await pilot.press("u")
+        await pilot.pause()
+        assert sources() == ["zz" + original[0], *original[1:]]
+        assert app.focused is app.cells()[1] and app.ui_mode == "cell"
+        await pilot.press("u")
+        await pilot.pause()
+        assert sources() == original and app.focused is app.cells()[0]
+        await pilot.press("u")
+        await pilot.pause()
+        assert sources() == original
+
+        await pilot.press("ctrl+r")
+        await pilot.pause()
+        assert sources() == ["zz" + original[0], *original[1:]]
+        await pilot.press("ctrl+r")
+        await pilot.pause()
+        assert sources() == edited
+        await pilot.press("ctrl+r")
+        await pilot.pause()
+        assert sources() == edited
+
+        await pilot.press("u", "u")
+        await pilot.pause()
+        assert sources() == original
+        await pilot.press("ctrl+r", "J")
+        await pilot.pause()
+        moved = sources()
+        await pilot.press("ctrl+r")
+        await pilot.pause()
+        assert sources() == moved
+
+    ui(tmp_path, test)
+
+
+def test_undo_in_the_editor_reaches_other_cells_and_deleted_cells(tmp_path):
+    async def test(app, pilot):
+        def sources():
+            return [c.source for c in app.cells()]
+
+        original = sources()
+        first, second, third = app.cells()
+        first.focus()
+        await pilot.press("i", "i", "q", "escape", "j")
+        assert app.focused is second.editor and first.source == "q" + original[0]
+        await pilot.press("u")
+        await pilot.pause()
+        assert sources() == original and app.focused is first.editor and app.ui_mode == "normal"
+        await pilot.press("ctrl+r")
+        assert first.source == "q" + original[0]
+
+        await pilot.press("escape", "d", "d")
+        await pilot.pause()
+        assert sources() == original[1:]
+        await pilot.press("i", "u")
+        await pilot.pause()
+        assert sources() == ["q" + original[0], *original[1:]]
+        await pilot.press("u")
+        await pilot.pause()
+        assert sources() == original
+        await pilot.press(":", *"redo", "enter")
+        await pilot.pause()
+        assert sources() == ["q" + original[0], *original[1:]]
+        await pilot.press(":", *"undo", "enter")
+        await pilot.pause()
+        assert sources() == original
+
+    ui(tmp_path, test)
+
+
+def test_ctrl_z_in_the_editor_is_a_step_of_the_same_timeline(tmp_path):
+    async def test(app, pilot):
+        original = [c.source for c in app.cells()]
+        first = app.cells()[0]
+        first.focus()
+        await pilot.press("i", "i", "q", "escape", "ctrl+z")
+        await pilot.pause()
+        assert first.source == original[0]
+        await pilot.press("escape", "u")
+        await pilot.pause()
+        assert [c.source for c in app.cells()] == original
+        await pilot.press("ctrl+r")
+        await pilot.pause()
+        assert first.source == "q" + original[0]
+
+    ui(tmp_path, test)

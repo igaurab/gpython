@@ -8,6 +8,13 @@ this file as its notes.
 
 ## [Unreleased]
 
+### Changed
+- Undo is one timeline for the whole notebook. `u` undoes the newest change, in any cell (it goes
+  there): text you typed, or a cell delete, move, add or markdown/code switch. `ctrl+r` does the
+  change again, in the editor and in cell mode; `:undo` and `:redo` do the same. A deleted cell
+  that comes back keeps its text history. The timeline holds 500 steps (was 50 cell actions).
+- `i` on a selected cell opens its editor in normal mode, the same as `enter`; press `i` again to type.
+
 ## [0.2.0] - 2026-11-09
 
 ### Changed

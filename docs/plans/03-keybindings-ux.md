@@ -214,5 +214,9 @@ Files changed, tests summary, bench table, README key table updated, requests fo
 
 `u` in CELL mode undoes the last cell-level action, not just deletions: moves (`J`/`K`,
 `alt+shift+↑/↓`), inserts (`a`/`b`/`ctrl+n`/paste), deletions, kind changes. One stack
-`_undo` of typed actions, capped at `MAX_UNDO`; `z` stays as an alias. Vim NORMAL `u` remains the
-editor's text undo. Implemented together with plan 04's integration.
+`_undo` of typed actions, capped at `MAX_UNDO`; `z` stays as an alias. Implemented together with plan 04's integration.
+
+Later (2026-11-17): text edits are on the same stack as `("text", cid)` entries, a second stack
+`_redo` holds the reverse of each undone entry, and vim NORMAL `u` / `ctrl+r` go through it
+(`pane._history_step`, `pane.undo_from_editor`). A deleted cell's snapshot keeps its id and its
+`TextArea.history`, so undo reaches the text typed in it before the delete.

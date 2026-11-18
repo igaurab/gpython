@@ -85,6 +85,8 @@ def test_edit_and_render_markdown_with_keys(tmp_path):
         assert app.focused is md
 
         await pilot.press("i")
+        assert app.focused is md.editor and app.ui_mode == "normal"
+        await pilot.press("i")
         assert app.focused is md.editor and app.ui_mode == "insert"
         await pilot.press("x")
         third.editor.focus()

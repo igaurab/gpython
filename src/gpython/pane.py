@@ -36,7 +36,7 @@ MOUNT_BATCH = 10
 MOUNT_BUDGET = 100
 WINDOW_STEP = 8
 JUMP_WINDOW = 12
-MAX_UNDO = 50
+MAX_UNDO = 500
 DEBUGGABLE_ERRORS = {
     "IndexError", "KeyError", "ZeroDivisionError", "AssertionError", "ValueError", "TypeError",
     "AttributeError", "RecursionError", "StopIteration", "OverflowError", "UnboundLocalError",
@@ -111,6 +111,8 @@ class NotebookPane(Vertical):
         self._status_key: tuple | None = None
         self.last_focus = None
         self._undo: list[tuple] = []
+        self._redo: list[tuple] = []
+        self._history_lock = asyncio.Lock()
         self._cmd_pending = ""
         self._cmd_count = ""
         self._kind_before_y: str | None = None
@@ -1278,6 +1280,11 @@ class NotebookPane(Vertical):
     def _push_undo(self, action: tuple) -> None:
         self._undo.append(action)
         del self._undo[:-MAX_UNDO]
+        self._redo.clear()
+
+    def text_edited(self, state: CellState) -> None:
+        """A cell's editor began a new undo step (cell.py): text edits share the timeline with cell actions."""
+        self._push_undo(("text", state.cid))
 
     async def _insert(
         self, anchor: Cell | CellState | None, above: bool = False, snapshot: CellSnapshot | None = None, record: bool = True
@@ -1289,6 +1296,9 @@ class NotebookPane(Vertical):
         until the refresh: focus it with `select_state`.
         """
         state = CellState(snapshot.source, snapshot.kind, snapshot.spec) if snapshot else CellState()
+        if snapshot and snapshot.cid:
+            state.cid = state.label = snapshot.cid
+            state.history = snapshot.history
         if snapshot:
             state.replay(snapshot.outputs)
             if snapshot.ran:
@@ -1424,8 +1434,10 @@ class NotebookPane(Vertical):
         index = states.index(cell.state)
         await self._remove_cells(states[index : index + max(1, count)])
 
-    async def _remove_cells(self, victims: list[Cell | CellState], record: bool = True) -> None:
-        """Remove cells; their variables leave the kernel and the cells that used them re-run or go stale; select the next one."""
+    async def _remove_cells(self, victims: list[Cell | CellState], record: bool = True) -> list[CellSnapshot]:
+        """Remove cells; their variables leave the kernel and the cells that used them re-run or go stale; select the next one.
+
+        Returns one snapshot per removed cell (undo puts it back with its id and editor history)."""
         states = self.states
         gone = [state_of(v) for v in victims]
         index = states.index(gone[0])
@@ -1433,17 +1445,19 @@ class NotebookPane(Vertical):
         graph = self.graph()
         downstream = graph.descendants([i for i in ids if i in graph.children]) - set(ids)
         defs = set().union(*(s.last_defs for s in gone))
-        if record:
-            for offset in range(len(gone) - 1, -1, -1):
-                self._push_undo(("delete", self._snapshot(gone[offset], index + offset)))
+        snapshots = [self._snapshot(state, index + offset) for offset, state in enumerate(gone)]
         lo, hi = self._window
         positions = [states.index(s) for s in gone]
         before = sum(1 for p in positions if p < lo)
         inside = sum(1 for p in positions if lo <= p < hi)
         widgets = [s.widget for s in gone if s.widget is not None]
-        for state in gone:
+        for state, snapshot in zip(gone, snapshots):
             state.sleep()
             states.remove(state)
+            snapshot.cid, snapshot.history = state.cid, state.history
+        if record:
+            for snapshot in reversed(snapshots):
+                self._push_undo(("delete", snapshot))
         self._window = (lo - before, hi - before - inside)
         box = self._cells_box
         if widgets:
@@ -1459,6 +1473,7 @@ class NotebookPane(Vertical):
 
         await self.kernel.delete(defs)
         self._rerun_or_mark_stale(downstream)
+        return snapshots
 
     def _rerun_or_mark_stale(self, downstream: set[str]) -> None:
         """Cells that used variables just removed from the kernel: re-run them when reactive, mark them stale when lazy."""
@@ -1472,31 +1487,87 @@ class NotebookPane(Vertical):
         self.run_worker(self.refresh_vars(graph), group="run")
 
     async def undo(self) -> None:
-        """Undo the newest cell-level action: delete, move, insert or kind change."""
-        while self._undo:
-            action = self._undo.pop()
-            if action[0] == "delete":
-                snapshot = action[1]
-                states = self.states
-                if snapshot.index < len(states):
-                    cell = await self._insert(states[snapshot.index], above=True, snapshot=snapshot, record=False)
-                else:
-                    cell = await self._insert(states[-1] if states else None, snapshot=snapshot, record=False)
-                self.select_state(cell.state, "auto")
-                return
-            state = self._state_by_id(action[1])
-            if state is None:
-                continue
-            if action[0] == "move":
-                self._move_to(state, action[2])
-                self.select_state(state, "auto")
-            elif action[0] == "insert":
-                await self._remove_cells([state], record=False)
-            elif action[0] == "kind":
-                await self.set_cell_kind(state, action[2], record=False)
-                self.select_state(state, "auto")
+        """Undo the newest change of the notebook: a text edit in any cell, or a cell delete, move, insert or kind change."""
+        await self._history_step(redo=False)
+
+    async def redo(self) -> None:
+        """Do the newest undone change again; a new change empties what can be redone."""
+        await self._history_step(redo=True)
+
+    async def _history_step(self, redo: bool) -> None:
+        source, target = (self._redo, self._undo) if redo else (self._undo, self._redo)
+        async with self._history_lock:
+            while source:
+                inverse = await self._revert(source.pop(), redo)
+                if inverse is not None:
+                    target.append(inverse)
+                    return
+        self.notify("Nothing to redo" if redo else "Nothing to undo")
+
+    async def _revert(self, action: tuple, redo: bool) -> tuple | None:
+        """Reverse one timeline entry and select its cell. Returns the entry that reverses it back;
+        None when there was nothing to do (the cell is gone, or its editor history is)."""
+        if action[0] == "delete":
+            snapshot = action[1]
+            states = self.states
+            if snapshot.index < len(states):
+                cell = await self._insert(states[snapshot.index], above=True, snapshot=snapshot, record=False)
+            else:
+                cell = await self._insert(states[-1] if states else None, snapshot=snapshot, record=False)
+            self.select_state(cell.state, "auto")
+            return ("insert", cell.state.cid)
+        state = self._state_by_id(action[1])
+        if state is None:
+            return None
+        if action[0] == "text":
+            return action if await self._text_step(state, redo) else None
+        if action[0] == "move":
+            _, cid, start, target = action
+            self._move_to(state, start)
+            self.select_state(state, "auto")
+            return ("move", cid, target, start)
+        if action[0] == "insert":
+            snapshots = await self._remove_cells([state], record=False)
+            return ("delete", snapshots[0])
+        kind_now = state.kind
+        await self.set_cell_kind(state, action[2], record=False)
+        self.select_state(state, "auto")
+        return ("kind", state.cid, kind_now)
+
+    async def _text_step(self, state: CellState, redo: bool) -> bool:
+        """Undo or redo one step of a cell's editor, mounting the cell when it is off screen. False if it has none."""
+        widget = state.widget
+        editor = widget._editor if widget is not None else None
+        if not _has_step(editor.history if editor is not None else state.history, redo):
+            return False
+        if editor is None or not widget.is_mounted:
+            widget = self._reveal(state)
+            await widget._mounted_event.wait()
+            editor = widget._editor
+            if editor is None:
+                return False
+        if redo:
+            editor.redo()
+        else:
+            editor.undo()
+        if state.rendered:
+            await widget.show_rendered()
+        self.select_state(state, "auto")
+        return True
+
+    def undo_from_editor(self, state: CellState, redo: bool) -> None:
+        """u / ctrl+r in a cell's editor. When the newest change is text of that cell it is done at
+        once (macros and :normal rely on that); any other change goes through `undo` / `redo`."""
+        source, target = (self._redo, self._undo) if redo else (self._undo, self._redo)
+        editor = state.widget._editor if state.widget is not None else None
+        if editor is not None and source and source[-1] == ("text", state.cid) and _has_step(editor.history, redo) and not self._history_lock.locked():
+            target.append(source.pop())
+            if redo:
+                editor.redo()
+            else:
+                editor.undo()
             return
-        self.notify("Nothing to undo")
+        self.run_worker(self._history_step(redo), group="history")
 
     def _move_to(self, cell: Cell | CellState, index: int) -> None:
         """Put `cell` at display position `index` (0-based); renumber; mark dirty.
@@ -1848,12 +1919,14 @@ class NotebookPane(Vertical):
                 self.goto_cell(n if had_count else len(self.states), "cell")
             case "enter" | "i":
                 cell.start_editing()
-                self.select(cell, "normal" if key == "enter" else "insert")
+                self.select(cell, "normal")
             case "a" | "b" | "o" | "O" | "shift+o":
                 new = await self._insert(cell, above=key in ("a", "O", "shift+o"))
                 self.select(new, "insert")
             case "u" | "z":
                 await self.undo()
+            case "ctrl+r":
+                await self.redo()
             case "x":
                 await self.cut_cell()
             case "p" | "P":
@@ -1914,6 +1987,11 @@ class NotebookPane(Vertical):
     def _edge(self, event: VimTextArea.EdgeReached) -> None:
         event.stop()
         self.focus_cell(event.step)
+
+
+def _has_step(history, redo: bool) -> bool:
+    """True when an editor history (Textual's EditHistory, or None) has a step to undo, or to redo."""
+    return history is not None and bool(history._redo_stack if redo else history._undo_stack)
 
 
 def _find_match(regex, sources: list[str], index: int, offset: int | None, forward: bool) -> tuple[int, int] | None:

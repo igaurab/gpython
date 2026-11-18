@@ -1207,6 +1207,9 @@ class GPython(App):
 
     action_undo_delete = action_undo
 
+    async def action_redo(self) -> None:
+        await self.pane.redo()
+
     def action_copy_cell(self) -> None:
         self.pane.copy_cell()
 
@@ -1484,6 +1487,8 @@ class GPython(App):
             (("lazy",), "Change the run mode (f3). Lazy: the cells that use this cell become out of date. Reactive: they run again", lambda arg="": self.action_toggle_lazy()),
             (("new",), "Make a new cell below", lambda arg="": self.action_add_cell()),
             (("delete", "del", "d"), "Delete the current cell (in cell mode; in the editor, :d deletes lines as in vim)", lambda arg="": self.action_delete_cell()),
+            (("undo", "u"), "Undo the last change in the notebook: text in any cell, or a cell delete, move, add (u)", lambda arg="": self.action_undo()),
+            (("redo", "red"), "Redo the change that was undone (ctrl+r)", lambda arg="": self.action_redo()),
             (("foldclose", "foldc"), "Fold this cell: hide its code or fold the markdown (zc). :foldclose all folds all cells (zM)", lambda arg="": self.fold_cells("close_all" if arg.strip() == "all" else "close")),
             (("foldopen", "foldo"), "Unfold this cell. :foldopen all unfolds all cells (zR)", lambda arg="": self.fold_cells("open_all" if arg.strip() == "all" else "open")),
             (("digraphs", "dig"), "List the digraphs (in insert mode, press ctrl+k and then two characters)", self._ex_digraphs),

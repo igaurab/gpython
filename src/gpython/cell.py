@@ -37,7 +37,7 @@ STATUS_ICONS = {
     "skipped": ("⊘", "red"),
 }
 
-_CELL_KEYS = {"escape", "enter", "up", "down", "shift+j", "shift+k", "shift+o", "question_mark"}
+_CELL_KEYS = {"escape", "enter", "up", "down", "shift+j", "shift+k", "shift+o", "question_mark", "ctrl+r"}
 
 _ids = itertools.count(1)
 
@@ -88,7 +88,8 @@ def outputs_to_ipynb(snapshot: list[tuple[str, object]], execution_count: int | 
 
 @dataclass
 class CellSnapshot:
-    """Everything needed to bring a deleted (or copied) cell back."""
+    """Everything needed to bring a deleted (or copied) cell back. A deleted cell also keeps its
+    id and its editor history, so the notebook's undo timeline still reaches its text edits."""
 
     index: int
     source: str
@@ -96,6 +97,8 @@ class CellSnapshot:
     ran: bool
     outputs: list[tuple[str, object]]
     spec: notebook.CellSpec | None = None
+    cid: str | None = None
+    history: object | None = None
 
 
 def percentile(ordered: list[float], p: float) -> float:
@@ -556,6 +559,7 @@ class Cell(Vertical):
         if state.history is not None:
             self._editor.history = state.history
             state.history = None
+        self._editor.undo_log = self
         yield self._editor
         if markdown:
             self._view = MarkdownView(state.source, marimo=True)
@@ -597,6 +601,20 @@ class Cell(Vertical):
                 node = node.parent
             self._pane = node
         return self._pane
+
+    def text_batch_started(self) -> None:
+        """The editor began a new undo step: it goes on the notebook's undo timeline."""
+        pane = self.pane
+        if pane is not None:
+            pane.text_edited(self.state)
+
+    def undo_requested(self, redo: bool) -> bool:
+        """u / ctrl+r in the editor: the pane undoes the newest change of the notebook. False with no pane."""
+        pane = self.pane
+        if pane is None:
+            return False
+        pane.undo_from_editor(self.state, redo)
+        return True
 
     @property
     def editor(self) -> VimTextArea:

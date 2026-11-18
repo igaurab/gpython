@@ -41,7 +41,7 @@
 - Line folds inside a TextArea are not feasible (no hidden-line support); folds = cells' hide_code / markdown fold.
 
 ## Not done
-- `gn`, `d/pattern`, `q:`, `gR`, `:N` still jumps to cell N (not line N), notebook-wide undo, line folds.
+- `gn`, `d/pattern`, `q:`, `gR`, `:N` still jumps to cell N (not line N), line folds.
 
 ## Next: standalone package
 vim.py touches gpython in: `focus()` (`app.cell_mode`), `on_mount` (`app.editor_theme_pair`),

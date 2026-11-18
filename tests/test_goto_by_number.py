@@ -166,7 +166,7 @@ def test_g_in_insert_mode_types_g(tmp_path):
     async def test(app, pilot):
         cell = app.cells()[0]
         cell.focus()
-        await pilot.press("i", "g", "6")
+        await pilot.press("i", "i", "g", "6")
         await pilot.pause()
         assert app._number_sequence is None and cell.source.startswith("g6")
 

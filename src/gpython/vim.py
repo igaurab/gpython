@@ -711,6 +711,7 @@ class VimTextArea(TextArea):
         self._changes: list[Location] = []
         self._change_index = 0
         self._line_undo: tuple[int, str] | None = None
+        self.undo_log = None
         self._inserted = ""
         self._insert_pending = ""
         self._block_eol = False
@@ -872,7 +873,11 @@ class VimTextArea(TextArea):
         top = edit.top[0]
         if self._line_undo is None or self._line_undo[0] != top:
             self._line_undo = (top, self.document.get_line(top))
+        batches = self.history._undo_stack
+        newest = batches[-1] if batches else None
         result = super().edit(edit)
+        if self.undo_log is not None and batches and batches[-1] is not newest:
+            self.undo_log.text_batch_started()
         self._note_change(result.end_location, self.document.line_count != rows_before)
         if self.soft_wrap or self.document.line_count != rows_before or self.gutter_width != gutter_before:
             self.refresh()
@@ -1542,10 +1547,10 @@ class VimTextArea(TextArea):
                 self._search_word(key == "*", n)
             case "u":
                 self._no_dot = True
-                self.undo()
+                self._history_step(redo=False)
             case "ctrl+r":
                 self._no_dot = True
-                self.redo()
+                self._history_step(redo=True)
             case ":":
                 self.post_message(self.ExCommand(self))
             case _:
@@ -1640,6 +1645,24 @@ class VimTextArea(TextArea):
             return
         self.replace(char * n, (row, col), (row, col + n), maintain_selection_offset=False)
         self.move_cursor((row, col + n - 1))
+
+    def _history_step(self, redo: bool) -> None:
+        """u / ctrl+r: one step of the notebook's undo timeline (`undo_log`, the cell); alone, of this editor's."""
+        log = self.undo_log
+        if log is not None and log.undo_requested(redo):
+            return
+        if redo:
+            self.redo()
+        else:
+            self.undo()
+
+    def action_undo(self) -> None:
+        """ctrl+z, Textual's own undo key: the same step as u, so the notebook's timeline stays in order."""
+        self._history_step(redo=False)
+
+    def action_redo(self) -> None:
+        """ctrl+y outside insert mode, Textual's own redo key: the same step as ctrl+r."""
+        self._history_step(redo=True)
 
     def _undo_line(self) -> None:
         """U: put the line back the way it was before the latest run of changes to it (U again redoes)."""

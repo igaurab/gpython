@@ -294,3 +294,29 @@ def test_normal_over_the_whole_notebook_is_refused_for_cells_off_screen(tmp_path
         assert [state.source for state in app.pane.states] == before
 
     run(tmp_path, test)
+
+
+def test_undo_and_redo_reach_a_text_edit_in_a_cell_off_screen(tmp_path):
+    async def test(app, pilot):
+        pane = app.pane
+        pane.goto_cell(250, "normal")
+        await settle(app, pilot)
+        target = pane.states[249]
+        await pilot.press("i", "x", "escape")
+        assert target.source.startswith("xv249")
+        pane.goto_cell(1, "cell")
+        await settle(app, pilot)
+        assert target.widget is None
+        await pilot.press("u")
+        await settle(app, pilot)
+        assert target.source == "v249 = 249\nprint(249)"
+        assert target.widget is not None and app.focused is target.widget
+        assert mounted(pane) == list(range(*pane._window))
+        pane.goto_cell(1, "cell")
+        await settle(app, pilot)
+        assert target.widget is None
+        await pilot.press("ctrl+r")
+        await settle(app, pilot)
+        assert target.source.startswith("xv249") and app.focused is target.widget
+
+    run(tmp_path, test)
