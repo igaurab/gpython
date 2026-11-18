@@ -9,7 +9,7 @@
 A Python notebook in the terminal, inspired by [marimo](https://github.com/marimo-team/marimo):
 cells know which variables they define and use, and runs follow that graph.
 
-<img width="1372" height="1034" alt="image" src="https://github.com/user-attachments/assets/c93ed22f-cf15-4a26-9322-c62c940febf5" />
+<img width="3010" height="2100" alt="image" src="https://github.com/user-attachments/assets/b4f5e14d-396a-4c20-869f-97be0435d327" />
 
 ## Performance
 
