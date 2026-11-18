@@ -1,4 +1,9 @@
-# gpython
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/gpython-logo-dark.svg">
+    <img alt="gpython" src="docs/images/gpython-logo-light.svg" width="320" height="62">
+  </picture>
+</h1>
 
 A Python notebook in the terminal, inspired by marimo: cells know which
 variables they define and use, and runs follow that graph.
@@ -7,6 +12,11 @@ Running a cell first runs the stale cells it depends on, then the cell. The cell
 below it that use its variables are only marked stale (**lazy**, the default) or
 re-run automatically (**reactive**, like marimo); `f3` switches. See
 [Running cells](https://github.com/igaurab/gpython/wiki/Running-cells).
+
+**Concurrent cells** (`:set concurrent`, off by default): cells of a run that share no
+state run at the same time, on threads in the one kernel. gpython works out from the code
+which cells are safe to run together; `:groups` shows the groups. See
+[Concurrent cells](https://github.com/igaurab/gpython/wiki/Running-cells#concurrent-cells).
 
 <img width="1372" height="1034" alt="image" src="https://github.com/user-attachments/assets/c93ed22f-cf15-4a26-9322-c62c940febf5" />
 
