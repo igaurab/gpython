@@ -8,6 +8,14 @@ this file as its notes.
 
 ## [Unreleased]
 
+### Fixed
+- `asyncio.run(...)` works inside a cell, and so does a library that calls it for you. It used to
+  fail with "asyncio.run() cannot be called from a running event loop". `loop.run_until_complete`,
+  `asyncio.Runner` and `anyio.run` work too. Nothing to import or turn on, and cells that use
+  `await` run as fast as before.
+- Interrupt stops a cell that is waiting in `await`, such as `await asyncio.sleep(30)`. It used
+  to keep running until something else happened in the kernel.
+
 ### Changed
 - Undo is one timeline for the whole notebook. `u` undoes the newest change, in any cell (it goes
   there): text you typed, or a cell delete, move, add or markdown/code switch. `ctrl+r` does the

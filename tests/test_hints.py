@@ -26,9 +26,9 @@ def test_other_errors_and_broken_source_get_no_or_the_general_hint():
     assert "await the coroutine" in hints.event_loop(NESTED, "def (:")
 
 
-def test_a_cell_that_calls_asyncio_run_shows_the_hint(tmp_path):
+def test_a_cell_that_calls_asyncio_run_runs_without_the_hint(tmp_path):
     path = tmp_path / "nb.py"
-    source = "import asyncio\n\nasync def main():\n    return 42\n\nanswer = asyncio.run(main())"
+    source = "import asyncio\n\nasync def main():\n    return 42\n\nanswer = asyncio.run(main())\nprint(answer)"
     notebook.save(path, [CellSpec(source)])
 
     async def main():
@@ -42,8 +42,8 @@ def test_a_cell_that_calls_asyncio_run_shows_the_hint(tmp_path):
             for _ in range(3):
                 await pilot.pause()
                 await app.workers.wait_for_complete()
-            assert cell.status == "error"
-            assert "write await main() instead" in cell.output_text
-            assert ":debug" not in cell.output_text
+            assert cell.status != "error"
+            assert "42" in cell.output_text
+            assert "await main()" not in cell.output_text
 
     asyncio.run(asyncio.wait_for(main(), 90))
