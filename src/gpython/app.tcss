@@ -155,8 +155,21 @@ Prompt {
     background: transparent;
 }
 
+#prompt-box {
+    height: auto;
+}
+
+#prompt-suggestions {
+    height: auto;
+    max-height: 10;
+    border: none;
+    border-top: solid $accent;
+    background: $surface;
+    padding: 0 1;
+    scrollbar-size-vertical: 1;
+}
+
 #prompt {
-    dock: bottom;
     height: 3;
     background: $surface;
     border-top: solid $accent;

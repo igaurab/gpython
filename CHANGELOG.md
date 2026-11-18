@@ -8,6 +8,16 @@ this file as its notes.
 
 ## [Unreleased]
 
+### Added
+- The `:` prompt shows suggestions. `:s` lists each command that starts with `s`, with one line
+  that says what it does. After a command and a space, the list shows what the command takes:
+  the options of `:set` (and the values after `=`, as in `:set cursor=`), the themes for `:theme`,
+  folders and notebooks for `:e` `:sp` `:vs` `:tabnew` `:w`, the open notebooks for `:b` and `:bd`,
+  and the words of `:img` `:copy` `:uv` `:pip` `:tabmove` `:foldclose`. `tab` / `shift+tab`
+  (or `down` / `up`, `ctrl+n` / `ctrl+p`) go through the rows and put the row in the prompt;
+  `enter` runs the line. A click on a row does the same as `tab`. After a range (`:'<,'>`) the
+  list shows the line commands (`s` `d` `j` `m` `t` `normal` ...).
+
 ### Fixed
 - `asyncio.run(...)` works inside a cell, and so does a library that calls it for you. It used to
   fail with "asyncio.run() cannot be called from a running event loop". `loop.run_until_complete`,

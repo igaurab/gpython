@@ -18,10 +18,10 @@ from textual import events, on
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
 from textual.color import Color
-from textual.containers import Horizontal
+from textual.containers import Horizontal, Vertical
 from textual.reactive import Reactive
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Header, Input, Label, Static, Tree
+from textual.widgets import Header, Input, Label, OptionList, Static, Tree
 from textual.widgets._header import HeaderIcon
 
 from . import bigtext, config, images, imageview
@@ -125,19 +125,81 @@ class NotebookScreen(Screen):
     focused: Reactive = Reactive(None, repaint=False)
 
 
+def _fit(text: str, width: int) -> str:
+    """`text` on one row of `width` columns; a longer text ends in an ellipsis."""
+    return text if len(text) <= width else text[: max(width - 1, 0)] + "…"
+
+
 class Prompt(ModalScreen[str | None]):
-    """A one-line input at the bottom, used for ':' commands and 'save as'."""
+    """A one-line input at the bottom, used for ':' commands and 'save as'.
 
-    BINDINGS = [Binding("escape", "dismiss(None)", show=False)]
+    With `suggest` (a function from the typed text to exsuggest.Suggestion rows) a list of
+    suggestions shows above the input. tab / shift+tab (or down / up, ctrl+n / ctrl+p) go
+    through the rows and put the row's text in the input; enter runs what the input holds.
+    The rows stay the same while you go through them and change when you type."""
 
-    def __init__(self, label: str, value: str = "", placeholder: str = "") -> None:
+    BINDINGS = [
+        Binding("escape", "dismiss(None)", show=False),
+        Binding("tab,down,ctrl+n", "suggestion(1)", show=False, priority=True),
+        Binding("shift+tab,up,ctrl+p", "suggestion(-1)", show=False, priority=True),
+    ]
+    APP_ACTIONS_OFF = {"add_cell", "command_palette"}
+
+    def __init__(self, label: str, value: str = "", placeholder: str = "", suggest=None) -> None:
         super().__init__()
         self.label, self.value, self.placeholder = label, value, placeholder
+        self.suggest = suggest
+        self.suggestions: list = []
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="prompt"):
-            yield Label(self.label)
-            yield Input(value=self.value, placeholder=self.placeholder)
+        with Vertical(id="prompt-box"):
+            if self.suggest is not None:
+                options = OptionList(id="prompt-suggestions")
+                options.can_focus = False
+                yield options
+            with Horizontal(id="prompt"):
+                yield Label(self.label)
+                yield Input(value=self.value, placeholder=self.placeholder)
+
+    def on_mount(self) -> None:
+        self._show_suggestions(self.value)
+
+    @on(Input.Changed)
+    def _typed(self, event: Input.Changed) -> None:
+        self._show_suggestions(event.value)
+
+    def _show_suggestions(self, line: str) -> None:
+        if self.suggest is None:
+            return
+        self.suggestions = rows = self.suggest(line)
+        width = max((len(row.label) for row in rows), default=0) + 2
+        room = max(self.app.size.width - width - 3, 0)
+        options = self.query_one(OptionList)
+        options.set_options(Text.assemble((row.label.ljust(width), "bold"), (_fit(row.detail, room).ljust(room), "dim")) for row in rows)
+        options.display = bool(rows)
+
+    def action_suggestion(self, step: int) -> None:
+        if not self.suggestions:
+            return
+        options = self.query_one(OptionList)
+        current = options.highlighted
+        if current is None:
+            current = -1 if step > 0 else 0
+        options.highlighted = (current + step) % len(self.suggestions)
+        options.scroll_to_highlight()
+        self._take(options.highlighted)
+
+    def _take(self, index: int) -> None:
+        """Put the row's text in the input; the list stays as it is."""
+        field = self.query_one(Input)
+        with field.prevent(Input.Changed):
+            field.value = self.suggestions[index].line
+        field.cursor_position = len(field.value)
+
+    @on(OptionList.OptionSelected)
+    def _clicked(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        self._take(event.option_index)
 
     @on(Input.Submitted)
     def _submit(self, event: Input.Submitted) -> None:
@@ -1410,8 +1472,10 @@ class GPython(App):
         self.tab_switch(event.tab, event.step)
 
     def _open_ex(self, initial: str = "") -> None:
+        from .exsuggest import suggester
+
         self._prompt_mode = self.ui_mode
-        self.push_screen(Prompt(":", value=initial), self._run_ex)
+        self.push_screen(Prompt(":", value=initial, suggest=suggester(self)), self._run_ex)
 
     def _open_search(self, backward: bool = False) -> None:
         self._prompt_mode = self.ui_mode
