@@ -48,6 +48,7 @@ gpython                    # empty untitled notebook
 gpython script.py          # a plain script is split into cells automatically
 gpython a.py b.py          # several files: one tab each (gt / gT switch)
 gpython notebooks/         # a directory: opens the file explorer there
+gpy script.py              # gpy is a short alias for gpython; every form above works with it
 ```
 
 More options are on the [Command line](https://github.com/igaurab/gpython/wiki/Command-line) page.
