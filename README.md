@@ -9,11 +9,6 @@
 A Python notebook in the terminal, inspired by [marimo](https://github.com/marimo-team/marimo):
 cells know which variables they define and use, and runs follow that graph.
 
-Running a cell first runs the stale cells it depends on, then the cell. The cells
-below it that use its variables are only marked stale (**lazy**, the default) or
-re-run automatically (**reactive**, like marimo); `f3` switches. See
-[Running cells](https://github.com/igaurab/gpython/wiki/Running-cells).
-
 <img width="1372" height="1034" alt="image" src="https://github.com/user-attachments/assets/c93ed22f-cf15-4a26-9322-c62c940febf5" />
 
 ## Performance
@@ -53,35 +48,15 @@ gpython                    # empty untitled notebook
 gpython script.py          # a plain script is split into cells automatically
 gpython a.py b.py          # several files: one tab each (gt / gT switch)
 gpython notebooks/         # a directory: opens the file explorer there
-gpython --no-vim nb.py     # plain editing, no modal keys
-gpython --theme nord nb.py # colour theme for this run (ctrl+t picks one and remembers it)
 ```
 
-Files: `.py` notebooks (plain scripts, `# %%` cells, Jupytext markdown cells),
-marimo notebooks (`@app.cell`) and `.ipynb`; see [File formats](https://github.com/igaurab/gpython/wiki/File-formats).
-
-## First keys
-
-Three modes, shown in the top bar: **INSERT** (typing), **NORMAL** (vim keys in the
-editor) and **CELL** (the whole cell is selected and keys act on cells). `escape` goes
-INSERT → NORMAL → CELL; `enter` or `i` goes back into the editor.
-
-| Key | Action |
-|---|---|
-| `shift+enter` | Run the cell and go to the next one |
-| `ctrl+enter` | Run the cell, stay |
-| `f5` / `f4` | Run all / run the stale cells |
-| `ctrl+k` | Interrupt |
-| `a` / `b` / `dd` (cell mode) | New cell above / below, delete the cell |
-| `ctrl+b` | File explorer |
-| `ctrl+s` / `:w` | Save |
-| `ctrl+q` / `:q` | Quit |
-| `f1` | Every key |
+More options are on the [Command line](https://github.com/igaurab/gpython/wiki/Command-line) page.
 
 ## Documentation
 
 The full documentation is in the [wiki](https://github.com/igaurab/gpython/wiki):
 
+- [Command line](https://github.com/igaurab/gpython/wiki/Command-line): every option, such as `--no-vim` and `--theme`
 - [Running cells](https://github.com/igaurab/gpython/wiki/Running-cells): run modes, the `r …` run keys, concurrent cells, the rules
 - [Keys](https://github.com/igaurab/gpython/wiki/Keys) and [Vim](https://github.com/igaurab/gpython/wiki/Vim): every key and ex command
 - [Variables and the debugger](https://github.com/igaurab/gpython/wiki/Variables-and-the-debugger)
@@ -92,8 +67,3 @@ The full documentation is in the [wiki](https://github.com/igaurab/gpython/wiki)
 - [Themes and status bar](https://github.com/igaurab/gpython/wiki/Themes-and-status-bar)
 - [File formats](https://github.com/igaurab/gpython/wiki/File-formats): scripts, `# %%`, marimo, `.ipynb`
 - [Development](https://github.com/igaurab/gpython/wiki/Development): source layout, tests, releases
-
-**Concurrent cells** (`:set concurrent`, off by default): cells of a run that share no
-state run at the same time, on threads in the one kernel. gpython works out from the code
-which cells are safe to run together; `:groups` shows the groups. See
-[Concurrent cells](https://github.com/igaurab/gpython/wiki/Running-cells#concurrent-cells).
