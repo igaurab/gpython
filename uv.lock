@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.13"
 
 [[package]]
@@ -25,7 +25,7 @@ name = "cffi"
 version = "2.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pycparser", marker = "implementation_name != 'PyPy'" },
+    { name = "pycparser" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/9e/ef/008a1939e372c06329a3fce4279c02f328488f3526744906eeec3da7ad5f/cffi-2.1.1.tar.gz", hash = "sha256:dd31f52ea1086513bb9df30f8fcee9b8918323ae067a3d5b78bc826a000712be", size = 530807, upload-time = "2026-08-03T21:21:18.939Z" }
 wheels = [
@@ -157,11 +157,14 @@ source = { editable = "." }
 dependencies = [
     { name = "ipykernel" },
     { name = "jupyter-client" },
+    { name = "markdown-it-py" },
     { name = "pillow" },
     { name = "psutil" },
+    { name = "rich" },
     { name = "textual", extra = ["syntax"] },
     { name = "textual-image" },
     { name = "threadpoolctl" },
+    { name = "tree-sitter" },
 ]
 
 [package.dev-dependencies]
@@ -174,11 +177,14 @@ dev = [
 requires-dist = [
     { name = "ipykernel", specifier = ">=7.4.0" },
     { name = "jupyter-client", specifier = ">=8.10.0" },
+    { name = "markdown-it-py", specifier = ">=2.1.0" },
     { name = "pillow", specifier = ">=13.0.0" },
     { name = "psutil", specifier = ">=7.2.2" },
+    { name = "rich", specifier = ">=14.2.0" },
     { name = "textual", extras = ["syntax"], specifier = ">=8.2.8" },
     { name = "textual-image", specifier = ">=0.14.2" },
     { name = "threadpoolctl", specifier = ">=3.5" },
+    { name = "tree-sitter", specifier = ">=0.25.0" },
 ]
 
 [package.metadata.requires-dev]

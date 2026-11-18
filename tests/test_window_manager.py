@@ -6,7 +6,7 @@ import asyncio
 import pytest
 
 from gpython.app import GPython
-from gpython.manager import WindowManager, build_rows, draw_map
+from gpython.manager import WindowManager, draw_map
 from gpython.vim import VimTextArea
 from gpython.windows import Branch, Leaf, Tab, panes_of
 

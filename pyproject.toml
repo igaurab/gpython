@@ -10,11 +10,14 @@ requires-python = ">=3.13"
 dependencies = [
     "ipykernel>=7.4.0",
     "jupyter-client>=8.10.0",
+    "markdown-it-py>=2.1.0",
     "pillow>=13.0.0",
     "psutil>=7.2.2",
+    "rich>=14.2.0",
     "textual-image>=0.14.2",
     "textual[syntax]>=8.2.8",
     "threadpoolctl>=3.5",
+    "tree-sitter>=0.25.0",
 ]
 
 [project.scripts]

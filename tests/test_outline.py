@@ -2,7 +2,6 @@
 
 import asyncio
 
-from textual.widgets import Tree
 
 from gpython import notebook
 from gpython.app import GPython

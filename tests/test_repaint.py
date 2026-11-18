@@ -13,7 +13,6 @@ from textual.geometry import Region
 from gpython.app import GPython
 from gpython.cell import CELL_MODE_BAR, DEBUG_BAR, STALE_BAR
 from gpython.vim import MODE_CURSOR_COLORS
-from gpython.vim import VimTextArea
 
 
 def strips(editor):

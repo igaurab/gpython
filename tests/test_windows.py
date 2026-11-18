@@ -6,7 +6,6 @@ import pytest
 
 from gpython.app import GPython, KeyCapture
 from gpython.explorer import Explorer
-from gpython.pane import NotebookPane
 from gpython.vim import VimTextArea
 from gpython.windows import Branch, Leaf, arrange, remove_leaf, split_leaf
 from textual.geometry import Region

@@ -4,8 +4,7 @@ import asyncio
 import json
 
 from gpython.app import GPython
-from gpython.notebook import CellSpec, load_cells
-from gpython.vim import VimTextArea
+from gpython.notebook import load_cells
 
 
 def ui(path, test):

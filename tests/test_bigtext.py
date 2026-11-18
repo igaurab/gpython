@@ -3,7 +3,6 @@
 import asyncio
 import base64
 import io
-import time
 
 import pytest
 from PIL import Image, ImageFont
