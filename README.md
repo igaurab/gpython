@@ -65,5 +65,6 @@ The full documentation is in the [wiki](https://github.com/igaurab/gpython/wiki)
 - [Python environments](https://github.com/igaurab/gpython/wiki/Python-environments): venvs, uv, installing packages
 - [Images](https://github.com/igaurab/gpython/wiki/Images): figures in the terminal
 - [Themes and status bar](https://github.com/igaurab/gpython/wiki/Themes-and-status-bar)
+- [Configuration](https://github.com/igaurab/gpython/wiki/Configuration): every setting, such as concurrent cells and the run mode
 - [File formats](https://github.com/igaurab/gpython/wiki/File-formats): scripts, `# %%`, marimo, `.ipynb`
 - [Development](https://github.com/igaurab/gpython/wiki/Development): source layout, tests, releases
