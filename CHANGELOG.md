@@ -8,6 +8,8 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-18
+
 ### Added
 - An update command. `gpython --update` gets the newest release from PyPI with the tool that
   installed gpython (uv, pipx or pip), and says which version you have after it.
@@ -48,6 +50,9 @@ this file as its notes.
   bottom. The direction comes before the file name; `:sp` and `:vs` take it too.
 
 ### Fixed
+- A file opened in an empty split no longer makes the other window scroll.
+- A new cell at the end of a long notebook (more than 100 cells), added immediately after a
+  jump with `G`, no longer stops gpython with an error.
 - `asyncio.run(...)` works inside a cell, and so does a library that calls it for you. It used to
   fail with "asyncio.run() cannot be called from a running event loop". `loop.run_until_complete`,
   `asyncio.Runner` and `anyio.run` work too. Nothing to import or turn on, and cells that use
@@ -217,7 +222,8 @@ First release on PyPI as `gpynb`: `uv tool install gpynb` gives the `gpython` co
 - Performance work so a keystroke paints in under 10 ms and the first frame is on screen
   within about 0.3 s of launch, with `scripts/bench.py` to keep it that way.
 
-[Unreleased]: https://github.com/igaurab/gpython/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/igaurab/gpython/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/igaurab/gpython/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/igaurab/gpython/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/igaurab/gpython/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/igaurab/gpython/compare/v0.1.0...v0.1.1
