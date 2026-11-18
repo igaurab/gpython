@@ -1700,9 +1700,12 @@ class NotebookPane(Vertical):
     def save(self, then=None) -> None:
         """Save; ask for a name when untitled. `then` runs after a successful save."""
         if self.path is None:
+            from . import scratchpad
             from .app import Prompt
 
-            self.app.push_screen(Prompt("Save as: ", placeholder="notebook.py"), lambda name: self.saved_as(name, then))
+            folder = scratchpad.folder()
+            where = f"notebook.py  (in {scratchpad.shown(folder)})" if folder is not None else "notebook.py"
+            self.app.push_screen(Prompt("Save as: ", placeholder=where), lambda name: self.saved_as(name, then))
         else:
             self.write_file()
             if then is not None:
@@ -1711,7 +1714,11 @@ class NotebookPane(Vertical):
     async def saved_as(self, name: str | None, then=None) -> None:
         if not name:
             return
-        self.path = Path(name).expanduser()
+        from . import scratchpad
+
+        target = scratchpad.resolve(name) if self.path is None else Path(name).expanduser()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        self.path = target
         self.write_file()
         self.app.update_status()
         if self.kernel.ready.is_set():

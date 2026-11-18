@@ -35,6 +35,17 @@ uvx --from gpynb gpython     # or run it once without installing anything
 pipx install gpynb           # if you use pipx instead of uv
 ```
 
+Then turn on tab completion in your shell (bash, zsh, fish or PowerShell), once:
+
+```sh
+gpy --install-completions    # gpy --th + tab gives --theme; run it again after an upgrade
+```
+
+It writes one script under `~/.config` and adds one line to your shell's start-up
+file (`~/.zshrc`, `~/.bashrc` or the PowerShell profile; fish needs no line). Open a
+new terminal to use it. `gpy --completions zsh` prints the script if you want to
+place it yourself.
+
 From a checkout, `./gpython` runs the working copy (it creates the venv on
 first use); `uv run gpython` does the same. To use the working copy from any
 directory without root, `uv tool install --editable .` puts `gpython` and `gpy`

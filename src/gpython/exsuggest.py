@@ -121,6 +121,7 @@ STATIC_ARGUMENTS: dict[str, Candidates] = {
 }
 
 NOTEBOOK_FILE_COMMANDS = ("e", "e!", "sp", "vs", "tabnew", "w", "wq", "wqa")
+SAVE_COMMANDS = ("w", "wq", "wqa")
 FOLDER_COMMANDS = ("Ex",)
 BUFFER_COMMANDS = ("b", "bd", "bd!")
 
@@ -229,6 +230,15 @@ def buffer_candidates(app) -> Candidates:
     return rows
 
 
+def _save_folder(app, command: str, typed: str) -> Path | None:
+    """The scratchpad folder, when `command` saves an untitled notebook under a name with no folder of its own."""
+    if command not in SAVE_COMMANDS or app.pane.path is not None:
+        return None
+    from . import scratchpad
+
+    return None if scratchpad.names_its_own_folder(typed) else scratchpad.folder()
+
+
 def argument_candidates(app, command: str, typed: str) -> Candidates:
     """What the command `command` (its first name in ex_commands) takes after the space."""
     if command in STATIC_ARGUMENTS:
@@ -242,7 +252,7 @@ def argument_candidates(app, command: str, typed: str) -> Candidates:
     if command in NOTEBOOK_FILE_COMMANDS:
         from .explorer import NOTEBOOK_SUFFIXES
 
-        return path_candidates(typed, tuple(NOTEBOOK_SUFFIXES))
+        return path_candidates(typed, tuple(NOTEBOOK_SUFFIXES), _save_folder(app, command, typed))
     if command in FOLDER_COMMANDS:
         return path_candidates(typed, None)
     return []

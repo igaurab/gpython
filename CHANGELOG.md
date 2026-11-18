@@ -9,6 +9,18 @@ this file as its notes.
 ## [Unreleased]
 
 ### Added
+- A scratchpad folder for new notebooks. `gpython --scratchpad DIR` remembers DIR for every
+  later launch (`gpy --scratchpad .` is the folder you are in; a missing folder is made). After
+  that, a new untitled notebook saved under a plain name, as in `:w save.py` or `ctrl+s`, goes
+  to that folder, and the save prompt shows the folder. A name that says where it goes
+  (`./save.py`, `../save.py`, `~/save.py`, `/tmp/save.py`) is used as typed. With no scratchpad
+  folder the file goes to the folder gpython was started in, as before. `gpython --scratchpad ""`
+  forgets the folder. The setting is `scratchpad` in `~/.config/gpython/config.toml`.
+- Tab completion in the shell for `gpython` and `gpy`: `gpy --scra` + tab gives `--scratchpad`,
+  `gpy --theme ` + tab lists the themes, and a file argument lists folders and notebooks.
+  `gpython --install-completions` sets it up for your shell (bash, zsh, fish or PowerShell): it
+  writes the script under `~/.config` and adds one line to the shell's start-up file. Run it
+  again after an upgrade. `gpython --completions SHELL` prints the script to place by hand.
 - The `:` prompt shows suggestions. `:s` lists each command that starts with `s`, with one line
   that says what it does. After a command and a space, the list shows what the command takes:
   the options of `:set` (and the values after `=`, as in `:set cursor=`), the themes for `:theme`,
