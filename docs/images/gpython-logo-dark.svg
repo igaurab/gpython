@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="370 128 1034 200">
+  <title>gpython</title>
+  <path fill="#b9ff00" d="M551 143h83v171h-83z"/>
+  <g fill="#f7f3ea" fill-rule="evenodd">
+    <path d="M385 143h69l77 84-77 87h-69l78-87z"/>
+    <path d="M706 182h35l6 4v-4h23v103l-20 21h-44l-18-17v-13h20l8 9h24l7-7v-16l-7 5h-34l-19-18v-49zm10 22-6 6v30l6 6h25l6-5v-32l-6-5z"/>
+    <path d="M793 182h22v5l6-5h35l19 18v53l-19 18h-35l-6-5v40h-22zm28 22-6 5v35l6 5h25l7-7v-31l-7-7z"/>
+    <path d="M889 182h24l22 62 21-62h23l-38 110-16 14h-29v-21h21l6-7z"/>
+    <path d="M1014 153h23v28h34v22h-34v40l7 7h27v22h-37l-20-19v-50h-19v-22h19z"/>
+    <path d="M1096 143h23v43l7-6h34l17 18v74h-22v-64l-6-6h-24l-6 6v64h-23z"/>
+    <path d="M1219 180h47l18 18v55l-18 19h-47l-18-19v-55zm10 22-6 7v34l6 7h26l7-7v-34l-7-7z"/>
+    <path d="M1306 180h23v6l7-6h34l18 18v74h-22v-64l-6-6h-25l-6 6v64h-23z"/>
+  </g>
+</svg>
