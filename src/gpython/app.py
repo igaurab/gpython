@@ -302,6 +302,7 @@ class GPython(App):
         VimTextArea.line_numbers = settings.get("line_numbers", True) is not False
         Cell.show_timing = settings.get("timing") is True
         self.status_bar = settings.get("status_bar", True) is not False
+        self.keep_markers = settings.get("markers", True) is not False
         VimTextArea.insert_cursor = self._insert_cursor_setting(settings.get("insert_cursor"))
         bigtext.enabled = settings.get("experimental.true_markdown") is True
         VimTextArea.search = None
@@ -623,6 +624,24 @@ class GPython(App):
             if on:
                 self._status.start()
         config.save({"status_bar": on})
+
+    def set_markers(self, on: bool) -> None:
+        """:set markers|nomarkers: keep or remove the `# %%` lines of a .py file on save; saved as `markers`."""
+        self.keep_markers = on
+        config.save({"markers": on})
+        if on:
+            self.notify("A .py file that has # %% lines keeps them. A file without them stays without them")
+        else:
+            self.notify("Each save writes a .py file without # %% lines. gpython keeps where the cells are in ~/.gpython")
+
+    def _ex_clean(self, arg: str = "") -> None:
+        """:clean saves this .py file without its `# %%` lines."""
+        pane = self.pane
+        problem = pane.remove_markers()
+        if problem is not None:
+            self.notify(problem, severity="warning")
+            return
+        self.notify(f"Saved {pane.path.name} without # %% lines. gpython keeps where the cells are in ~/.gpython")
 
     def find_open(self, path: Path) -> NotebookPane | None:
         """The buffer (shown or hidden) for `path`, if the file is open."""
@@ -1557,7 +1576,8 @@ class GPython(App):
             (("restart",), "Restart the kernel", lambda arg="": self.action_restart_kernel()),
             (("clear",), "Clear all outputs", lambda arg="": self.pane.clear_outputs()),
             (("img", "image"), "Show this cell's image on the full screen (v in cell mode; :img 2 shows the second). :img save [N] [file] saves it as PNG next to the notebook. :img open [N] opens it in the browser. :img save all and :img open all use all cells", self._ex_image),
-            (("set",), "Options: vim novim lazy nolazy concurrent noconcurrent concurrency=N concurrent_verify noconcurrent_verify nu nonu time notime autoinstall noautoinstall statusbar nostatusbar cursor=bar|underline|block. Debugger history: debug_detail=full|balanced|lean|auto (full is the default; auto is full until 10,000 steps, then balanced), debug_history=200MB debug_events debug_thinning=on|off debug_repr_chars debug_strip_items debug_grid_size debug_stats=watched|cpu|off. debug_<key>? shows the current value", self._ex_set),
+            (("set",), "Options: vim novim lazy nolazy concurrent noconcurrent concurrency=N concurrent_verify noconcurrent_verify nu nonu time notime autoinstall noautoinstall statusbar nostatusbar markers nomarkers cursor=bar|underline|block. Debugger history: debug_detail=full|balanced|lean|auto (full is the default; auto is full until 10,000 steps, then balanced), debug_history=200MB debug_events debug_thinning=on|off debug_repr_chars debug_strip_items debug_grid_size debug_stats=watched|cpu|off. debug_<key>? shows the current value", self._ex_set),
+            (("clean",), "Save this .py file without its # %% lines. gpython keeps where the cells are in ~/.gpython. :set nomarkers does this for each file that you save", self._ex_clean),
             (("copy", "yank"), "Copy to the clipboard. :copy copies this cell. :copy all copies the notebook as code, with markdown as comments. :copy all metadata also keeps the # %% cell lines", self._ex_copy),
             (("time", "timing"), "Show or hide the run time in each cell header (t in cell mode; gpython keeps the setting)", lambda arg="": self.set_timing(not Cell.show_timing)),
             (("outline", "tags"), "Outline panel: each cell, the names it defines, their types after a run and the cells it uses. Enter goes to the cell (ctrl+o)", lambda arg="": self.action_toggle_outline()),
@@ -1721,12 +1741,14 @@ class GPython(App):
             self.set_concurrent_verify(option == "concurrent_verify")
         elif option in ("statusbar", "nostatusbar"):
             self.set_status_bar(option == "statusbar")
+        elif option in ("markers", "nomarkers"):
+            self.set_markers(option == "markers")
         elif option.startswith("cursor"):
             self.set_insert_cursor(option.partition("=")[2].strip())
         elif option.startswith("debug_"):
             self.set_debug_option(option)
         else:
-            self.notify(f"Unknown option: {option or '(none)'}. The options are: vim novim lazy nolazy concurrent noconcurrent concurrency=N concurrent_verify noconcurrent_verify nu nonu time notime autoinstall noautoinstall statusbar nostatusbar cursor=bar|underline|block debug_detail=full|balanced|lean|auto debug_<limit>=…", severity="error")
+            self.notify(f"Unknown option: {option or '(none)'}. The options are: vim novim lazy nolazy concurrent noconcurrent concurrency=N concurrent_verify noconcurrent_verify nu nonu time notime autoinstall noautoinstall statusbar nostatusbar markers nomarkers cursor=bar|underline|block debug_detail=full|balanced|lean|auto debug_<limit>=…", severity="error")
 
     def set_debug_option(self, option: str) -> None:
         """:set debug_detail=full|balanced|lean|auto picks the recorder's preset; :set debug_<limit>=value

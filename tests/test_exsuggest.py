@@ -94,7 +94,7 @@ def test_each_set_option_is_accepted_by_set(tmp_path, monkeypatch):
     app = GPython(None)
     unknown = []
     monkeypatch.setattr(app, "notify", lambda message, **kw: unknown.append(message) if str(message).startswith("Unknown option") else None)
-    for setter in ("set_vim", "set_lazy", "set_line_numbers", "set_timing", "set_autoinstall", "set_concurrent", "set_concurrency", "set_concurrent_verify", "set_status_bar", "set_insert_cursor", "set_debug_option"):
+    for setter in ("set_vim", "set_lazy", "set_line_numbers", "set_timing", "set_autoinstall", "set_concurrent", "set_concurrency", "set_concurrent_verify", "set_status_bar", "set_markers", "set_insert_cursor", "set_debug_option"):
         monkeypatch.setattr(app, setter, lambda *args, **kw: None)
     for option, _ in exsuggest.set_candidates():
         app._ex_set(option)

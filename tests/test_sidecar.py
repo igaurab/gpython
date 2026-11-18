@@ -299,3 +299,99 @@ def test_a_marker_file_run_is_kept_without_saving_and_shown_after_reopening(tmp_
     asyncio.run(run_then_quit())
     assert path.read_text() == PERCENT
     asyncio.run(reopen())
+
+
+def _open_then(path, steps):
+    async def session():
+        app = GPython(path)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await app.loaded.wait()
+            await pilot.pause()
+            await steps(app, pilot)
+
+    asyncio.run(session())
+
+
+def test_clean_saves_a_marker_file_without_its_markers_and_keeps_the_cells(tmp_path):
+    path = tmp_path / "nb.py"
+    path.write_text(PERCENT)
+    before = [(c.source, c.kind) for c in load_cells(path)[0]]
+
+    async def clean(app, pilot):
+        await app._run_ex("clean")
+        await pilot.pause()
+        assert not app.pane.markers and not app.pane.dirty
+
+    _open_then(path, clean)
+    text = path.read_text()
+    assert "# %%" not in text
+    compile(text, str(path), "exec")
+    assert sidecar.layout_file(text, path).exists()
+    cells, markers = load_cells(path)
+    assert not markers and [(c.source, c.kind) for c in cells] == before
+
+
+def test_clean_leaves_a_file_without_markers_and_an_ipynb_alone(tmp_path):
+    plain = tmp_path / "plain.py"
+    save(plain, CELLS, markers=False)
+    book = tmp_path / "nb.ipynb"
+    save(book, [CellSpec("x = 1")])
+    for path in (plain, book):
+        text = path.read_text()
+        said = []
+
+        async def clean(app, pilot):
+            app.notify = lambda message, **kw: said.append(str(message))
+            await app._run_ex("clean")
+            await pilot.pause()
+
+        _open_then(path, clean)
+        assert path.read_text() == text
+        assert len(said) == 1 and "# %%" in said[0]
+
+
+def test_set_nomarkers_removes_the_markers_on_each_save_and_set_markers_stops_it(tmp_path):
+    from gpython import config
+
+    first = tmp_path / "first.py"
+    second = tmp_path / "second.py"
+    first.write_text(PERCENT)
+    second.write_text(PERCENT)
+
+    async def save_without(app, pilot):
+        await app._run_ex("set nomarkers")
+        assert config.load()["markers"] is False
+        await app._run_ex("w")
+        await pilot.pause()
+
+    _open_then(first, save_without)
+    assert "# %%" not in first.read_text()
+
+    async def save_with(app, pilot):
+        assert not app.keep_markers
+        await app._run_ex("set markers")
+        assert config.load()["markers"] is True
+        await app._run_ex("w")
+        await pilot.pause()
+
+    _open_then(second, save_with)
+    assert "# %%" in second.read_text()
+
+
+def test_a_clean_file_keeps_the_outputs_of_its_cells(tmp_path):
+    path = tmp_path / "nb.py"
+    path.write_text(PERCENT)
+    cells, markers = load_cells(path)
+    save(path, _with_first_code_cell_run(cells), markers)
+
+    async def clean(app, pilot):
+        await app._run_ex("clean")
+        await pilot.pause()
+
+    _open_then(path, clean)
+
+    async def reopened(app, pilot):
+        assert not app.pane.markers
+        assert [cell.output_text.strip() for cell in app.cells()][1] == "kept"
+
+    _open_then(path, reopened)

@@ -1334,7 +1334,22 @@ class NotebookPane(Vertical):
             return notebook.dump(self.all_specs(), True)
         return notebook.file_text(self.path, self.all_specs(), self.markers or self.path is None)
 
+    def remove_markers(self) -> str | None:
+        """Save the file without its `# %%` lines; where the cells are goes to ~/.gpython.
+        Returns why not, for a notebook that has no such lines to remove."""
+        if self.path is None:
+            return "This notebook has no file. Save it first (:w name.py): a new file gets no # %% lines"
+        if notebook.holds_its_own_layout(self.path):
+            return f"{self.path.name} is not a .py file with # %% lines. Its format keeps the cells in the file"
+        if not self.markers:
+            return f"{self.path.name} has no # %% lines"
+        self.markers = False
+        self.write_file()
+        return None
+
     def write_file(self) -> None:
+        if not self.app.keep_markers:
+            self.markers = False
         notebook.save(self.path, self.all_specs(), self.markers, outputs=False)
         self.mark_dirty(False)
         self.outputs_changed()

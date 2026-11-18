@@ -8,6 +8,13 @@ this file as its notes.
 
 ## [Unreleased]
 
+### Added
+- `:clean` saves a `.py` file without its `# %%` lines. The file becomes an ordinary script:
+  code as you wrote it, markdown cells as text in triple quotes. gpython keeps where the cells
+  are in `~/.gpython`, as it does for a new file, and the outputs stay.
+- `:set nomarkers` does this for each `.py` file that you save (`markers = false` in the
+  config). `:set markers` goes back: a file that has `# %%` lines keeps them.
+
 ### Fixed
 - A `.py` notebook with `# %%` lines, and a marimo notebook, keep their outputs when you quit.
   Before, only a `.py` file without `# %%` lines did: you had to run the cells again each time

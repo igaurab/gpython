@@ -745,6 +745,11 @@ def _is_plain_script(path: Path, specs: list[CellSpec], markers: bool) -> bool:
     )
 
 
+def holds_its_own_layout(path: Path) -> bool:
+    """True for a .ipynb and for a marimo notebook: the file format itself says where the cells are."""
+    return _is_ipynb(path) or path.resolve() in _marimo_frame
+
+
 def outputs_json(cells: list[CellSpec]) -> str:
     return json.dumps([run_state(cell) for cell in cells])
 

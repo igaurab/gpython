@@ -59,6 +59,8 @@ SET_OPTIONS: Candidates = [
     ("noautoinstall", "Ask before a missing module is installed"),
     ("statusbar", "Show the status bar"),
     ("nostatusbar", "Hide the status bar"),
+    ("markers", "A .py file that has # %% lines keeps them"),
+    ("nomarkers", "Each save writes a .py file without # %% lines"),
     ("cursor=", "The cursor in insert mode: bar, underline or block"),
     ("cursor=bar", "A thin line"),
     ("cursor=underline", "A line below the character"),
