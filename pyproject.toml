@@ -1,6 +1,6 @@
 [project]
 name = "gpynb"
-version = "0.2.1"
+version = "0.2.2"
 description = "A reactive Python notebook in the terminal, built on Textual"
 readme = "README.md"
 authors = [

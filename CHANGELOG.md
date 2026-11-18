@@ -8,6 +8,8 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-18
+
 ### Added
 - `:clean` saves a `.py` file without its `# %%` lines. The file becomes an ordinary script:
   code as you wrote it, markdown cells as text in triple quotes. gpython keeps where the cells
@@ -246,7 +248,8 @@ First release on PyPI as `gpynb`: `uv tool install gpynb` gives the `gpython` co
 - Performance work so a keystroke paints in under 10 ms and the first frame is on screen
   within about 0.3 s of launch, with `scripts/bench.py` to keep it that way.
 
-[Unreleased]: https://github.com/igaurab/gpython/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/igaurab/gpython/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/igaurab/gpython/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/igaurab/gpython/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/igaurab/gpython/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/igaurab/gpython/compare/v0.1.1...v0.1.2
