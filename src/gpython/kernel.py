@@ -129,6 +129,14 @@ def _gp_install(path):
         shell = None
     mod.install(shell)
 
+def _gp_nested_asyncio(path):
+    import sys, types
+    mod = types.ModuleType("_gpython_asyncio")
+    with open(path, encoding="utf-8") as source:
+        exec(compile(source.read(), "<gpython-asyncio>", "exec"), mod.__dict__)
+    sys.modules["_gpython_asyncio"] = mod
+    mod.install()
+
 def _gp_setup(file):
     import os, sys
     from importlib.machinery import ModuleSpec
@@ -261,7 +269,8 @@ def _helpers() -> str:
     side = str(Path(__file__).with_name("kernel_side.py"))
     concurrency = str(Path(__file__).with_name("kernel_concurrency.py"))
     shim = inspect.getsource(html_to_markdown).replace("def html_to_markdown", "def _gp_html_to_md", 1)
-    return _HELPERS + shim + f"\n_GP_CONCURRENCY = {concurrency!r}\n_gp_install({side!r})\n"
+    nested = str(Path(__file__).with_name("kernel_asyncio.py"))
+    return _HELPERS + shim + f"\n_GP_CONCURRENCY = {concurrency!r}\n_gp_install({side!r})\n_gp_nested_asyncio({nested!r})\n"
 
 
 def debug_settings() -> dict:
