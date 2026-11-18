@@ -231,6 +231,7 @@ class CellState:
         self.status = "idle"
         self.run_status = "idle"
         self.inputs_stale = False
+        self.outdated = False
         self.info = ""
         self.exec_count = 0
         self.duration: float | None = None
@@ -365,6 +366,7 @@ class CellState:
         """Mark the cell running as In [count]; a mounted header counts seconds while it runs."""
         self.exec_count = count
         self.inputs_stale = False
+        self.outdated = False
         self.duration = None
         self._run_start = time.perf_counter()
         self.set_status("running")
@@ -381,10 +383,18 @@ class CellState:
         for widget in self.widgets:
             widget._render_header()
 
-    def mark_inputs_stale(self) -> None:
-        """Something it depends on changed in the kernel (an ancestor re-ran, a restart): stale until it runs."""
+    def mark_inputs_stale(self, outdated: bool = True) -> None:
+        """Something it depends on changed in the kernel (an ancestor re-ran, a restart): stale until it runs.
+        `outdated` False is for a change that leaves its output right for its code, a restart."""
         self.inputs_stale = True
+        if outdated:
+            self.outdated = True
         self.set_status("stale")
+
+    def shows_old_output(self) -> bool:
+        """True when the output it shows came from other code or other inputs than it has now;
+        stored with the output, so the cell is stale again when the file is opened."""
+        return self.outdated or (self.ran_source is not None and self.ran_source != self.source)
 
     def clear_output(self) -> None:
         self.outputs_version += 1
@@ -451,6 +461,9 @@ class CellState:
         self.duration = spec.duration
         if spec.outputs:
             self.replay(outputs_from_ipynb(spec.outputs))
+        if spec.outdated and (spec.outputs or spec.execution_count):
+            self.outdated = True
+            self.set_status("stale")
         for widget in self.widgets:
             widget._render_header()
 
@@ -497,6 +510,7 @@ class CellState:
         self.editing = kind == "code"
         self.ran_source = None
         self.inputs_stale = False
+        self.outdated = False
         self.last_defs = set()
         self.exec_count = 0
         self.duration = None
@@ -531,6 +545,7 @@ class Cell(Vertical):
     ran_source = delegated("state", "ran_source")
     last_defs = delegated("state", "last_defs")
     inputs_stale = delegated("state", "inputs_stale")
+    outdated = delegated("state", "outdated")
     missing = delegated("state", "missing")
     info = delegated("state", "info")
     exec_count = delegated("state", "exec_count")
@@ -746,8 +761,11 @@ class Cell(Vertical):
     def end_run(self, status: str, duration: float | None = None) -> None:
         self.state.end_run(status, duration)
 
-    def mark_inputs_stale(self) -> None:
-        self.state.mark_inputs_stale()
+    def mark_inputs_stale(self, outdated: bool = True) -> None:
+        self.state.mark_inputs_stale(outdated)
+
+    def shows_old_output(self) -> bool:
+        return self.state.shows_old_output()
 
     def clear_output(self) -> None:
         self.state.clear_output()

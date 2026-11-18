@@ -15,6 +15,17 @@ this file as its notes.
 - `:set nomarkers` does this for each `.py` file that you save (`markers = false` in the
   config). `:set markers` goes back: a file that has `# %%` lines keeps them.
 
+### Changed
+- A `.py` notebook that another program changed (an editor, git, an agent) keeps its cells and
+  its outputs. Before, one changed character made gpython split the file again and drop all
+  outputs. Now gpython compares the file with what it last saved: a cell with a changed line
+  stays one cell, new code between cells becomes new cells, and a deleted cell goes. A cell
+  with the same code keeps its output. A cell with changed code shows its old output and is
+  marked stale, and so are the cells that use its names; run them (`f4`) to get new outputs.
+  This is also for files with `# %%` lines and marimo notebooks (their outputs).
+- An output that came from older code stays marked stale when you open the file again: a cell
+  that you edited and saved without a run, and a cell whose inputs changed after its run.
+
 ### Fixed
 - A `.py` notebook with `# %%` lines, and a marimo notebook, keep their outputs when you quit.
   Before, only a `.py` file without `# %%` lines did: you had to run the cells again each time

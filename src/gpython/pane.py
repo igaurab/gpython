@@ -278,6 +278,17 @@ class NotebookPane(Vertical):
             return
         for state, run_state in zip(states, stored):
             state.restore_run(notebook.with_run_state(self._light_spec(state), run_state))
+        self._mark_cells_after_old_outputs_stale([s for s in states if s.kind == "code" and s.outdated])
+
+    def _mark_cells_after_old_outputs_stale(self, changed: list[CellState]) -> None:
+        """Cells that show an output and use the names of a cell whose code changed since its output: stale too."""
+        if not changed:
+            return
+        by_id = {s.cid: s for s in self.states if s.kind == "code"}
+        roots = [s.cid for s in changed]
+        for cid in self.refresh_info().descendants(roots) - set(roots):
+            if by_id[cid].exec_count:
+                by_id[cid].mark_inputs_stale()
 
 
     def _scrolled(self) -> None:
@@ -1363,7 +1374,7 @@ class NotebookPane(Vertical):
 
     def _run_state_of(self, cell: Cell) -> str:
         """The JSON of `cell`'s run state, made again only when its outputs, run number or run time changed."""
-        version = (cell.kind, cell.outputs_version, cell.exec_count, cell.duration)
+        version = (cell.kind, cell.outputs_version, cell.exec_count, cell.duration, cell.shows_old_output())
         cached = self._run_state_json.get(cell.cid)
         if cached is not None and cached[0] == version:
             return cached[1]
@@ -1387,9 +1398,10 @@ class NotebookPane(Vertical):
         outputs = outputs_to_ipynb(cell.outputs_snapshot(), cell.exec_count or None) if cell.kind == "code" else []
         count = (cell.exec_count or None) if cell.kind == "code" else None
         duration = cell.duration if count else None
+        outdated = cell.kind == "code" and cell.shows_old_output()
         if cell.spec is not None:
-            return dataclasses.replace(cell.spec, source=cell.source, kind=cell.kind, hide_code=cell.code_hidden, outputs=outputs, execution_count=count, duration=duration)
-        return notebook.CellSpec(cell.source, cell.kind, hide_code=cell.code_hidden, outputs=outputs, execution_count=count, duration=duration)
+            return dataclasses.replace(cell.spec, source=cell.source, kind=cell.kind, hide_code=cell.code_hidden, outputs=outputs, execution_count=count, duration=duration, outdated=outdated)
+        return notebook.CellSpec(cell.source, cell.kind, hide_code=cell.code_hidden, outputs=outputs, execution_count=count, duration=duration, outdated=outdated)
 
     def select_state(self, state: CellState, mode: str, row: int | None = None, column: int = 0) -> None:
         """`select` for a cell that may have no widget yet: it is mounted first (`_reveal`) and
@@ -1943,7 +1955,7 @@ class NotebookPane(Vertical):
         for state in self.states:
             state.last_defs = set()
             if state.ran_source is not None:
-                state.mark_inputs_stale()
+                state.mark_inputs_stale(outdated=False)
         self._values = {}
         self._var_rows = {}
         for view in self.buffer.views:

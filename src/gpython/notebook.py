@@ -56,6 +56,7 @@ class CellSpec:
     gap_to: int | None = field(default=None, compare=False)
     key: int | None = field(default=None, compare=False)
     raw: str | None = field(default=None, compare=False)
+    outdated: bool = field(default=False, compare=False)
 
 
 _keys = count(1)
@@ -269,6 +270,8 @@ def run_state(cell: CellSpec) -> dict:
             state["execution_count"] = cell.execution_count
         if cell.duration is not None:
             state["duration"] = cell.duration
+        if cell.outdated and state:
+            state["outdated"] = True
     return state
 
 
@@ -284,6 +287,7 @@ def with_run_state(cell: CellSpec, state: dict) -> CellSpec:
         outputs=outputs if isinstance(outputs, list) else [],
         execution_count=number if isinstance(number, int) and number > 0 else None,
         duration=float(duration) if isinstance(duration, (int, float)) and duration >= 0 else None,
+        outdated=state.get("outdated") is True,
     )
 
 
@@ -683,7 +687,25 @@ def load_cells(path: Path) -> tuple[list[CellSpec], bool]:
     remembered = sidecar.read(text, path)
     if remembered is not None:
         return remembered, False
-    return split_script(text), False
+    return _carried_cells(text, path) or split_script(text), False
+
+
+def _carried_cells(text: str, path: Path) -> list[CellSpec] | None:
+    """The cells of a plain script that another editor changed: the cells gpython last saved for
+    this path, each with its lines as they are now (carryover.py). The layout found is remembered
+    for this text. None when this path was never saved by gpython or its cells no longer fit."""
+    from . import sidecar
+
+    last = sidecar.read_last(path)
+    if last is None:
+        return None
+    from .carryover import carried_layout
+
+    entries = carried_layout(*last, text)
+    cells = sidecar.cells_at(text, entries) if entries else None
+    if cells:
+        sidecar.write_layout(path, text, entries)
+    return cells
 
 
 def keeps_outputs_outside(path: Path) -> bool:
@@ -724,7 +746,14 @@ def load_outputs(path: Path, cells: list[CellSpec], markers: bool = False) -> li
     from . import sidecar
 
     states = sidecar.read_outputs(text, path)
-    return states if states is not None and len(states) == len(cells) else None
+    if states is not None and len(states) == len(cells):
+        return states
+    last = sidecar.read_last_outputs(path)
+    if last is None:
+        return None
+    from .carryover import carried_states
+
+    return carried_states(*last, [cell.source for cell in cells])
 
 
 def file_text(path: Path | None, cells: list[CellSpec | str], markers: bool = True) -> str:
@@ -763,7 +792,7 @@ def remember_outputs(path: Path, cells: list[CellSpec], markers: bool, states: s
         return False
     from . import sidecar
 
-    sidecar.write_outputs(path, text, outputs_json(cells) if states is None else states)
+    sidecar.write_outputs(path, text, outputs_json(cells) if states is None else states, [cell.source for cell in cells])
     return True
 
 
@@ -782,4 +811,4 @@ def save(path: Path, cells: list[CellSpec | str], markers: bool = True, outputs:
         text = file_text(path, specs, markers)
         path.write_text(text)
     if outputs and keeps_outputs_outside(path):
-        sidecar.write_outputs(path, text, outputs_json(specs))
+        sidecar.write_outputs(path, text, outputs_json(specs), [cell.source for cell in specs])

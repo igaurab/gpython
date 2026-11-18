@@ -10,6 +10,11 @@ moved, renamed or copied while unchanged, the newest layout any path wrote for t
 file changed by another editor has no layout and is split afresh. Nothing is deleted on save, so
 copies never lose each other's layout; prune() removes what has not been read or written for a
 month. The layout is small and read before the first frame; outputs are read after it.
+
+cells/by-path/<path>.json holds the text and the layout this path was last saved with, and
+<path>.out.json the cell sources and run states it last stored. When a file was changed by
+another editor, carryover.py compares it with these and keeps the cells and the outputs that
+are still there.
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ KEEP_DAYS = 30
 PRUNE_EVERY_SECONDS = 24 * 3600
 LAYOUT = ".json"
 OUTPUTS = ".out.json"
+BY_PATH = "by-path"
 
 
 def home() -> Path:
@@ -55,6 +61,10 @@ def outputs_file(text: str, path: Path) -> Path:
     return content_dir(text) / f"{_path_name(path)}{OUTPUTS}"
 
 
+def last_file(path: Path, suffix: str) -> Path:
+    return home() / "cells" / BY_PATH / f"{_path_name(path)}{suffix}"
+
+
 def _write(target: Path, data: str) -> None:
     from .config import write_atomically
 
@@ -67,11 +77,45 @@ def _write(target: Path, data: str) -> None:
 def write_layout(path: Path, text: str, cells: list[dict]) -> None:
     """Remember `cells` ({start, end, kind, hide_code}, line numbers of `text`) for this path and content. Never raises."""
     _write(layout_file(text, path), json.dumps({"path": str(path.resolve()), "cells": cells}))
+    _write(last_file(path, LAYOUT), json.dumps({"path": str(path.resolve()), "text": text, "cells": cells}))
 
 
-def write_outputs(path: Path, text: str, states: str) -> None:
-    """Remember `states` (a JSON list, one run state per cell) for this path and content. Never raises."""
+def write_outputs(path: Path, text: str, states: str, sources: list[str] | None = None) -> None:
+    """Remember `states` (a JSON list, one run state per cell) for this path and content, and,
+    with the cells' `sources`, as the last run states of this path. Never raises."""
     _write(outputs_file(text, path), states)
+    if sources is not None:
+        _write(last_file(path, OUTPUTS), '{"sources": ' + json.dumps(sources) + ', "states": ' + states + "}")
+
+
+def read_last(path: Path) -> tuple[str, list[dict]] | None:
+    """The text and the layout entries this path was last saved with, else None."""
+    try:
+        data = _read_json(last_file(path, LAYOUT))
+        text, cells = data["text"], data["cells"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return (text, cells) if isinstance(text, str) and isinstance(cells, list) else None
+
+
+def read_last_outputs(path: Path) -> tuple[list[str], list[dict]] | None:
+    """The cell sources and the run states this path last stored, else None."""
+    try:
+        data = _read_json(last_file(path, OUTPUTS))
+        sources, states = data["sources"], data["states"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if not isinstance(sources, list) or not isinstance(states, list) or len(sources) != len(states):
+        return None
+    return sources, states
+
+
+def cells_at(text: str, entries: list[dict]) -> list[CellSpec] | None:
+    """The cells that layout `entries` make of `text`, or None when they do not fit it."""
+    try:
+        return _cells(text.splitlines(), entries)
+    except (ValueError, KeyError, TypeError):
+        return None
 
 
 def _find(text: str, path: Path | None, suffix: str) -> Path | None:

@@ -36,12 +36,12 @@ def test_layout_is_kept_outside_the_file_in_gpython_home(tmp_path, monkeypatch):
     assert sidecar.outputs_file(path.read_text(), path).exists()
 
 
-def test_a_file_edited_elsewhere_is_split_afresh(tmp_path):
+def test_a_file_written_again_elsewhere_is_split_afresh(tmp_path):
     path = tmp_path / "nb.py"
     save(path, [CellSpec("a = 1\nb = 2")], markers=False)
-    path.write_text("a = 1\n\nb = 2\n")
+    path.write_text("c = 3\n\nd = 4\n")
     cells, _ = load_cells(path)
-    assert [c.source for c in cells] == ["a = 1", "b = 2"]
+    assert [c.source for c in cells] == ["c = 3", "d = 4"]
 
 
 def test_a_new_file_starts_without_markers(tmp_path):
@@ -250,7 +250,7 @@ def test_marker_file_outputs_are_not_shown_for_other_cells(tmp_path):
     assert not notebook.remember_outputs(path, edited, markers)
     assert notebook.load_outputs(path, edited, markers) is None
     path.write_text(PERCENT.replace("z = 3", "z = 4"))
-    assert notebook.load_outputs(path, load_cells(path)[0], True) is None
+    assert [s.get("outputs") for s in notebook.load_outputs(path, load_cells(path)[0], True)] == [None, STREAM, None]
 
 
 def test_saving_a_marker_file_keeps_its_outputs(tmp_path):
