@@ -170,9 +170,14 @@ def format_duration(seconds: float) -> str:
     return f"{int(minutes)}m {rest:02.0f}s"
 
 
-def _state_field(name: str) -> property:
-    """A widget attribute that lives on its CellState, so call sites can read and write either."""
-    return property(lambda self: getattr(self.state, name), lambda self, value: setattr(self.state, name, value))
+def delegated(holder: str, name: str) -> property:
+    """An attribute that lives on another object (`self.<holder>.<name>`), so call sites can
+    read and write either: a cell widget's data is on its CellState, a window's notebook on
+    its Buffer."""
+    return property(
+        lambda self: getattr(getattr(self, holder), name),
+        lambda self, value: setattr(getattr(self, holder), name, value),
+    )
 
 
 def _log_text(log: list[tuple]) -> str:
@@ -214,7 +219,7 @@ class CellState:
         self._source = source
         self.cursor: tuple[int, int] = (0, 0)
         self.history = None
-        self.widget: Cell | None = None
+        self.widgets: list[Cell] = []
         self.editing = kind == "code"
         self.code_hidden = bool(spec is not None and spec.hide_code and kind == "code")
         self.folded = False
@@ -241,37 +246,51 @@ class CellState:
                 self.replay(outputs_from_ipynb(spec.outputs))
 
     @property
+    def widget(self) -> Cell | None:
+        """The cell's widget; the first one when several windows show the notebook (a pane
+        finds its own with `NotebookPane.widget_of`)."""
+        widgets = self.widgets
+        return widgets[0] if widgets else None
+
+    @property
     def source(self) -> str:
-        widget = self.widget
-        if widget is not None and widget._editor is not None:
-            return widget._editor.text
+        for widget in self.widgets:
+            if widget._editor is not None:
+                return widget._editor.text
         return self._source
 
     @property
     def is_mounted(self) -> bool:
-        return self.widget is not None
+        return bool(self.widgets)
 
     def replace_source(self, text: str) -> None:
-        """New text for a cell with no editor on screen (exlines.py): the undo history cannot
-        follow a change made outside the editor, so it starts afresh when the cell remounts."""
+        """New text for a cell with no editor in the window that changed it (exlines.py): the
+        undo history cannot follow a change made outside the editor, so it starts afresh.
+        Another window that has the cell on screen shows the new text."""
         self._source = text
         self.history = None
         row, col = self.cursor
         lines = text.split("\n")
         row = min(row, len(lines) - 1)
         self.cursor = (row, min(col, len(lines[row])))
+        for widget in self.widgets:
+            if widget._editor is not None:
+                widget._editor.load_text(text)
+                widget._editor.refresh()
+                self.history = widget._editor.history
 
-    def sleep(self) -> None:
-        """Take the editor's text, cursor and undo history back; the widget is about to go."""
-        widget = self.widget
-        if widget is None:
+    def sleep(self, widget: Cell | None = None) -> None:
+        """Take the editor's text, cursor and undo history back; `widget` (the only one when
+        not given) is about to go."""
+        widget = widget or self.widget
+        if widget is None or widget not in self.widgets:
             return
         editor = widget._editor
         if editor is not None:
             self._source = editor.text
             self.cursor = editor.cursor_location
             self.history = editor.history
-        self.widget = None
+        self.widgets.remove(widget)
 
     @property
     def rendered(self) -> bool:
@@ -315,15 +334,15 @@ class CellState:
         label = f"c{n}"
         if label != self.label:
             self.label = label
-            if self.widget is not None:
-                self.widget._render_header()
+            for widget in self.widgets:
+                widget._render_header()
 
     def set_status(self, status: str) -> None:
         if status == self.status:
             return
         old, self.status = self.status, status
-        if self.widget is not None:
-            self.widget._show_status(old, status)
+        for widget in self.widgets:
+            widget._show_status(old, status)
 
     def set_info(self, graph: Graph) -> None:
         if self.kind == "markdown":
@@ -339,8 +358,8 @@ class CellState:
             info = "  ·  ".join(parts)
         if info != self.info:
             self.info = info
-            if self.widget is not None:
-                self.widget._render_header()
+            for widget in self.widgets:
+                widget._render_header()
 
     def begin_run(self, count: int) -> None:
         """Mark the cell running as In [count]; a mounted header counts seconds while it runs."""
@@ -349,18 +368,18 @@ class CellState:
         self.duration = None
         self._run_start = time.perf_counter()
         self.set_status("running")
-        if self.widget is not None:
-            self.widget._start_ticker()
+        for widget in self.widgets:
+            widget._start_ticker()
 
     def end_run(self, status: str, duration: float | None = None) -> None:
         """The run is over; `duration` is the kernel's own timing when it has one."""
         self.duration = time.perf_counter() - self._run_start if duration is None else duration
         self.run_status = status
-        if self.widget is not None:
-            self.widget._stop_ticker()
+        for widget in self.widgets:
+            widget._stop_ticker()
         self.set_status(status)
-        if self.widget is not None:
-            self.widget._render_header()
+        for widget in self.widgets:
+            widget._render_header()
 
     def mark_inputs_stale(self) -> None:
         """Something it depends on changed in the kernel (an ancestor re-ran, a restart): stale until it runs."""
@@ -371,20 +390,20 @@ class CellState:
         self.outputs_version += 1
         self._log.clear()
         self._log_clear_pending = False
-        if self.widget is not None:
-            self.widget._clear_shown()
+        for widget in self.widgets:
+            widget._clear_shown()
 
     def show_error(self, message: str) -> None:
         self.outputs_version += 1
         self._log[:] = [("_error", message, None)]
         self._log_clear_pending = False
-        if self.widget is not None:
-            self.widget._show_error(message)
+        for widget in self.widgets:
+            widget._show_error(message)
 
     def show_hint(self, text: str) -> None:
         """A line under the outputs (an install offer, say); it is not saved with them."""
-        if self.widget is not None:
-            self.widget._show_hint(text)
+        for widget in self.widgets:
+            widget._show_hint(text)
 
     def add_output(self, kind: str, content: dict) -> None:
         if kind == "execute_result" and self.echo_suppressed:
@@ -393,8 +412,8 @@ class CellState:
         log = self._log
         if kind == "clear_output" and content.get("wait"):
             self._log_clear_pending = True
-            if self.widget is not None:
-                self.widget._show_output(kind, content)
+            for widget in self.widgets:
+                widget._show_output(kind, content)
             return
         if self._log_clear_pending:
             log.clear()
@@ -411,8 +430,8 @@ class CellState:
             log.clear()
         else:
             log.append((kind, content, None))
-        if self.widget is not None:
-            self.widget._show_output(kind, content)
+        for widget in self.widgets:
+            widget._show_output(kind, content)
 
     def outputs_snapshot(self) -> list[tuple[str, object]]:
         out: list[tuple[str, object]] = []
@@ -432,8 +451,8 @@ class CellState:
         self.duration = spec.duration
         if spec.outputs:
             self.replay(outputs_from_ipynb(spec.outputs))
-        if self.widget is not None:
-            self.widget._render_header()
+        for widget in self.widgets:
+            widget._render_header()
 
     def replay(self, outputs: list[tuple[str, object]]) -> None:
         for kind, content in outputs:
@@ -447,16 +466,16 @@ class CellState:
         if self.kind != "code" or hidden == self.code_hidden:
             return
         self.code_hidden = hidden
-        if self.widget is not None:
-            self.widget._show_code_hidden()
+        for widget in self.widgets:
+            widget._show_code_hidden()
 
     def set_folded(self, folded: bool) -> None:
         """Markdown cells: show only the header line (`h` in cell mode toggles)."""
         if self.kind != "markdown" or folded == self.folded:
             return
         self.folded = folded
-        if self.widget is not None:
-            self.widget._show_folded()
+        for widget in self.widgets:
+            widget._show_folded()
 
     def toggle_hidden(self) -> bool:
         """`h`: hide/show a code cell's code, or fold/unfold a markdown cell. True when the file changes."""
@@ -468,8 +487,8 @@ class CellState:
 
     def toggle_collapsed(self) -> None:
         self.collapsed = not self.collapsed
-        if self.widget is not None:
-            self.widget._show_collapsed()
+        for widget in self.widgets:
+            widget._show_collapsed()
 
     def reset_kind(self, kind: str) -> None:
         """The data side of a kind change: a cell that becomes markdown (or code again) never ran."""
@@ -504,24 +523,32 @@ class Cell(Vertical):
     can_focus = True
     show_timing = False
 
-    kind = _state_field("kind")
-    spec = _state_field("spec")
-    label = _state_field("label")
-    status = _state_field("status")
-    run_status = _state_field("run_status")
-    ran_source = _state_field("ran_source")
-    last_defs = _state_field("last_defs")
-    inputs_stale = _state_field("inputs_stale")
-    missing = _state_field("missing")
-    info = _state_field("info")
-    exec_count = _state_field("exec_count")
-    duration = _state_field("duration")
-    outputs_version = _state_field("outputs_version")
-    echo_suppressed = _state_field("echo_suppressed")
-    code_hidden = _state_field("code_hidden")
-    folded = _state_field("folded")
-    editing = _state_field("editing")
-    collapsed = _state_field("collapsed")
+    kind = delegated("state", "kind")
+    spec = delegated("state", "spec")
+    label = delegated("state", "label")
+    status = delegated("state", "status")
+    run_status = delegated("state", "run_status")
+    ran_source = delegated("state", "ran_source")
+    last_defs = delegated("state", "last_defs")
+    inputs_stale = delegated("state", "inputs_stale")
+    missing = delegated("state", "missing")
+    info = delegated("state", "info")
+    exec_count = delegated("state", "exec_count")
+    duration = delegated("state", "duration")
+    outputs_version = delegated("state", "outputs_version")
+    echo_suppressed = delegated("state", "echo_suppressed")
+    code_hidden = delegated("state", "code_hidden")
+    folded = delegated("state", "folded")
+    collapsed = delegated("state", "collapsed")
+
+    @property
+    def editing(self) -> bool:
+        """A markdown cell showing its editor in this window; another window may show it rendered."""
+        return self._editing
+
+    @editing.setter
+    def editing(self, value: bool) -> None:
+        self._editing = self.state.editing = value
 
     def watch_has_focus(self, has_focus: bool) -> None:
         """Textual re-applies the stylesheet to a widget and all its children whenever its focus
@@ -529,11 +556,13 @@ class Cell(Vertical):
         `_paint_state`, no rule depends on `Cell:focus`, and the re-application walked the header,
         editor and output on every move in cell mode."""
 
-    def __init__(self, source: str = "", kind: str = "code", spec: notebook.CellSpec | None = None, *, state: CellState | None = None) -> None:
+    def __init__(self, source: str = "", kind: str = "code", spec: notebook.CellSpec | None = None, *, state: CellState | None = None, owner=None) -> None:
         self.state = CellState(source, kind, spec) if state is None else state
         self.cid = self.state.cid
         super().__init__(id=self.cid)
-        self.state.widget = self
+        self._editing = self.state.kind == "code" if self.state.widgets else self.state.editing
+        self.kind_shown = self.state.kind
+        self.state.widgets.append(self)
         if self.state.kind == "markdown":
             self.add_class("-markdown", update=False)
         if self.state.status != "idle":
@@ -546,7 +575,8 @@ class Cell(Vertical):
         self._view: MarkdownView | None = None
         self._note: Static | None = None
         self._header_key: tuple | None = None
-        self._pane = None
+        self._pane = owner
+        self._render_timer: Timer | None = None
         self._bar_color: str | None = None
         self.selected = False
         self.focused_within = False
@@ -558,12 +588,13 @@ class Cell(Vertical):
         self._editor = VimTextArea(state.source, language="markdown" if markdown else "python")
         if state.history is not None:
             self._editor.history = state.history
-            state.history = None
+        else:
+            state.history = self._editor.history
         self._editor.undo_log = self
         yield self._editor
         if markdown:
             self._view = MarkdownView(state.source, marimo=True)
-            if state.editing:
+            if self._editing:
                 self._view.display = False
             else:
                 self._editor.display = False
@@ -607,6 +638,40 @@ class Cell(Vertical):
         pane = self.pane
         if pane is not None:
             pane.text_edited(self.state)
+
+    def _other_editors(self) -> list[VimTextArea]:
+        """The editors of this cell in the other windows that show the notebook. Each is told
+        that its text is about to follow a change made here."""
+        widgets = self.state.widgets
+        if len(widgets) < 2:
+            return []
+        others = [widget for widget in widgets if widget is not self and widget._editor is not None]
+        for widget in others:
+            widget._text_followed()
+        return [widget._editor for widget in others]
+
+    def edit_done(self, edit) -> None:
+        """The editor made `edit`: the editors of this cell in other windows make it too."""
+        for editor in self._other_editors():
+            editor.mirror_edit(edit)
+
+    def history_stepped(self, edits, redo: bool) -> None:
+        """The editor undid or redid `edits` (the history is shared): the other windows follow."""
+        for editor in self._other_editors():
+            editor.mirror_history_step(edits, redo)
+
+    def _text_followed(self) -> None:
+        """The text changed from another window: a rendered markdown cell renders it again, soon."""
+        if not self.rendered or self._view is None:
+            return
+        if self._render_timer is not None:
+            self._render_timer.stop()
+        self._render_timer = self.set_timer(0.3, self._render_again)
+
+    async def _render_again(self) -> None:
+        self._render_timer = None
+        if self.rendered and self._view is not None and self._view.text != self.source:
+            await self._view.update(self.source)
 
     def undo_requested(self, redo: bool) -> bool:
         """u / ctrl+r in the editor: the pane undoes the newest change of the notebook. False with no pane."""
@@ -660,11 +725,11 @@ class Cell(Vertical):
 
     @property
     def rendered(self) -> bool:
-        return self.state.rendered
+        return self.state.kind == "markdown" and not self._editing
 
     @property
     def editor_hidden(self) -> bool:
-        return self.state.editor_hidden
+        return self.rendered or (self.state.code_hidden and self.state.kind == "code")
 
     def set_label(self, n: int) -> None:
         self.state.set_label(n)
@@ -780,7 +845,7 @@ class Cell(Vertical):
 
     def _show_folded(self) -> None:
         if self._view is not None:
-            self._view.display = not self.state.folded and not self.state.editing
+            self._view.display = not self.state.folded and not self._editing
         self._render_header()
 
     def _show_collapsed(self) -> None:
@@ -823,6 +888,8 @@ class Cell(Vertical):
         if kind == self.kind:
             return
         self.state.reset_kind(kind)
+        self._editing = self.state.editing
+        self.kind_shown = kind
         self.set_class(kind == "markdown", "-markdown")
         self._header_key = None
         self._render_header()
@@ -839,8 +906,8 @@ class Cell(Vertical):
     def start_editing(self) -> None:
         """Show the editor (markdown: hide the rendered view; hidden code: show it). The caller focuses it."""
         self.editing = True
-        self.code_hidden = False
-        self.folded = False
+        self.state.set_code_hidden(False)
+        self.state.set_folded(False)
         if self._editor is not None:
             self._editor.display = True
         if self._view is not None:

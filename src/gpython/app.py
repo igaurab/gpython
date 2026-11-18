@@ -444,7 +444,7 @@ class GPython(App):
     async def on_unmount(self) -> None:
         images.forget_all(self)
         write_to_terminal(self, RESET_CURSOR_SHAPE)
-        await asyncio.gather(*(pane.kernel.shutdown() for pane in self.workspace.buffers), return_exceptions=True)
+        await asyncio.gather(*(pane.kernel.shutdown() for pane in self.workspace.notebooks()), return_exceptions=True)
 
 
     @property
@@ -627,17 +627,19 @@ class GPython(App):
     def find_open(self, path: Path) -> NotebookPane | None:
         """The buffer (shown or hidden) for `path`, if the file is open."""
         target = path.resolve()
-        for pane in self.workspace.buffers:
-            if pane.path is not None and pane.path.resolve() == target:
-                return pane
-        return None
+        found = [pane for pane in self.workspace.buffers if pane.path is not None and pane.path.resolve() == target]
+        shown = set(self.workspace.panes())
+        return next((pane for pane in found if pane in shown), found[0] if found else None)
 
     async def open_file(self, path: Path | str, how: str = "tab", force: bool = False) -> NotebookPane | None:
         """Open a notebook in a new "tab" (the default, also for the explorer), in the
         current window ("here", vim's :edit), a "split" or a "vsplit".
 
         Every notebook is a buffer with its own kernel, so a file that is already open is
-        shown (its tab focused, or a hidden buffer brought back) instead of opened twice.
+        never read twice. Asked for in this window or in a split while another window shows
+        it, it gets a second window on the same notebook (the cells, the kernel and the undo
+        steps are shared; the scroll position and the cursor are the window's own). Asked for
+        in a tab, its window is focused. A hidden buffer is brought back.
         A blank untitled window is reused rather than left behind. "here" refuses to
         replace a notebook with unsaved changes unless `force` (:e!).
         """
@@ -647,7 +649,20 @@ class GPython(App):
             return None
         current = self.workspace.active
         if (existing := self.find_open(path)) is not None:
-            if existing in self.workspace.panes():
+            shown = existing in self.workspace.panes()
+            if shown and current is not None and how in ("here", "split", "vsplit"):
+                if how == "here" and current.buffer is existing.buffer:
+                    current.focus_pane()
+                    return current
+                view = NotebookPane(view_of=existing)
+                view._last_focus_cid = existing._last_focus_cid
+                if how == "here":
+                    await self.workspace.replace(current, view)
+                else:
+                    await self.workspace.add(view, how, current)
+                view.focus_pane()
+                return view
+            if shown:
                 self.workspace.set_active(existing)
             elif how == "here" and current is not None:
                 await self.workspace.show(existing, current)
@@ -1124,7 +1139,7 @@ class GPython(App):
 
         targets = []
         for state in self.pane.states:
-            widget = state.widget
+            widget = self.pane.widget_of(state)
             if widget is None:
                 targets.append((state, SleepingLines(state, self.pane)))
             elif widget._editor is not None:
@@ -1332,7 +1347,7 @@ class GPython(App):
 
     async def action_quit(self) -> None:
         """ctrl+q / :qa: quit the whole app; ask first when any buffer has unsaved changes."""
-        dirty = [p.name for p in self.workspace.buffers if p.dirty]
+        dirty = [p.name for p in self.workspace.notebooks() if p.dirty]
         if dirty:
             self.push_screen(Prompt(f"Unsaved changes in {', '.join(dirty)}. Quit without saving? (y/n) "), self._confirm_quit)
         else:
@@ -1626,7 +1641,7 @@ class GPython(App):
 
     def _ex_image_all(self, action: str) -> None:
         """Save or open every image of every cell, named <notebook>-<cell>[-N].png."""
-        pictures = [(state, state.widget.images if state.widget is not None else state.images) for state in self.pane.states]
+        pictures = [(state, widget.images if (widget := self.pane.widget_of(state)) is not None else state.images) for state in self.pane.states]
         found = [(cell, png, i, len(pngs)) for cell, pngs in pictures for i, png in enumerate(pngs)]
         if not found:
             self.notify("No image in this notebook", severity="warning")
@@ -1744,7 +1759,7 @@ class GPython(App):
             return
         config.save({name: value})
         settings[name] = value
-        for pane in self.workspace.buffers:
+        for pane in self.workspace.notebooks():
             pane.run_worker(pane.kernel.configure_debugger(settings), group="debug-settings")
         limits = resolve(settings)[0]
         shown = limits["detail"] if key == "detail" else _debug_value(key, limits[key])
@@ -1791,7 +1806,7 @@ class GPython(App):
             self.pane.save()
 
     def _save_all(self, then=None) -> None:
-        for pane in self.workspace.buffers:
+        for pane in self.workspace.notebooks():
             if pane.path is None:
                 if pane.dirty:
                     self.notify(f"A new notebook has no file name. Go to it and use :w name.py", severity="warning")

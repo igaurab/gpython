@@ -37,7 +37,7 @@ from textual.geometry import Size
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import OptionList, TextArea
-from textual.widgets.text_area import Edit, EditResult, Location, Selection, TextAreaTheme
+from textual.widgets.text_area import Edit, EditHistory, EditResult, Location, Selection, TextAreaTheme
 
 _WORD = re.compile(r"\w+|[^\w\s]+")
 _BIG_WORD = re.compile(r"\S+")
@@ -876,8 +876,11 @@ class VimTextArea(TextArea):
         batches = self.history._undo_stack
         newest = batches[-1] if batches else None
         result = super().edit(edit)
-        if self.undo_log is not None and batches and batches[-1] is not newest:
-            self.undo_log.text_batch_started()
+        log = self.undo_log
+        if log is not None:
+            if batches and batches[-1] is not newest:
+                log.text_batch_started()
+            log.edit_done(edit)
         self._note_change(result.end_location, self.document.line_count != rows_before)
         if self.soft_wrap or self.document.line_count != rows_before or self.gutter_width != gutter_before:
             self.refresh()
@@ -893,6 +896,44 @@ class VimTextArea(TextArea):
         for row in sorted(rows):
             self._refresh_rows(row, row)
         return result
+
+    def mirror_edit(self, edit: Edit) -> None:
+        """Make the change that another window's editor of this cell just made. Both editors
+        share one undo history, so nothing is recorded here, and this editor's own vim state
+        (the dot command, U's line) stays as it was."""
+        history, log, edited, line_undo = self.history, self.undo_log, self._edited, self._line_undo
+        self.history, self.undo_log = EditHistory(1, 0.0, 0), None
+        try:
+            self.edit(Edit(edit.text, edit.from_location, edit.to_location, True))
+        finally:
+            self.history, self.undo_log, self._edited, self._line_undo = history, log, edited, line_undo
+
+    def mirror_history_step(self, edits, redo: bool) -> None:
+        """Undo or redo `edits`, which another window's editor of this cell just took from the
+        shared history; the cursor stays where it was, as far as the text allows."""
+        selection = self.selection
+        if redo:
+            self._redo_batch(edits)
+        else:
+            self._undo_batch(edits)
+        self.selection = Selection(self._inside(selection.start), self._inside(selection.end))
+        self.refresh()
+
+    def _inside(self, location: Location) -> Location:
+        row = min(location[0], self.document.line_count - 1)
+        return (row, min(location[1], len(self.document.get_line(row))))
+
+    def undo(self) -> None:
+        if edits := self.history._pop_undo():
+            self._undo_batch(edits)
+            if self.undo_log is not None:
+                self.undo_log.history_stepped(edits, False)
+
+    def redo(self) -> None:
+        if edits := self.history._pop_redo():
+            self._redo_batch(edits)
+            if self.undo_log is not None:
+                self.undo_log.history_stepped(edits, True)
 
     def _watch_selection(self, previous: Selection, selection: Selection) -> None:
         bracket_before = self._matching_bracket_location

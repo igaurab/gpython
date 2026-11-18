@@ -133,11 +133,8 @@ def _parent_of(root: Node, target: Branch) -> Branch | None:
     return None
 
 
-def arrange(node: Node, region: Region, out: dict[NotebookPane, Region]) -> None:
-    """Split `region` among the node's children by weight; leaves get their rectangles."""
-    if isinstance(node, Leaf):
-        out[node.pane] = region
-        return
+def child_regions(node: Branch, region: Region) -> list[Region]:
+    """Split `region` among the branch's children by weight."""
     children = node.children
     gap = GAP if node.row else 0
     total = (region.width if node.row else region.height) - gap * (len(children) - 1)
@@ -146,12 +143,44 @@ def arrange(node: Node, region: Region, out: dict[NotebookPane, Region]) -> None
     sizes = [max(1, int(total * w / whole)) for w in weights]
     sizes[-1] += total - sum(sizes)
     pos = region.x if node.row else region.y
-    for child, size in zip(children, sizes):
-        if node.row:
-            arrange(child, Region(pos, region.y, size, region.height), out)
-        else:
-            arrange(child, Region(region.x, pos, region.width, size), out)
+    regions = []
+    for size in sizes:
+        regions.append(Region(pos, region.y, size, region.height) if node.row else Region(region.x, pos, region.width, size))
         pos += size + gap
+    return regions
+
+
+def arrange(node: Node, region: Region, out: dict[NotebookPane, Region]) -> None:
+    """Split `region` among the node's children by weight; leaves get their rectangles."""
+    if isinstance(node, Leaf):
+        out[node.pane] = region
+        return
+    for child, rect in zip(node.children, child_regions(node, region)):
+        arrange(child, rect, out)
+
+
+@dataclass
+class Border:
+    """The line between child `index` of `branch` and the next one, where the mouse takes hold:
+    the gap column between windows side by side, the status line of the upper of two stacked ones."""
+
+    branch: Branch
+    index: int
+    grip: Region
+    regions: list[Region]
+
+
+def borders(node: Node, region: Region) -> list[Border]:
+    if isinstance(node, Leaf):
+        return []
+    regions = child_regions(node, region)
+    found = []
+    for index, rect in enumerate(regions[:-1]):
+        grip = Region(rect.right, rect.y, GAP, rect.height) if node.row else Region(rect.x, rect.bottom - 1, rect.width, 1)
+        found.append(Border(node, index, grip, regions))
+    for child, rect in zip(node.children, regions):
+        found.extend(borders(child, rect))
+    return found
 
 
 class WindowLayout(Layout):
@@ -218,8 +247,11 @@ class TabBar(Static):
 class Workspace(Widget):
     """All open notebook panes; shows the current tab's panes in their split layout."""
 
+    ALLOW_SELECT = False
+
     def __init__(self) -> None:
         super().__init__(id="workspace")
+        self._dragged: tuple[Branch, int] | None = None
         self.tabs: list[Tab] = []
         self.index = 0
         self.buffers: list[NotebookPane] = []
@@ -248,6 +280,16 @@ class Workspace(Widget):
     def panes(self) -> list[NotebookPane]:
         """Every pane shown in some tab (vim's active buffers), in tab then window order."""
         return [pane for tab in self.tabs for pane in panes_of(tab.root)]
+
+    def notebooks(self) -> list[NotebookPane]:
+        """One pane for each open notebook: several windows can show the same one."""
+        seen: set[int] = set()
+        first = []
+        for pane in self.buffers:
+            if id(pane.buffer) not in seen:
+                seen.add(id(pane.buffer))
+                first.append(pane)
+        return first
 
     def hidden(self) -> list[NotebookPane]:
         """Buffers in no window (vim's hidden buffers)."""
@@ -321,7 +363,8 @@ class Workspace(Widget):
         """Show `new` in `old`'s window (vim's :edit / :buffer).
 
         `old` stays open as a hidden buffer, unless it is a blank untitled notebook (vim
-        drops an unnamed, unchanged buffer too) — then it is closed for good.
+        drops an unnamed, unchanged buffer too) or another window still shows its
+        notebook: then the pane is closed for good.
         """
         found = next(((tab, find(tab.root, old)) for tab in self.tabs if find(tab.root, old)), None)
         if found is None:
@@ -332,7 +375,7 @@ class Workspace(Widget):
         await self._adopt(new)
         if tab.active is old:
             tab.active = new
-        if old.is_blank:
+        if old.is_blank or old.other_views:
             await self._drop(old)
         else:
             old.display = False
@@ -340,6 +383,11 @@ class Workspace(Widget):
         self._changed()
 
     async def _drop(self, pane: NotebookPane) -> None:
+        """Remove the pane for good. The focus leaves it first: Textual would otherwise hand it
+        to the next widget in line, a cell of another window, and scroll that window to it."""
+        focused = self.app.focused
+        if focused is not None and pane in focused.ancestors_with_self:
+            self.screen.set_focus(None)
         self.origins.pop(pane, None)
         if pane in self.buffers:
             self.buffers.remove(pane)
@@ -348,8 +396,8 @@ class Workspace(Widget):
 
     async def close(self, pane: NotebookPane, delete: bool = False) -> NotebookPane | None:
         """Close one window: its notebook becomes a hidden buffer (or is deleted with `delete`,
-        and always when it is a blank untitled one). Returns the pane to focus next, or None
-        when no window is left.
+        and always when it is a blank untitled one). A window whose notebook another window
+        still shows just goes. Returns the pane to focus next, or None when no window is left.
         """
         index = self.tab_of(pane)
         neighbour = None
@@ -367,7 +415,7 @@ class Workspace(Widget):
                 neighbour = self._nearest(tab, pane) or panes_of(root)[0]
                 if tab.active is pane:
                     tab.active = neighbour
-        if delete or pane.is_blank:
+        if delete or pane.is_blank or pane.other_views:
             await self._drop(pane)
         else:
             pane.display = False
@@ -394,6 +442,8 @@ class Workspace(Widget):
         Returns the pane to focus next (None when no buffer is left: the caller opens a
         fresh untitled one).
         """
+        for view in pane.other_views:
+            await self.close(view, delete=True)
         nxt = await self.close(pane, delete=True)
         if pane in self.buffers:
             await self._drop(pane)
@@ -602,6 +652,64 @@ class Workspace(Widget):
         total = sum(c.weight for c in parent.children)
         node.weight = max(0.1, node.weight + delta * total)
         self._changed()
+
+    def border_at(self, x: int, y: int) -> Border | None:
+        """The border between two windows under the workspace cell (x, y), if any."""
+        tab = self.tab
+        if tab is None or tab.zoom is not None:
+            return None
+        whole = Region(0, 0, self.size.width, self.size.height)
+        return next((border for border in borders(tab.root, whole) if border.grip.contains(x, y)), None)
+
+    def drag_border(self, branch: Branch, index: int, x: int, y: int) -> bool:
+        """Move the border after child `index` of `branch` to the workspace cell (x, y): the two
+        windows (or groups) beside it share their space anew, each keeping MIN_SIZE cells when
+        there is room. True when a size changed."""
+        tab = self.tab
+        if tab is None:
+            return False
+        whole = Region(0, 0, self.size.width, self.size.height)
+        border = next((b for b in borders(tab.root, whole) if b.branch is branch and b.index == index), None)
+        if border is None:
+            return False
+        row = branch.row
+        sizes = [rect.width if row else rect.height for rect in border.regions]
+        before = border.regions[index]
+        pair = sizes[index] + sizes[index + 1]
+        first = (x - before.x) if row else (y - before.y + 1)
+        least = min(MIN_SIZE, pair // 2)
+        first = max(least, min(pair - least, first))
+        if first == sizes[index]:
+            return False
+        sizes[index], sizes[index + 1] = first, pair - first
+        for child, size in zip(branch.children, sizes):
+            child.weight = float(size)
+        self._changed()
+        return True
+
+    def _workspace_cell(self, event: events.MouseEvent) -> tuple[int, int]:
+        return event.screen_x - self.region.x, event.screen_y - self.region.y
+
+    def on_mouse_down(self, event: events.MouseDown) -> None:
+        """Take hold of the border between two windows; moving the mouse then resizes them."""
+        if event.button != 1:
+            return
+        border = self.border_at(*self._workspace_cell(event))
+        if border is not None:
+            self._dragged = (border.branch, border.index)
+            self.capture_mouse()
+            event.stop()
+
+    def on_mouse_move(self, event: events.MouseMove) -> None:
+        if self._dragged is not None:
+            self.drag_border(*self._dragged, *self._workspace_cell(event))
+            event.stop()
+
+    def on_mouse_up(self, event: events.MouseUp) -> None:
+        if self._dragged is not None:
+            self._dragged = None
+            self.release_mouse()
+            event.stop()
 
     def equalize(self) -> None:
         def walk(node: Node) -> None:
