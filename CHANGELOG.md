@@ -9,6 +9,15 @@ this file as its notes.
 ## [Unreleased]
 
 ### Added
+- Two windows can show the same notebook. When a window shows `sc.py` and you ask for it again
+  in another window (`:e sc.py` after a split, `:sp sc.py`, `:vs sc.py`, `:split v sc.py`), that
+  window shows the same notebook, where before the cursor went back to the first window. The
+  cells, the kernel and the undo steps are the same in the two windows: text that you type, a
+  cell that you add, move or delete, and each output show in both. Each window has its own
+  scroll position and cursor. `:q` closes one window and the notebook stays in the other. From
+  the file explorer or the file finder, a notebook that is open gets the focus, as before.
+- The mouse changes the size of the windows. Hold the line between two windows that are side by
+  side, or the status line of the upper of two stacked windows, and move it.
 - A scratchpad folder for new notebooks. `gpython --scratchpad DIR` remembers DIR for every
   later launch (`gpy --scratchpad .` is the folder you are in; a missing folder is made). After
   that, a new untitled notebook saved under a plain name, as in `:w save.py` or `ctrl+s`, goes

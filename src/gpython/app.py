@@ -649,27 +649,9 @@ class GPython(App):
             return None
         current = self.workspace.active
         if (existing := self.find_open(path)) is not None:
-            shown = existing in self.workspace.panes()
-            if shown and current is not None and how in ("here", "split", "vsplit"):
-                if how == "here" and current.buffer is existing.buffer:
-                    current.focus_pane()
-                    return current
-                view = NotebookPane(view_of=existing)
-                view._last_focus_cid = existing._last_focus_cid
-                if how == "here":
-                    await self.workspace.replace(current, view)
-                else:
-                    await self.workspace.add(view, how, current)
-                view.focus_pane()
-                return view
-            if shown:
-                self.workspace.set_active(existing)
-            elif how == "here" and current is not None:
-                await self.workspace.show(existing, current)
-            else:
-                await self.workspace.add(existing, how if how in ("split", "vsplit") else "tab", current)
-            existing.focus_pane()
-            return existing
+            pane = await self._show_open(existing, how, current)
+            pane.focus_pane()
+            return pane
         if path.exists() and not path.is_file():
             self.notify(f"Not a file: {path}", severity="error")
             return None
@@ -689,6 +671,26 @@ class GPython(App):
         pane.focus_pane()
         return pane
 
+    async def _show_open(self, existing: NotebookPane, how: str, current: NotebookPane | None) -> NotebookPane:
+        """Show a notebook that is already open, as `open_file` says. Returns the pane to focus."""
+        if existing not in self.workspace.panes():
+            if how == "here" and current is not None:
+                await self.workspace.show(existing, current)
+            else:
+                await self.workspace.add(existing, how if how in ("split", "vsplit") else "tab", current)
+            return existing
+        if current is None or how not in ("here", "split", "vsplit"):
+            self.workspace.set_active(existing)
+            return existing
+        if how == "here" and current.buffer is existing.buffer:
+            return current
+        view = NotebookPane(view_of=existing)
+        view._last_focus_cid = existing._last_focus_cid
+        if how == "here":
+            await self.workspace.replace(current, view)
+        else:
+            await self.workspace.add(view, how, current)
+        return view
 
     def buffer_lines(self) -> list[str]:
         """One line per buffer, vim style: number, %a current / a shown / h hidden, + dirty, name."""

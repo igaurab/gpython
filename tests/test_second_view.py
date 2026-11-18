@@ -336,3 +336,17 @@ def test_a_window_closed_while_its_run_goes_on_leaves_when_the_run_ends(tmp_path
         assert first.buffer.runner is None
 
     ui(test, path)
+
+
+def test_split_v_with_the_name_of_the_shown_file_is_a_second_view(tmp_path):
+    path = notebook(tmp_path)
+
+    async def test(app, pilot):
+        first = app.pane
+        await ex(app, pilot, f"split v {path}")
+        second = app.pane
+        assert second is not first and second.buffer is first.buffer
+        rects = app.workspace.tab.rects
+        assert rects[first].y == rects[second].y and rects[first].right < rects[second].x
+
+    ui(test, path)
