@@ -1,4 +1,4 @@
-<h1>
+<h1 align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/gpython-logo-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/images/gpython-logo-light.svg">
