@@ -421,8 +421,11 @@ def test_shift_enter_keeps_the_viewport(tmp_path):
         cells[-1].scroll_visible(animate=False, immediate=True)
         await pilot.pause()
         await pilot.press("shift+enter")
-        await pilot.pause()
-        new = app.cells()[-1]
+        for _ in range(40):
+            await pilot.pause(0.05)
+            new = app.cells()[-1]
+            if len(app.cells()) == 31 and app.focused is new.editor and box.region.contains_region(new.region):
+                break
         assert len(app.cells()) == 31 and app.focused is new.editor
         assert box.region.contains_region(new.region)
 

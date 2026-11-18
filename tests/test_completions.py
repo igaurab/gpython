@@ -45,8 +45,8 @@ def test_pwsh_is_powershell(monkeypatch, capsys):
 def test_powershell_completes_options_and_values(tmp_path):
     script = tmp_path / "gpython.ps1"
     script.write_text(completions.script("powershell"))
-    ask = ". $args[0]; foreach ($line in 'gpy --scra', 'gpy --theme monok') { (TabExpansion2 $line $line.Length).CompletionMatches.CompletionText }"
-    out = subprocess.run(["pwsh", "-NoProfile", "-Command", ask, str(script)], capture_output=True, text=True, check=True)
+    ask = f". '{script}'; foreach ($line in 'gpy --scra', 'gpy --theme monok') {{ (TabExpansion2 $line $line.Length).CompletionMatches.CompletionText }}"
+    out = subprocess.run(["pwsh", "-NoProfile", "-Command", ask], capture_output=True, text=True, check=True)
     assert out.stdout.split() == ["--scratchpad", "monokai", "monokai-light"]
 
 
