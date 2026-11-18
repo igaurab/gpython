@@ -13,6 +13,9 @@ this file as its notes.
   there): text you typed, or a cell delete, move, add or markdown/code switch. `ctrl+r` does the
   change again, in the editor and in cell mode; `:undo` and `:redo` do the same. A deleted cell
   that comes back keeps its text history. The timeline holds 500 steps (was 50 cell actions).
+- `ctrl+b` shows or hides the file explorer in every mode, also in vim normal mode (where it was
+  page up). There is no FILES mode badge: in the explorer the badge says NORMAL, as in vim.
+  `ctrl+h` and backspace go to the explorer only when it is shown; they do not open it.
 - `i` on a selected cell opens its editor in normal mode, the same as `enter`; press `i` again to type.
 
 ## [0.2.0] - 2026-11-09

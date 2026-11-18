@@ -261,9 +261,15 @@ def test_app_ctrl_keys_are_vim_in_the_editor_and_app_keys_in_cell_mode(tmp_path,
         first = app.cells()[0]
         first.editor.focus()
         await pilot.pause()
-        await pilot.press("ctrl+d", "ctrl+e", "ctrl+b")
+        await pilot.press("ctrl+d", "ctrl+e")
         await pilot.pause()
         assert len(app.cells()) == 3 and app.focused is first.editor
+        await pilot.press("ctrl+b")
+        await pilot.pause()
+        assert app.explorer_visible and app.focused is app.explorer
+        await pilot.press("ctrl+b")
+        await pilot.pause()
+        assert not app.explorer_visible and app.focused is first.editor and app.ui_mode == "normal"
         await pilot.press("ctrl+n")
         await pilot.pause()
         assert len(app.cells()) == 3 and app.focused is app.cells()[1].editor

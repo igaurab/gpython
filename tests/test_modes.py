@@ -98,7 +98,8 @@ def test_explorer_round_trip_keeps_the_mode(tmp_path):
         assert app.focused is first and app.cell_mode
         await pilot.press("ctrl+b")
         await pilot.pause()
-        assert app.ui_mode == "files"
+        assert app.ui_mode == "files" and app.explorer_visible
+        assert app._mode_chip_mode == "normal" and app._status_mode[0] == "normal"
         await pilot.press("ctrl+b")
         await pilot.pause()
         assert app.focused is first and app.ui_mode == "cell"
@@ -107,9 +108,10 @@ def test_explorer_round_trip_keeps_the_mode(tmp_path):
         assert app.focused is first.editor and not app.cell_mode
         await pilot.press("ctrl+b")
         await pilot.pause()
+        assert app.explorer_visible and app.focused is app.explorer
         await pilot.press("ctrl+b")
         await pilot.pause()
-        assert app.focused is first.editor and app.ui_mode == "normal"
+        assert not app.explorer_visible and app.focused is first.editor and app.ui_mode == "normal"
 
     ui(tmp_path, test)
 

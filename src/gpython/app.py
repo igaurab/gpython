@@ -59,7 +59,6 @@ _MODE_STYLES = {
     "insert": f"bold black on {INSERT_COLOR}",
     "normal": f"bold black on {MODE_CURSOR_COLORS['normal']}",
     "cell": f"bold black on {CELL_MODE_COLOR}",
-    "files": "bold black on magenta",
     "outline": "bold black on magenta",
     "vars": "bold black on magenta",
     "debug": f"bold white on {DEBUG_COLOR}",
@@ -78,7 +77,7 @@ _CHIP_VIM_STYLES = {
 }
 EXPLORER_WIDTH = 34
 _VIM_MODES = ("normal", "visual", "v-line", "v-block", "insert", "replace")
-_VIM_NORMAL_OWNS = ("delete_cell", "run_cell_ctrl_e", "toggle_explorer", "add_cell", "command_palette")
+_VIM_NORMAL_OWNS = ("delete_cell", "run_cell_ctrl_e", "add_cell", "command_palette")
 _VIM_INSERT_OWNS = ("delete_cell", "run_cell_ctrl_e", "add_cell", "command_palette", "window_prefix", "pick_theme", "interrupt")
 _VIM_OWNS = {
     "normal": _VIM_NORMAL_OWNS,
@@ -440,8 +439,8 @@ class GPython(App):
 
     @property
     def ui_mode(self) -> str:
-        """"cell" when a cell itself is selected, "files" in the explorer, "vars" or "debug" in the
-        variables panel, else the vim mode."""
+        """"cell" when a cell itself is selected, "files" in the explorer (the bars show it as
+        NORMAL, like a file tree in vim), "vars" or "debug" in the variables panel, else the vim mode."""
         focused = self.focused
         if isinstance(focused, Cell):
             return "cell"
@@ -522,6 +521,8 @@ class GPython(App):
         mode = self.ui_mode
         if pane.debug is not None and mode in ("normal", "cell"):
             mode = "debug"
+        if mode == "files":
+            mode = "normal"
         name = pane.title
         hint = IMAGE_HINT if mode == "cell" and getattr(self.focused, "has_images", False) else ""
         key = (mode, hint, VimTextArea.enabled, name, pane.kernel_state, pane.kernel_label)
@@ -537,15 +538,15 @@ class GPython(App):
             self._kernel_chip.update(
                 Text.assemble(("● ", _state_style(pane.kernel_state)), (version, "dim"), (f" · {env}" if env else "", "bold"), (state, "dim"), (" ▾", "dim"))
             )
-        chip_mode = mode if mode in ("cell", "files", "outline", "vars", "debug") or VimTextArea.enabled else "edit"
+        chip_mode = mode if mode in ("cell", "outline", "vars", "debug") or VimTextArea.enabled else "edit"
         if self._mode_chip is not None and chip_mode != self._mode_chip_mode:
             self._mode_chip_mode = chip_mode
-            if chip_mode in ("cell", "files", "outline", "edit", "vars", "debug"):
+            if chip_mode in ("cell", "outline", "edit", "vars", "debug"):
                 text = Text(f" {chip_mode.upper()} ", style=_MODE_STYLES.get(chip_mode, _MODE_STYLES["insert"]))
             else:
                 text = Text.assemble((" EDIT ", _MODE_STYLES["insert"]), (f" {chip_mode.upper()}", _CHIP_VIM_STYLES[chip_mode]))
             self._mode_chip.update(text, layout=False)
-        bar_mode = mode if VimTextArea.enabled or mode in ("cell", "files", "outline", "vars", "debug") else ""
+        bar_mode = mode if VimTextArea.enabled or mode in ("cell", "outline", "vars", "debug") else ""
         if self._status is not None and (bar_mode, hint) != self._status_mode:
             self._status_mode = (bar_mode, hint)
             badge = Text(f" {bar_mode.upper()} ", style=_MODE_STYLES[bar_mode]) if bar_mode else Text("")
@@ -798,7 +799,7 @@ class GPython(App):
         self.update_status()
 
     async def action_toggle_explorer(self) -> None:
-        """ctrl+b: show the file tree (rooted at the notebook's folder) and focus it; hide it when shown."""
+        """ctrl+b, in every mode: show the file tree (rooted at the notebook's folder) and focus it; hide it when shown."""
         if self.explorer_visible:
             self.hide_explorer()
         else:
@@ -811,12 +812,9 @@ class GPython(App):
 
     async def action_focus_left(self) -> None:
         """ctrl+h (terminals send it as backspace): the window to the left, like ctrl+w h;
-        from the leftmost window the explorer, opened when hidden. Insert mode keeps backspace."""
-        if isinstance(self.focused, Explorer):
-            return
-        if self.workspace.neighbour(self.pane, "h") is None and not self.explorer_visible:
-            await self.open_explorer()
-        else:
+        from the leftmost window the explorer, when it is shown (only ctrl+b opens it).
+        Insert mode keeps backspace."""
+        if not isinstance(self.focused, Explorer):
             self.focus_window("left")
 
     def action_focus_right(self) -> None:

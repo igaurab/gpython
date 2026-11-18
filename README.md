@@ -116,8 +116,8 @@ Everywhere:
 | `ctrl+home` / `ctrl+end` | First / last cell |
 | `alt+shift+↑/↓` | Move the cell up / down |
 | `ctrl+s` / `:w` | Save (asks for a name if untitled) |
-| `ctrl+b` | Toggle the file explorer (see [Files, windows and tabs](#files-windows-and-tabs)); not in vim normal / visual mode (page up) |
-| `ctrl+h` / `ctrl+l` | Focus the window to the left / right; `ctrl+h` from the leftmost window opens or focuses the explorer, `ctrl+l` from the explorer goes back (not in insert mode, where `ctrl+h` is backspace) |
+| `ctrl+b` | Toggle the file explorer, in every mode (see [Files, windows and tabs](#files-windows-and-tabs)) |
+| `ctrl+h` / `ctrl+l` | Focus the window to the left / right; `ctrl+h` from the leftmost window goes to the explorer when it is shown, `ctrl+l` from the explorer goes back (not in insert mode, where `ctrl+h` is backspace) |
 | `ctrl+w` … | Window commands (not in insert mode, where it deletes a word): `s` split, `v` vsplit, `h j k l` move, `q` close, `o` only, `z` zoom, `T` / `M` to tab and back, `space` window manager |
 | `f1` | Help |
 | `ctrl+o` | Toggle the outline panel: each cell with what it defines, live types after a run, dependency edges; `enter` jumps (cell mode; in the editor it is vim's jump back / one-shot command; `:outline`) |
@@ -201,7 +201,7 @@ whole cells), `q:`, `gn`.
 | `ctrl+n` / `ctrl+p` | line down / up; insert: complete | new cell / palette | cell mode, `:new`, `o` / `O` in cell mode |
 | `ctrl+o` | jump back; insert: one-shot command | outline | cell mode `ctrl+o`, `:outline` |
 | `ctrl+v` | visual block; insert: literal key | variables panel | cell mode `ctrl+v`, `:vars` |
-| `ctrl+b` / `ctrl+f` | page up / down | explorer / nothing | cell mode `ctrl+b`, `:Ex` |
+| `ctrl+f` | page down | nothing | |
 | `ctrl+w` (insert) | delete the word before the cursor | window prefix | `escape`, then `ctrl+w` |
 | `ctrl+t` (insert) | indent the line | theme picker | outside insert mode, `:theme` |
 | `ctrl+u` / `ctrl+y` / `tab` | half page up / scroll up / jump forward | nothing | — |
@@ -421,9 +421,11 @@ used by c4`). `ctrl+w l` from the rightmost window focuses it, then:
 It replaces the old f2 variables table. In insert mode `ctrl+o` keeps vim's
 meaning (one normal-mode command); use `:outline` there.
 
-`ctrl+b` toggles the explorer from anywhere. The explorer stays open after a
+`ctrl+b` toggles the explorer from anywhere, also in vim normal mode (it is not
+page up). While the explorer has the keyboard the mode badge stays NORMAL, as in
+vim; its keys are the ones in the table above. The explorer stays open after a
 file is opened; `ctrl+h` or `ctrl+w h` from the leftmost window (or `ctrl+w w`)
-goes back to it, and `ctrl+l` returns to the notebook. Terminals send `ctrl+h`
+goes back to it while it is shown, and `ctrl+l` returns to the notebook. Terminals send `ctrl+h`
 as backspace, so backspace does the same outside insert mode. A file that is
 already open is shown (its tab focused) instead of being opened twice. Clicking
 a file opens it too.

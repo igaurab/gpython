@@ -501,13 +501,26 @@ def test_ctrl_h_and_l_move_between_explorer_and_notebook(tmp_path):
     async def test(app, pilot):
         editor = app.cells()[0].editor
         editor.focus()
-        await pilot.press("ctrl+h")
+        await pilot.press("ctrl+h", "backspace")
+        await pilot.pause()
+        assert app.explorer is None and app.focused is editor
+        await pilot.press("ctrl+b")
         await pilot.pause()
         assert app.explorer_visible and isinstance(app.focused, Explorer)
         await pilot.press("ctrl+l")
         assert app.focused is editor
-        await pilot.press("backspace")
+        await pilot.press("ctrl+h")
         assert isinstance(app.focused, Explorer)
+        await pilot.press("ctrl+l", "backspace")
+        assert isinstance(app.focused, Explorer)
+        await pilot.press("ctrl+b")
+        await pilot.pause()
+        assert not app.explorer_visible and app.focused is editor
+        await pilot.press("backspace")
+        await pilot.pause()
+        assert not app.explorer_visible and app.focused is editor
+        await pilot.press("ctrl+b")
+        await pilot.pause()
         await pilot.press("ctrl+l", "i", "x", "backspace")
         await pilot.pause()
         assert app.focused is editor and editor.text == "a = 1" and app.ui_mode == "insert"
