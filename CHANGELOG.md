@@ -29,6 +29,8 @@ this file as its notes.
   (or `down` / `up`, `ctrl+n` / `ctrl+p`) go through the rows and put the row in the prompt;
   `enter` runs the line. A click on a row does the same as `tab`. After a range (`:'<,'>`) the
   list shows the line commands (`s` `d` `j` `m` `t` `normal` ...).
+- `:split v [file]` splits the window into left and right, and `:split h [file]` into top and
+  bottom. The direction comes before the file name; `:sp` and `:vs` take it too.
 
 ### Fixed
 - `asyncio.run(...)` works inside a cell, and so does a library that calls it for you. It used to

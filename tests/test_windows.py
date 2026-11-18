@@ -330,6 +330,30 @@ def test_edit_split_and_quit_commands(tmp_path):
     ui(test, None)
 
 
+def test_split_takes_a_direction_before_the_file(tmp_path):
+    root = project(tmp_path)
+
+    async def test(app, pilot):
+        await pilot.press("escape", ":", *f"e {root / 'a.py'}", "enter")
+        await pilot.pause()
+        await pilot.press(":", *f"split v {root / 'b.py'}", "enter")
+        await pilot.pause()
+        assert visible_names(app) == ["a.py", "b.py"]
+        left, right = (app.workspace.tab.rects[p] for p in app.workspace.tab_panes())
+        assert left.x < right.x and left.y == right.y
+        await pilot.press(":", *"only", "enter")
+        await pilot.pause()
+        await pilot.press(":", *f"vs h {root / 'a.py'}", "enter")
+        await pilot.pause()
+        top, bottom = (app.workspace.tab.rects[p] for p in app.workspace.tab_panes())
+        assert top.y < bottom.y and top.x == bottom.x
+        await pilot.press(":", *"split v", "enter")
+        await pilot.pause()
+        assert len(app.workspace.tab_panes()) == 3
+
+    ui(test, None)
+
+
 def test_buffers(tmp_path):
     root = project(tmp_path)
 

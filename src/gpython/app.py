@@ -55,6 +55,7 @@ AUTOINSTALL_MESSAGE = (
 )
 ASK_INSTALL_MESSAGE = "If a module is missing, gpython asks first. Press enter to install it, or esc to skip. Use :set autoinstall to install without a question."
 IMAGE_HINT = "v  view image full screen"
+SPLIT_DIRECTIONS = {"h": "split", "horizontal": "split", "v": "vsplit", "vertical": "vsplit"}
 _MODE_STYLES = {
     "insert": f"bold black on {INSERT_COLOR}",
     "normal": f"bold black on {MODE_CURSOR_COLORS['normal']}",
@@ -1509,7 +1510,7 @@ class GPython(App):
             (("qa!", "qall!"), "Quit without saving", lambda arg="": self.exit()),
             (("e", "edit", "open"), "Open a notebook in this window (:e file; :e folder or :e alone opens the file explorer)", self._ex_edit),
             (("e!", "edit!"), "Open a notebook in this window and discard unsaved changes", lambda arg="": self._ex_edit(arg, force=True)),
-            (("sp", "split"), "Split the window into top and bottom (:sp file opens the file there)", lambda arg="": self._ex_split("split", arg)),
+            (("sp", "split"), "Split the window into top and bottom (:sp file opens the file there). :split v file splits into left and right, :split h file into top and bottom", lambda arg="": self._ex_split("split", arg)),
             (("vs", "vsp", "vsplit"), "Split the window into left and right (:vs file opens the file there)", lambda arg="": self._ex_split("vsplit", arg)),
             (("on", "only"), "Close every other window in this tab", lambda arg="": self._ex_only()),
             (("zoom",), "Make this window fill the tab, or show the split windows again (ctrl+w z)", lambda arg="": self.toggle_zoom()),
@@ -1824,7 +1825,11 @@ class GPython(App):
         await self.open_file(arg, "here", force=force)
 
     async def _ex_split(self, how: str, arg: str = "") -> None:
+        """:sp [file] · :vs [file] · :tabnew [file]; `:split v [file]` and `:split h [file]` name the direction first."""
         arg = arg.strip()
+        direction, _, rest = arg.partition(" ")
+        if how in SPLIT_DIRECTIONS.values() and direction in SPLIT_DIRECTIONS:
+            how, arg = SPLIT_DIRECTIONS[direction], rest.strip()
         if arg:
             await self.open_file(arg, how)
         else:
