@@ -144,7 +144,7 @@ class NotebookPane(Vertical):
         self._removal = None
         self._last_focus_cid: str | None = None
         self._outputs_timer = None
-        self._outputs_to_store: tuple[Path, list[notebook.CellSpec], str] | None = None
+        self._outputs_to_store: tuple[Path, list[notebook.CellSpec], bool, str] | None = None
         self._run_state_json: dict[str, tuple[tuple, str]] = {}
         self._cells_box: VerticalScroll | None = None
         self._outline: Outline | None = None
@@ -262,16 +262,16 @@ class NotebookPane(Vertical):
             self.app.run_worker(boot, group="kernel")
 
     async def _restore_outputs_then_fill(self) -> None:
-        if self.path is not None and not self.markers and not self.other_views:
+        if self.path is not None and notebook.keeps_outputs_outside(self.path) and not self.other_views:
             await self._restore_outputs()
         await self._update_window()
 
     async def _restore_outputs(self) -> None:
-        """A plain script's stored outputs are read after the first frame (sidecar.py), then shown."""
+        """A .py notebook's stored outputs are read after the first frame (sidecar.py), then shown."""
         states = list(self.states)
         specs = [self._light_spec(s) for s in states]
         try:
-            stored = await asyncio.to_thread(notebook.load_outputs, self.path, specs)
+            stored = await asyncio.to_thread(notebook.load_outputs, self.path, specs, self.markers)
         except Exception:
             return
         if stored is None or self.dirty or self.states != states:
@@ -1945,10 +1945,10 @@ class NotebookPane(Vertical):
         """A run finished, outputs were cleared or the file was saved: take a snapshot now (cheap,
         only changed cells are encoded) and write it to ~/.gpython from a thread half a second
         later, no :w needed. on_unmount writes a snapshot still waiting, so quitting keeps it."""
-        if self.dirty or self.path is None or self.markers:
+        if self.dirty or self.path is None or not notebook.keeps_outputs_outside(self.path):
             return
         specs, states = self._outputs_snapshot()
-        self._outputs_to_store = (self.path, specs, states)
+        self._outputs_to_store = (self.path, specs, self.markers, states)
         if self._outputs_timer is not None:
             self._outputs_timer.stop()
         self._outputs_timer = self.set_timer(0.5, self._store_outputs)
@@ -1957,8 +1957,7 @@ class NotebookPane(Vertical):
         self._outputs_timer = None
         pending, self._outputs_to_store = self._outputs_to_store, None
         if pending is not None:
-            path, specs, states = pending
-            await asyncio.to_thread(notebook.remember_outputs, path, specs, False, states)
+            await asyncio.to_thread(notebook.remember_outputs, *pending)
 
     def store_outputs_now(self) -> None:
         if self._outputs_timer is not None:
@@ -1966,8 +1965,7 @@ class NotebookPane(Vertical):
             self._outputs_timer = None
         pending, self._outputs_to_store = self._outputs_to_store, None
         if pending is not None:
-            path, specs, states = pending
-            notebook.remember_outputs(path, specs, False, states)
+            notebook.remember_outputs(*pending)
 
     def on_click(self, event) -> None:
         """Clicking the empty space below the last cell focuses the nearest cell."""

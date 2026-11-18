@@ -10,6 +10,8 @@ and used when the file is reopened unchanged. Otherwise the script is split at
 top-level statements, and module-level strings (docstrings) become markdown cells.
 Files that already have `# %%` markers keep them.
 
+The last outputs of every .py notebook, with or without markers, are kept in ~/.gpython too.
+
 `.ipynb` files load code and markdown cells with their stored outputs and
 execution counts and save as nbformat 4, keeping the notebook metadata that was loaded.
 
@@ -258,7 +260,7 @@ def _dump_script(cells: list[CellSpec]) -> str:
 
 
 def run_state(cell: CellSpec) -> dict:
-    """What a plain script cannot hold about a run: a code cell's last outputs, run number and run time."""
+    """What a .py file cannot hold about a run: a code cell's last outputs, run number and run time."""
     state: dict = {}
     if cell.kind == "code":
         if cell.outputs:
@@ -684,16 +686,40 @@ def load_cells(path: Path) -> tuple[list[CellSpec], bool]:
     return split_script(text), False
 
 
-def load_outputs(path: Path, cells: list[CellSpec]) -> list[dict] | None:
-    """The run state (run_state) gpython stored for each of `cells`, when `path` is a plain script
-    whose text on disk is exactly these cells; else None. Read after the first frame."""
-    if not _is_plain_script(path, cells, False):
+def keeps_outputs_outside(path: Path) -> bool:
+    """True for a .py notebook: its outputs go to ~/.gpython. A .ipynb holds its own."""
+    return not _is_ipynb(path)
+
+
+def _marked_text_holds(path: Path, text: str, cells: list[CellSpec], markers: bool) -> bool:
+    """True when `text`, a `# %%` or marimo file, reads back as `cells` or is what save would write."""
+    try:
+        on_disk = (_split_marimo(text)[1] or [CellSpec("")]) if is_marimo(text) else parse(text)
+    except SyntaxError:
+        on_disk = []
+    if [(c.source.strip("\n"), c.kind) for c in on_disk] == [(c.source.strip("\n"), c.kind) for c in cells]:
+        return True
+    return file_text(path, cells, markers) == text
+
+
+def _text_holding(path: Path, cells: list[CellSpec], markers: bool) -> str | None:
+    """The text of the .py file at `path` when it holds exactly `cells`, else None."""
+    if not keeps_outputs_outside(path):
         return None
     try:
         text = path.read_text()
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return None
-    if dump_script_with_layout(cells)[0] != text:
+    if _is_plain_script(path, cells, markers):
+        return text if dump_script_with_layout(cells)[0] == text else None
+    return text if _marked_text_holds(path, text, cells, markers) else None
+
+
+def load_outputs(path: Path, cells: list[CellSpec], markers: bool = False) -> list[dict] | None:
+    """The run state (run_state) gpython stored for each of `cells`, when `path` is a .py notebook
+    whose text on disk is exactly these cells; else None. Read after the first frame."""
+    text = _text_holding(path, cells, markers)
+    if text is None:
         return None
     from . import sidecar
 
@@ -724,16 +750,11 @@ def outputs_json(cells: list[CellSpec]) -> str:
 
 
 def remember_outputs(path: Path, cells: list[CellSpec], markers: bool, states: str | None = None) -> bool:
-    """Store the cells' outputs and run times in ~/.gpython without writing the script, when
-    `path` is a plain script whose text on disk is exactly these cells. `states` is the JSON list
-    of run states when the caller already has it (outputs_json). True if stored."""
-    if not _is_plain_script(path, cells, markers):
-        return False
-    text = dump_script_with_layout(cells)[0]
-    try:
-        if path.read_text() != text:
-            return False
-    except OSError:
+    """Store the cells' outputs and run times in ~/.gpython without writing the file, when `path`
+    is a .py notebook whose text on disk is exactly these cells. `states` is the JSON list of run
+    states when the caller already has it (outputs_json). True if stored."""
+    text = _text_holding(path, cells, markers)
+    if text is None:
         return False
     from . import sidecar
 
@@ -742,16 +763,18 @@ def remember_outputs(path: Path, cells: list[CellSpec], markers: bool, states: s
 
 
 def save(path: Path, cells: list[CellSpec | str], markers: bool = True, outputs: bool = True) -> None:
-    """Write the notebook. A plain script also gets its cell layout remembered in ~/.gpython and,
-    unless `outputs` is False (the caller stores them later, off the UI thread), its outputs."""
-    specs = [_spec(c) for c in cells]
-    if not _is_plain_script(path, specs, markers):
-        path.write_text(file_text(path, specs, markers))
-        return
+    """Write the notebook. A plain script also gets its cell layout remembered in ~/.gpython.
+    Every .py notebook gets its outputs remembered there, unless `outputs` is False (the caller
+    stores them later, off the UI thread)."""
     from . import sidecar
 
-    text, layout = dump_script_with_layout(specs)
-    path.write_text(text)
-    sidecar.write_layout(path, text, layout)
-    if outputs:
+    specs = [_spec(c) for c in cells]
+    if _is_plain_script(path, specs, markers):
+        text, layout = dump_script_with_layout(specs)
+        path.write_text(text)
+        sidecar.write_layout(path, text, layout)
+    else:
+        text = file_text(path, specs, markers)
+        path.write_text(text)
+    if outputs and keeps_outputs_outside(path):
         sidecar.write_outputs(path, text, outputs_json(specs))

@@ -1,9 +1,10 @@
-"""Cell layout of plain .py notebooks, kept outside the script so the script stays ordinary code.
+"""Cell layout of plain .py notebooks and outputs of every .py notebook, kept outside the file so it stays ordinary code.
 
 gpython writes a plain .py notebook without `# %%` lines. Where each cell starts and ends and
 whether it is markdown or has its code hidden go to ~/.gpython/cells/<content>/<path>.json, and
 each code cell's last outputs (nbformat dicts, as in .ipynb), run number and run time to
-<path>.out.json beside it. <content> is named after the file's text and <path> after where the
+<path>.out.json beside it. A .py file with `# %%` lines or a marimo file holds its own layout
+and gets only the .out.json. <content> is named after the file's text and <path> after where the
 file is (GPYTHON_HOME moves ~/.gpython). On open the layout of this path is used, or, for a file
 moved, renamed or copied while unchanged, the newest layout any path wrote for the same text. A
 file changed by another editor has no layout and is split afresh. Nothing is deleted on save, so

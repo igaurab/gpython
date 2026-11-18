@@ -8,6 +8,12 @@ this file as its notes.
 
 ## [Unreleased]
 
+### Fixed
+- A `.py` notebook with `# %%` lines, and a marimo notebook, keep their outputs when you quit.
+  Before, only a `.py` file without `# %%` lines did: you had to run the cells again each time
+  you opened the file. The outputs, the run numbers and the run times go to `~/.gpython` after
+  each run, as for other `.py` files; the file itself is not changed.
+
 ## [0.2.1] - 2026-11-18
 
 ### Added

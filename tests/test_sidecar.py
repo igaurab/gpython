@@ -197,3 +197,105 @@ def test_a_run_is_kept_without_saving_and_shown_after_reopening(tmp_path):
     asyncio.run(run_then_quit())
     assert path.read_text() == "print('kept')\n\nz = 3\n"
     asyncio.run(reopen())
+
+
+PERCENT = "# %% [markdown]\n# # Title\n\n# %%\nprint('kept')\n\n\n# %%\nz = 3\n"
+MARIMO = """import marimo
+
+app = marimo.App()
+
+
+@app.cell
+def _():
+    print('kept')
+    return
+
+
+@app.cell
+def _():
+    z = 3
+    return
+
+
+if __name__ == "__main__":
+    app.run()
+"""
+STREAM = [{"output_type": "stream", "name": "stdout", "text": "kept\n"}]
+
+
+def _with_first_code_cell_run(cells):
+    first = next(i for i, c in enumerate(cells) if c.kind == "code")
+    return [notebook.with_run_state(c, {"outputs": STREAM, "execution_count": 1, "duration": 0.5}) if i == first else c for i, c in enumerate(cells)]
+
+
+def test_a_hand_written_marker_file_keeps_outputs_without_being_rewritten(tmp_path):
+    for name, text in (("percent.py", PERCENT), ("app.py", MARIMO)):
+        path = tmp_path / name
+        path.write_text(text)
+        cells, markers = load_cells(path)
+        assert markers
+        assert notebook.remember_outputs(path, _with_first_code_cell_run(cells), markers)
+        assert path.read_text() == text
+        again, markers = load_cells(path)
+        stored = notebook.load_outputs(path, again, markers)
+        assert [s.get("outputs") for s in stored if s] == [STREAM]
+
+
+def test_marker_file_outputs_are_not_shown_for_other_cells(tmp_path):
+    path = tmp_path / "nb.py"
+    path.write_text(PERCENT)
+    cells, markers = load_cells(path)
+    assert notebook.remember_outputs(path, _with_first_code_cell_run(cells), markers)
+    edited = [*cells[:-1], CellSpec("z = 4")]
+    assert not notebook.remember_outputs(path, edited, markers)
+    assert notebook.load_outputs(path, edited, markers) is None
+    path.write_text(PERCENT.replace("z = 3", "z = 4"))
+    assert notebook.load_outputs(path, load_cells(path)[0], True) is None
+
+
+def test_saving_a_marker_file_keeps_its_outputs(tmp_path):
+    path = tmp_path / "nb.py"
+    path.write_text(PERCENT)
+    cells, markers = load_cells(path)
+    save(path, _with_first_code_cell_run(cells), markers)
+    assert "kept\n" not in path.read_text().replace("print('kept')", "")
+    again, markers = load_cells(path)
+    assert [s.get("outputs") for s in notebook.load_outputs(path, again, markers) if s] == [STREAM]
+
+
+def test_an_ipynb_keeps_nothing_outside_the_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("GPYTHON_HOME", str(tmp_path / "home"))
+    path = tmp_path / "nb.ipynb"
+    cells = [CellSpec("print('kept')", outputs=STREAM, execution_count=1)]
+    save(path, cells)
+    assert not notebook.remember_outputs(path, cells, True)
+    assert notebook.load_outputs(path, load_cells(path)[0], True) is None
+    assert not (tmp_path / "home").exists()
+
+
+def test_a_marker_file_run_is_kept_without_saving_and_shown_after_reopening(tmp_path):
+    path = tmp_path / "nb.py"
+    path.write_text(PERCENT)
+
+    async def run_then_quit():
+        app = GPython(path)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await asyncio.wait_for(app.kernel.ready.wait(), 60)
+            await app._run_ex("run")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert not app.pane.dirty
+
+    async def reopen():
+        app = GPython(path)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await app.loaded.wait()
+            await pilot.pause()
+            _, first, second = app.cells()
+            assert first.output_text.strip() == "kept"
+            assert first.exec_count == 1 and second.exec_count == 2
+            assert first.duration is not None and second.duration is not None
+
+    asyncio.run(run_then_quit())
+    assert path.read_text() == PERCENT
+    asyncio.run(reopen())
