@@ -8,16 +8,19 @@ this file as its notes.
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-11-19
+
 ### Added
 - The `hiberbee` theme, from NvChad's theme of the same name: a near-black warm background,
   yellow strings, orange `def` and `return`, red `if`, cyan function names and green numbers,
-  as Neovim shows a Python file, and calls such as `hello()` in green. `:theme hiberbee` or `gpy --theme hiberbee`.
+  as Neovim shows a Python file, and calls such as `hello()` in green. `:theme hiberbee` or
+  `gpy --theme hiberbee`.
+- `hiberbee-light`, a light theme to go with it. NvChad has no light hiberbee, so this one is
+  gpython's own: each word keeps its colour, made darker for a warm off-white page.
 - The file tree shows folders as nvim-tree does: an arrow, a closed or an open folder
   picture, and the folder name in the theme's second colour. The pictures come from a Nerd
   Font. If your terminal font has none and you see empty boxes, `:set noicons` goes back to
   the text arrows (`icons = false` in the config); `:set icons` shows the pictures again.
-- `hiberbee-light`, a light theme to go with it. NvChad has no light hiberbee, so this one is
-  gpython's own: each word keeps its colour, made darker for a warm off-white page.
 
 ## [0.2.2] - 2026-11-18
 
@@ -259,7 +262,8 @@ First release on PyPI as `gpynb`: `uv tool install gpynb` gives the `gpython` co
 - Performance work so a keystroke paints in under 10 ms and the first frame is on screen
   within about 0.3 s of launch, with `scripts/bench.py` to keep it that way.
 
-[Unreleased]: https://github.com/igaurab/gpython/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/igaurab/gpython/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/igaurab/gpython/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/igaurab/gpython/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/igaurab/gpython/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/igaurab/gpython/compare/v0.1.2...v0.2.0
