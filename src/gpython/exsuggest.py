@@ -61,6 +61,8 @@ SET_OPTIONS: Candidates = [
     ("nostatusbar", "Hide the status bar"),
     ("markers", "A .py file that has # %% lines keeps them"),
     ("nomarkers", "Each save writes a .py file without # %% lines"),
+    ("icons", "The file tree shows folder pictures (needs a Nerd Font)"),
+    ("noicons", "The file tree shows folders as text"),
     ("cursor=", "The cursor in insert mode: bar, underline or block"),
     ("cursor=bar", "A thin line"),
     ("cursor=underline", "A line below the character"),

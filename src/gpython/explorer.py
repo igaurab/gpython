@@ -6,6 +6,9 @@ e opens it in the current window, s/v open in a horizontal/vertical split,
 - goes up one directory, C makes the directory under the cursor the root,
 R reloads, . shows hidden files, / searches names, % creates a new notebook,
 q / escape / ctrl+b close the explorer.
+
+`Explorer.icons` (`:set icons`) draws folders as nvim-tree does: an arrow, a closed or an
+open folder picture from a Nerd Font, and the name in the theme's second colour.
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ from typing import Iterable
 from rich.style import Style
 from rich.text import Text
 from textual import events
+from textual.color import Color
 from textual.message import Message
 from textual.widgets import DirectoryTree
 from textual.widgets.tree import TreeNode
@@ -51,7 +55,12 @@ class Explorer(DirectoryTree):
     ICON_NODE = "▸ "
     ICON_NODE_EXPANDED = "▾ "
     ICON_FILE = "  "
+    FOLDER_PICTURE = "\uf460 \ue6ad "
+    FOLDER_PICTURE_EXPANDED = "\uf47c \ueaf6 "
+    FILE_INDENT = "    "
+    icons = False
     show_hidden = False
+    _folder_style: tuple[str, Style] = ("", Style())
 
     def __init__(self, path: Path, **kwargs) -> None:
         super().__init__(path, id="explorer", **kwargs)
@@ -61,9 +70,12 @@ class Explorer(DirectoryTree):
         self._last_search = ""
 
     def render_label(self, node: TreeNode, base_style: Style, style: Style) -> Text:
-        """`▸ folder` / `  file.py`: no emoji, no extension highlight, folders bold, dotfiles dim."""
+        """`▸ folder` / `  file.py`: no emoji, no extension highlight, folders bold, dotfiles dim.
+        With `icons`, a folder is an arrow, a folder picture and its name in one colour."""
         label = node._label.copy()
         label.stylize(style)
+        if self.icons:
+            return self._label_with_pictures(node, label, base_style)
         if node._allow_expand:
             prefix = (self.ICON_NODE_EXPANDED if node.is_expanded else self.ICON_NODE, base_style)
             label.stylize_before("bold")
@@ -72,6 +84,29 @@ class Explorer(DirectoryTree):
         if label.plain.startswith("."):
             label.stylize_before("dim")
         return Text.assemble(prefix, label)
+
+    def _label_with_pictures(self, node: TreeNode, label: Text, base_style: Style) -> Text:
+        if not node._allow_expand:
+            if label.plain.startswith("."):
+                label.stylize_before("dim")
+            return Text.assemble((self.FILE_INDENT, base_style), label)
+        colour = self.folder_style()
+        picture = self.FOLDER_PICTURE_EXPANDED if node.is_expanded else self.FOLDER_PICTURE
+        label.stylize_before(colour)
+        return Text.assemble((picture, base_style + colour), label)
+
+    def folder_style(self) -> Style:
+        """The colour of folders: the theme's second colour, worked out once for each theme."""
+        theme = self.app.current_theme
+        name, style = self._folder_style
+        if name != theme.name:
+            style = Style(color=Color.parse(theme.secondary or theme.primary).rich_color)
+            self._folder_style = (theme.name, style)
+        return style
+
+    def redraw(self) -> None:
+        """Draw each row again, for a change of `icons`."""
+        self._invalidate()
 
     def filter_paths(self, paths: Iterable[Path]) -> Iterable[Path]:
         for path in sorted(paths, key=lambda p: (not p.is_dir(), p.name.lower())):

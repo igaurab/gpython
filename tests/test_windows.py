@@ -4,10 +4,13 @@ import asyncio
 
 import pytest
 
+from gpython import config
 from gpython.app import GPython, KeyCapture
 from gpython.explorer import Explorer
 from gpython.vim import VimTextArea
 from gpython.windows import Branch, Leaf, arrange, remove_leaf, split_leaf
+from rich.style import Style
+from textual.color import Color
 from textual.geometry import Region
 
 
@@ -414,3 +417,68 @@ def test_buffers(tmp_path):
         assert not untitled.is_attached and ws.buffers[0] is not untitled
 
     ui(test, root / "a.py", paths=[root / "b.py"])
+
+
+def drawn_rows(explorer):
+    return {
+        node.data.path.name: explorer.render_label(node, Style(), Style())
+        for node in explorer.root.children
+    }
+
+
+def with_icons_off_after(test, root, **kwargs):
+    try:
+        ui(test, root, **kwargs)
+    finally:
+        Explorer.icons = False
+
+
+def test_set_icons_draws_folders_with_pictures_in_the_themes_second_colour(tmp_path):
+    root = project(tmp_path)
+
+    async def test(app, pilot):
+        explorer = app.explorer
+        await loaded(explorer)
+        assert drawn_rows(explorer)["sub"].plain == "▸ sub"
+        await app._run_ex("set icons")
+        await pilot.pause()
+        drawn = drawn_rows(explorer)
+        assert drawn["sub"].plain == Explorer.FOLDER_PICTURE + "sub"
+        assert drawn["a.py"].plain == Explorer.FILE_INDENT + "a.py"
+        colours = {span.style.color for span in drawn["sub"].spans} - {None}
+        assert colours == {Color.parse(app.current_theme.secondary).rich_color}
+        assert config.load().get("icons") is True
+
+    with_icons_off_after(test, root, theme="nord")
+
+
+def test_an_open_folder_has_its_own_picture_and_set_noicons_goes_back_to_text(tmp_path):
+    root = project(tmp_path)
+
+    async def test(app, pilot):
+        explorer = app.explorer
+        await loaded(explorer)
+        await app._run_ex("set icons")
+        explorer.root.children[0].expand()
+        await pilot.pause(0.3)
+        assert drawn_rows(explorer)["sub"].plain == Explorer.FOLDER_PICTURE_EXPANDED + "sub"
+        await app._run_ex("set noicons")
+        await pilot.pause()
+        assert drawn_rows(explorer)["sub"].plain == "▾ sub"
+        assert drawn_rows(explorer)["a.py"].plain == "  a.py"
+        assert config.load().get("icons") is False
+
+    with_icons_off_after(test, root)
+
+
+def test_icons_saved_in_the_config_are_on_when_the_file_tree_first_opens(tmp_path):
+    root = project(tmp_path)
+    config.save({"icons": True})
+
+    async def test(app, pilot):
+        explorer = app.explorer
+        await loaded(explorer)
+        folder = next(n for n in explorer.root.children if n.data.path.name == "sub")
+        assert explorer.render_label(folder, Style(), Style()).plain == Explorer.FOLDER_PICTURE + "sub"
+
+    with_icons_off_after(test, root)

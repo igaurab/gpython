@@ -11,7 +11,11 @@ this file as its notes.
 ### Added
 - The `hiberbee` theme, from NvChad's theme of the same name: a near-black warm background,
   yellow strings, orange `def` and `return`, red `if`, cyan function names and green numbers,
-  as Neovim shows a Python file. `:theme hiberbee` or `gpy --theme hiberbee`.
+  as Neovim shows a Python file, and calls such as `hello()` in purple. `:theme hiberbee` or `gpy --theme hiberbee`.
+- `:set icons` shows folders in the file tree as nvim-tree does: an arrow, a closed or an open
+  folder picture, and the folder name in the theme's second colour (`icons = true` in the
+  config). The pictures come from a Nerd Font, so the terminal must use one. `:set noicons`
+  goes back to the text arrows, which stay the default.
 - `hiberbee-light`, a light theme to go with it. NvChad has no light hiberbee, so this one is
   gpython's own: each word keeps its colour, made darker for a warm off-white page.
 
