@@ -303,7 +303,7 @@ class GPython(App):
         Cell.show_timing = settings.get("timing") is True
         self.status_bar = settings.get("status_bar", True) is not False
         self.keep_markers = settings.get("markers", True) is not False
-        Explorer.icons = settings.get("icons") is True
+        Explorer.icons = settings.get("icons", True) is not False
         VimTextArea.insert_cursor = self._insert_cursor_setting(settings.get("insert_cursor"))
         bigtext.enabled = settings.get("experimental.true_markdown") is True
         VimTextArea.search = None

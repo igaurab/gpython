@@ -426,30 +426,20 @@ def drawn_rows(explorer):
     }
 
 
-def with_icons_off_after(test, root, **kwargs):
-    try:
-        ui(test, root, **kwargs)
-    finally:
-        Explorer.icons = False
-
-
-def test_set_icons_draws_folders_with_pictures_in_the_themes_second_colour(tmp_path):
+def test_folders_have_pictures_in_the_themes_second_colour_without_a_setting(tmp_path):
     root = project(tmp_path)
 
     async def test(app, pilot):
         explorer = app.explorer
         await loaded(explorer)
-        assert drawn_rows(explorer)["sub"].plain == "▸ sub"
-        await app._run_ex("set icons")
-        await pilot.pause()
         drawn = drawn_rows(explorer)
         assert drawn["sub"].plain == Explorer.FOLDER_PICTURE + "sub"
         assert drawn["a.py"].plain == Explorer.FILE_INDENT + "a.py"
         colours = {span.style.color for span in drawn["sub"].spans} - {None}
         assert colours == {Color.parse(app.current_theme.secondary).rich_color}
-        assert config.load().get("icons") is True
+        assert "icons" not in config.load()
 
-    with_icons_off_after(test, root, theme="nord")
+    ui(test, root, theme="nord")
 
 
 def test_an_open_folder_has_its_own_picture_and_set_noicons_goes_back_to_text(tmp_path):
@@ -458,7 +448,6 @@ def test_an_open_folder_has_its_own_picture_and_set_noicons_goes_back_to_text(tm
     async def test(app, pilot):
         explorer = app.explorer
         await loaded(explorer)
-        await app._run_ex("set icons")
         explorer.root.children[0].expand()
         await pilot.pause(0.3)
         assert drawn_rows(explorer)["sub"].plain == Explorer.FOLDER_PICTURE_EXPANDED + "sub"
@@ -467,18 +456,19 @@ def test_an_open_folder_has_its_own_picture_and_set_noicons_goes_back_to_text(tm
         assert drawn_rows(explorer)["sub"].plain == "▾ sub"
         assert drawn_rows(explorer)["a.py"].plain == "  a.py"
         assert config.load().get("icons") is False
+        await app._run_ex("set icons")
+        assert drawn_rows(explorer)["a.py"].plain == Explorer.FILE_INDENT + "a.py"
 
-    with_icons_off_after(test, root)
+    ui(test, root)
 
 
-def test_icons_saved_in_the_config_are_on_when_the_file_tree_first_opens(tmp_path):
+def test_icons_turned_off_in_the_config_stay_off_when_the_file_tree_first_opens(tmp_path):
     root = project(tmp_path)
-    config.save({"icons": True})
+    config.save({"icons": False})
 
     async def test(app, pilot):
         explorer = app.explorer
         await loaded(explorer)
-        folder = next(n for n in explorer.root.children if n.data.path.name == "sub")
-        assert explorer.render_label(folder, Style(), Style()).plain == Explorer.FOLDER_PICTURE + "sub"
+        assert drawn_rows(explorer)["sub"].plain == "▸ sub"
 
-    with_icons_off_after(test, root)
+    ui(test, root)

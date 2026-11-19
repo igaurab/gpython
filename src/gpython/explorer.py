@@ -7,8 +7,9 @@ e opens it in the current window, s/v open in a horizontal/vertical split,
 R reloads, . shows hidden files, / searches names, % creates a new notebook,
 q / escape / ctrl+b close the explorer.
 
-`Explorer.icons` (`:set icons`) draws folders as nvim-tree does: an arrow, a closed or an
-open folder picture from a Nerd Font, and the name in the theme's second colour.
+`Explorer.icons` draws folders as nvim-tree does: an arrow, a closed or an open folder
+picture from a Nerd Font, and the name in the theme's second colour. `:set noicons` goes
+back to text arrows, for a terminal whose font has no such pictures.
 """
 
 from __future__ import annotations
@@ -58,7 +59,7 @@ class Explorer(DirectoryTree):
     FOLDER_PICTURE = "\uf460 \ue6ad "
     FOLDER_PICTURE_EXPANDED = "\uf47c \ueaf6 "
     FILE_INDENT = "    "
-    icons = False
+    icons = True
     show_hidden = False
     _folder_style: tuple[str, Style] = ("", Style())
 
@@ -70,8 +71,8 @@ class Explorer(DirectoryTree):
         self._last_search = ""
 
     def render_label(self, node: TreeNode, base_style: Style, style: Style) -> Text:
-        """`▸ folder` / `  file.py`: no emoji, no extension highlight, folders bold, dotfiles dim.
-        With `icons`, a folder is an arrow, a folder picture and its name in one colour."""
+        """With `icons`, a folder is an arrow, a folder picture and its name in one colour.
+        Without: `▸ folder` / `  file.py`, folders bold. No extension highlight, dotfiles dim."""
         label = node._label.copy()
         label.stylize(style)
         if self.icons:
