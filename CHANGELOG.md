@@ -8,6 +8,11 @@ this file as its notes.
 
 ## [Unreleased]
 
+### Added
+- The `hiberbee` theme, from NvChad's theme of the same name: a near-black warm background,
+  yellow strings, orange `def` and `return`, red `if`, cyan function names and green numbers,
+  as Neovim shows a Python file. `:theme hiberbee` or `gpy --theme hiberbee`.
+
 ## [0.2.2] - 2026-11-18
 
 ### Added

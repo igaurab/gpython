@@ -87,6 +87,29 @@ def test_palette_names_resolve_to_app_themes(name):
     assert PALETTES[name].name == name
 
 
+def test_hiberbee_has_the_colors_of_neovims_python_syntax():
+    palette = PALETTES["hiberbee"]
+    insert, normal = editor_themes(palette)
+    for theme in (insert, normal):
+        styles = theme.syntax_styles
+        color = {key: style.color.triplet.hex.lower() for key, style in styles.items()}
+        assert color["keyword"] == color["keyword.function"] == "#f25022"
+        assert color["conditional"] == "#ee7762"
+        assert color["repeat"] == color["function"] == color["class"] == "#7fdbca"
+        assert color["function.builtin"] == color["type.class"] == "#7fdbca"
+        assert color["include"] == color["number"] == "#92d923"
+        assert color["string"] == "#ffb900"
+        assert color["function.call"] == color["operator"] == palette.fg
+        assert styles["class"].bold and styles["link.uri"].underline
+    assert app_theme("hiberbee").background == palette.bg
+
+
+def test_palettes_without_syntax_colors_keep_their_group_colors():
+    styles = editor_themes(PALETTES["nord"])[0].syntax_styles
+    assert PALETTES["nord"].syntax_colors == ()
+    assert styles["repeat"] == styles["keyword"] and styles["function.call"] == styles["function"]
+
+
 def test_custom_themes_do_not_shadow_builtins():
     assert not set(CUSTOM_APP_THEMES) & set(BUILTIN_THEMES)
     for name, theme in CUSTOM_APP_THEMES.items():

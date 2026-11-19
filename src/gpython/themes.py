@@ -26,7 +26,8 @@ THEME_ALIASES = {
 
 @dataclass(frozen=True)
 class Palette:
-    """Colors a syntax theme needs. All hex strings."""
+    """Colors a syntax theme needs. All hex strings. `syntax_colors` holds (syntax key,
+    color) pairs for the keys whose color is not the one of their group."""
 
     name: str
     dark: bool
@@ -47,6 +48,7 @@ class Palette:
     punctuation: str
     cursor_insert: str
     cursor_normal: str
+    syntax_colors: tuple[tuple[str, str], ...] = ()
 
 
 _CATPPUCCIN = {
@@ -173,6 +175,43 @@ _SOLARIZED_ACCENTS = dict(
     constant="#6c71c4",
 )
 
+_HIBERBEE = dict(
+    bg="#121110", fg="#bbbab9", surface="#221f1e", panel="#2a2625", selection="#322d2c",
+    line_number="#423b3a", comment="#5a504f", red="#ee7762", orange="#f25022",
+    peach="#f59762", yellow="#ffb900", green="#92d923", cyan="#7fdbca", blue="#409cff",
+)
+
+
+def _hiberbee_palette() -> Palette:
+    """NvChad's hiberbee, with the colors Neovim's Python syntax file gives each word."""
+    c = _HIBERBEE
+    return Palette(
+        name="hiberbee", dark=True,
+        bg=c["bg"], fg=c["fg"], gutter_fg=c["line_number"], cursor_line_bg=c["surface"],
+        selection_bg=c["selection"], comment=c["comment"], keyword=c["orange"],
+        string=c["yellow"], number=c["green"], function=c["cyan"], type=c["fg"],
+        operator=c["fg"], builtin=c["fg"], constant=c["cyan"], punctuation=c["fg"],
+        cursor_insert=c["fg"], cursor_normal=c["yellow"],
+        syntax_colors=(
+            ("keyword.operator", c["fg"]),
+            ("conditional", c["red"]),
+            ("repeat", c["cyan"]),
+            ("include", c["green"]),
+            ("function.call", c["fg"]),
+            ("method.call", c["fg"]),
+            ("function.builtin", c["cyan"]),
+            ("class", c["cyan"]),
+            ("type.class", c["cyan"]),
+            ("type.builtin", c["cyan"]),
+            ("heading", c["cyan"]),
+            ("inline_code", c["green"]),
+            ("link.uri", c["green"]),
+            ("link.label", c["blue"]),
+            ("list.marker", c["orange"]),
+        ),
+    )
+
+
 _PALETTE_LIST = [
     _catppuccin("mocha", 0),
     _catppuccin("macchiato", 1),
@@ -242,6 +281,7 @@ _PALETTE_LIST = [
         builtin="#f8f8f2", constant="#66d9ef", punctuation="#f8f8f2",
         cursor_insert="#f8f8f0", cursor_normal="#e6db74",
     ),
+    _hiberbee_palette(),
     Palette(
         name="nord-light", dark=False,
         bg="#ECEFF4", fg="#2E3440", gutter_fg="#9AA3B5", cursor_line_bg="#E5E9F0",
@@ -294,6 +334,12 @@ CUSTOM_APP_THEMES: dict[str, Theme] = {
         dark=False,
     ),
     **{f"material-{v}": _material_theme(v) for v in ("oceanic", "palenight", "darker", "lighter")},
+    "hiberbee": Theme(
+        name="hiberbee", primary=_HIBERBEE["blue"], secondary=_HIBERBEE["cyan"],
+        accent=_HIBERBEE["yellow"], warning=_HIBERBEE["peach"], error=_HIBERBEE["red"],
+        success=_HIBERBEE["green"], foreground=_HIBERBEE["fg"], background=_HIBERBEE["bg"],
+        surface=_HIBERBEE["surface"], panel=_HIBERBEE["panel"], dark=True,
+    ),
     "nord-light": Theme(
         name="nord-light", primary="#3B6EA8", secondary="#29838D", accent="#AC4426",
         warning="#9A7500", error="#99324B", success="#4F894C", foreground="#2E3440",
@@ -363,6 +409,8 @@ def editor_themes(palette: Palette) -> tuple[TextAreaTheme, TextAreaTheme]:
     syntax["list.marker"] = c(p.number)
     syntax["italic"] = c(p.fg, italic=True)
     syntax["strikethrough"] = c(p.fg, strike=True)
+    for key, color in p.syntax_colors:
+        syntax[key] = syntax.get(key, Style()) + Style(color=color)
 
     def make(name: str, cursor: Style) -> TextAreaTheme:
         return TextAreaTheme(
