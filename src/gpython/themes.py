@@ -180,13 +180,20 @@ _HIBERBEE = dict(
     line_number="#423b3a", comment="#5a504f", red="#ee7762", orange="#f25022",
     peach="#f59762", yellow="#ffb900", green="#92d923", cyan="#7fdbca", blue="#409cff",
 )
+_HIBERBEE_LIGHT = dict(
+    bg="#fbf8f4", fg="#3a3433", surface="#f2ede7", panel="#e8e1d9", selection="#ddd4ca",
+    line_number="#b9aea3", comment="#8f847b", red="#c43d55", orange="#c93a0e",
+    peach="#b0531a", yellow="#946500", green="#4a7500", cyan="#0a7a71", blue="#1a68c7",
+)
+_HIBERBEE_COLORS = {"hiberbee": _HIBERBEE, "hiberbee-light": _HIBERBEE_LIGHT}
 
 
-def _hiberbee_palette() -> Palette:
-    """NvChad's hiberbee, with the colors Neovim's Python syntax file gives each word."""
-    c = _HIBERBEE
+def _hiberbee_palette(name: str) -> Palette:
+    """NvChad's hiberbee, with the colors Neovim's Python syntax file gives each word.
+    The light one is our own: the same color for each word, made darker for a pale page."""
+    c = _HIBERBEE_COLORS[name]
     return Palette(
-        name="hiberbee", dark=True,
+        name=name, dark=name == "hiberbee",
         bg=c["bg"], fg=c["fg"], gutter_fg=c["line_number"], cursor_line_bg=c["surface"],
         selection_bg=c["selection"], comment=c["comment"], keyword=c["orange"],
         string=c["yellow"], number=c["green"], function=c["cyan"], type=c["fg"],
@@ -209,6 +216,15 @@ def _hiberbee_palette() -> Palette:
             ("link.label", c["blue"]),
             ("list.marker", c["orange"]),
         ),
+    )
+
+
+def _hiberbee_theme(name: str) -> Theme:
+    c = _HIBERBEE_COLORS[name]
+    return Theme(
+        name=name, primary=c["blue"], secondary=c["cyan"], accent=c["yellow"],
+        warning=c["peach"], error=c["red"], success=c["green"], foreground=c["fg"],
+        background=c["bg"], surface=c["surface"], panel=c["panel"], dark=name == "hiberbee",
     )
 
 
@@ -281,7 +297,8 @@ _PALETTE_LIST = [
         builtin="#f8f8f2", constant="#66d9ef", punctuation="#f8f8f2",
         cursor_insert="#f8f8f0", cursor_normal="#e6db74",
     ),
-    _hiberbee_palette(),
+    _hiberbee_palette("hiberbee"),
+    _hiberbee_palette("hiberbee-light"),
     Palette(
         name="nord-light", dark=False,
         bg="#ECEFF4", fg="#2E3440", gutter_fg="#9AA3B5", cursor_line_bg="#E5E9F0",
@@ -334,12 +351,7 @@ CUSTOM_APP_THEMES: dict[str, Theme] = {
         dark=False,
     ),
     **{f"material-{v}": _material_theme(v) for v in ("oceanic", "palenight", "darker", "lighter")},
-    "hiberbee": Theme(
-        name="hiberbee", primary=_HIBERBEE["blue"], secondary=_HIBERBEE["cyan"],
-        accent=_HIBERBEE["yellow"], warning=_HIBERBEE["peach"], error=_HIBERBEE["red"],
-        success=_HIBERBEE["green"], foreground=_HIBERBEE["fg"], background=_HIBERBEE["bg"],
-        surface=_HIBERBEE["surface"], panel=_HIBERBEE["panel"], dark=True,
-    ),
+    **{name: _hiberbee_theme(name) for name in _HIBERBEE_COLORS},
     "nord-light": Theme(
         name="nord-light", primary="#3B6EA8", secondary="#29838D", accent="#AC4426",
         warning="#9A7500", error="#99324B", success="#4F894C", foreground="#2E3440",

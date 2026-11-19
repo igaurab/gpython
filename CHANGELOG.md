@@ -12,6 +12,8 @@ this file as its notes.
 - The `hiberbee` theme, from NvChad's theme of the same name: a near-black warm background,
   yellow strings, orange `def` and `return`, red `if`, cyan function names and green numbers,
   as Neovim shows a Python file. `:theme hiberbee` or `gpy --theme hiberbee`.
+- `hiberbee-light`, a light theme to go with it. NvChad has no light hiberbee, so this one is
+  gpython's own: each word keeps its colour, made darker for a warm off-white page.
 
 ## [0.2.2] - 2026-11-18
 

@@ -1,6 +1,7 @@
 import asyncio
 
 import pytest
+from textual.color import Color
 from textual.theme import BUILTIN_THEMES
 from textual.widgets.text_area import TextAreaTheme
 
@@ -43,7 +44,7 @@ SUPPORTED = [
 
 LIGHT = {
     "catppuccin-latte", "gruvbox-light", "material-lighter", "solarized-light",
-    "nord-light", "dracula-light", "tokyo-night-light", "monokai-light",
+    "nord-light", "dracula-light", "tokyo-night-light", "monokai-light", "hiberbee-light",
 }
 
 
@@ -87,21 +88,47 @@ def test_palette_names_resolve_to_app_themes(name):
     assert PALETTES[name].name == name
 
 
+HIBERBEE_COLORS = {
+    "#f25022": ("keyword", "keyword.function"),
+    "#ee7762": ("conditional",),
+    "#7fdbca": ("repeat", "function", "class", "function.builtin", "type.class"),
+    "#92d923": ("include", "number"),
+    "#ffb900": ("string",),
+    "#bbbab9": ("function.call", "operator"),
+}
+
+
 def test_hiberbee_has_the_colors_of_neovims_python_syntax():
     palette = PALETTES["hiberbee"]
-    insert, normal = editor_themes(palette)
-    for theme in (insert, normal):
+    for theme in editor_themes(palette):
         styles = theme.syntax_styles
-        color = {key: style.color.triplet.hex.lower() for key, style in styles.items()}
-        assert color["keyword"] == color["keyword.function"] == "#f25022"
-        assert color["conditional"] == "#ee7762"
-        assert color["repeat"] == color["function"] == color["class"] == "#7fdbca"
-        assert color["function.builtin"] == color["type.class"] == "#7fdbca"
-        assert color["include"] == color["number"] == "#92d923"
-        assert color["string"] == "#ffb900"
-        assert color["function.call"] == color["operator"] == palette.fg
+        seen = {
+            color: tuple(styles[key].color.triplet.hex.lower() for key in keys)
+            for color, keys in HIBERBEE_COLORS.items()
+        }
+        assert seen == {color: (color,) * len(keys) for color, keys in HIBERBEE_COLORS.items()}
         assert styles["class"].bold and styles["link.uri"].underline
     assert app_theme("hiberbee").background == palette.bg
+
+
+def contrast(first, second):
+    def luminance(color):
+        parts = [v / 255 for v in Color.parse(color).rgb]
+        r, g, b = [v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4 for v in parts]
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+    high, low = sorted((luminance(first), luminance(second)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+def test_hiberbee_light_gives_each_word_the_same_color_role_and_is_easy_to_read():
+    dark, light = PALETTES["hiberbee"], PALETTES["hiberbee-light"]
+    assert [key for key, _ in light.syntax_colors] == [key for key, _ in dark.syntax_colors]
+    styles = editor_themes(light)[0].syntax_styles
+    colors = {style.color.triplet.hex for key, style in styles.items() if key != "comment"}
+    assert all(contrast(color, light.bg) >= 4.5 for color in colors)
+    assert contrast(light.cursor_normal, light.bg) >= 4.5
+    assert app_theme("hiberbee-light").background == light.bg
 
 
 def test_palettes_without_syntax_colors_keep_their_group_colors():
