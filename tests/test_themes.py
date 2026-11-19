@@ -94,7 +94,8 @@ HIBERBEE_COLORS = {
     "#7fdbca": ("repeat", "function", "class", "function.builtin", "type.class"),
     "#92d923": ("include", "number"),
     "#ffb900": ("string",),
-    "#bbbab9": ("function.call", "operator"),
+    "#9380ff": ("function.call", "method.call"),
+    "#bbbab9": ("operator",),
 }
 
 

@@ -179,17 +179,20 @@ _HIBERBEE = dict(
     bg="#121110", fg="#bbbab9", surface="#221f1e", panel="#2a2625", selection="#322d2c",
     line_number="#423b3a", comment="#5a504f", red="#ee7762", orange="#f25022",
     peach="#f59762", yellow="#ffb900", green="#92d923", cyan="#7fdbca", blue="#409cff",
+    purple="#9380ff",
 )
 _HIBERBEE_LIGHT = dict(
     bg="#fbf8f4", fg="#3a3433", surface="#f2ede7", panel="#e8e1d9", selection="#ddd4ca",
     line_number="#b9aea3", comment="#8f847b", red="#c43d55", orange="#c93a0e",
     peach="#b0531a", yellow="#946500", green="#4a7500", cyan="#0a7a71", blue="#1a68c7",
+    purple="#6a4fd8",
 )
 _HIBERBEE_COLORS = {"hiberbee": _HIBERBEE, "hiberbee-light": _HIBERBEE_LIGHT}
 
 
 def _hiberbee_palette(name: str) -> Palette:
-    """NvChad's hiberbee, with the colors Neovim's Python syntax file gives each word.
+    """NvChad's hiberbee, with the colors Neovim's Python syntax file gives each word, and
+    calls in the theme's purple (Neovim leaves them in the text color).
     The light one is our own: the same color for each word, made darker for a pale page."""
     c = _HIBERBEE_COLORS[name]
     return Palette(
@@ -204,8 +207,8 @@ def _hiberbee_palette(name: str) -> Palette:
             ("conditional", c["red"]),
             ("repeat", c["cyan"]),
             ("include", c["green"]),
-            ("function.call", c["fg"]),
-            ("method.call", c["fg"]),
+            ("function.call", c["purple"]),
+            ("method.call", c["purple"]),
             ("function.builtin", c["cyan"]),
             ("class", c["cyan"]),
             ("type.class", c["cyan"]),
