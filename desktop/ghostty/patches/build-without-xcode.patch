@@ -1,0 +1,82 @@
+diff --git a/build.zig b/build.zig
+index 9e0559c..110d098 100644
+--- a/build.zig
++++ b/build.zig
+@@ -286,7 +286,10 @@ pub fn build(b: *std.Build) !void {
+ 
+         // We shouldn't have this guard but we don't currently
+         // build on macOS this way ironically so we need to fix that.
+-        if (!config.target.result.os.tag.isDarwin()) {
++        if (config.target.result.os.tag.isDarwin()) {
++            lib_static.installHeader();
++            lib_static.install("libghostty.a");
++        } else {
+             lib_shared.installHeader(); // Only need one header
+             if (config.target.result.os.tag == .windows) {
+                 lib_shared.install("ghostty-internal.dll");
+diff --git a/src/build/SharedDeps.zig b/src/build/SharedDeps.zig
+index 77e9f57..12faaa8 100644
+--- a/src/build/SharedDeps.zig
++++ b/src/build/SharedDeps.zig
+@@ -144,11 +144,7 @@ fn initTarget(
+     target: std.Build.ResolvedTarget,
+ ) !void {
+     // Update our metallib
+-    self.metallib = .create(b, .{
+-        .name = "Ghostty",
+-        .target = target,
+-        .sources = &.{b.path("src/renderer/shaders/shaders.metal")},
+-    });
++    self.metallib = null;
+ 
+     // Change our config
+     const config = try b.allocator.create(Config);
+@@ -508,10 +504,8 @@ pub fn add(
+     if (step.rootModuleTarget().os.tag.isDarwin()) {
+         try @import("apple_sdk").addPaths(b, step);
+ 
+-        const metallib = self.metallib.?;
+-        metallib.output.addStepDependencies(&step.step);
+-        step.root_module.addAnonymousImport("ghostty_metallib", .{
+-            .root_source_file = metallib.output,
++        step.root_module.addAnonymousImport("ghostty_shaders_metal", .{
++            .root_source_file = b.path("src/renderer/shaders/shaders.metal"),
+         });
+     }
+ 
+diff --git a/src/renderer/metal/shaders.zig b/src/renderer/metal/shaders.zig
+index b14068f..279057f 100644
+--- a/src/renderer/metal/shaders.zig
++++ b/src/renderer/metal/shaders.zig
+@@ -336,23 +336,20 @@ pub const BgImage = extern struct {
+ fn initLibrary(device: objc.Object) !objc.Object {
+     const start: std.Io.Timestamp = .now(global.io(), .awake);
+ 
+-    const data = try macos.dispatch.Data.create(
+-        @embedFile("ghostty_metallib"),
+-        macos.dispatch.queue.getMain(),
+-        macos.dispatch.Data.DESTRUCTOR_DEFAULT,
++    const source = try macos.foundation.String.createWithBytes(
++        @embedFile("ghostty_shaders_metal"),
++        .utf8,
++        false,
+     );
+-    defer data.release();
++    defer source.release();
+ 
+     var err: ?*anyopaque = null;
+     const library = device.msgSend(
+         objc.Object,
+-        objc.sel("newLibraryWithData:error:"),
+-        .{
+-            data,
+-            &err,
+-        },
++        objc.sel("newLibraryWithSource:options:error:"),
++        .{ source, @as(?*anyopaque, null), &err },
+     );
+-    try checkError(err);
++    if (@intFromPtr(library.value) == 0) try checkError(err);
+ 
+     log.debug("shader library loaded time={}us", .{start.untilNow(global.io(), .awake).toMicroseconds()});
+ 
