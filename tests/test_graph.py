@@ -120,3 +120,20 @@ def test_marimo_path_cell_exports_only_run():
         "from lc import run"
     )
     assert analyze(src) == ({"run"}, set())
+
+
+def test_analyze_top_level_await():
+    assert analyze('res = await get("example.com")') == ({"res"}, {"get"})
+    assert analyze("async with open_session() as s:\n    page = await s.get(url)") == ({"s", "page"}, {"open_session", "url"})
+    assert analyze("async for row in rows():\n    total = total_of(row)") == ({"row", "total"}, {"rows", "total_of"})
+    assert analyze("pages = [await fetch(u) async for u in urls()]") == ({"pages"}, {"fetch", "urls"})
+    assert build({"a": "x = await f()", "b": "y = x + 1"}).parents["b"] == {"a"}
+
+
+def test_analyze_keeps_the_real_error_of_an_invalid_cell():
+    try:
+        analyze("x = 1\ny = (await f()")
+    except SyntaxError as e:
+        assert "never closed" in e.msg and e.lineno == 2
+    else:
+        raise AssertionError("an unclosed bracket was analyzed")

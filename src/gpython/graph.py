@@ -70,6 +70,27 @@ def _mutators() -> frozenset[str]:
     return frozenset(calls_table()["mutating_methods"])
 
 
+class _Awaitless(ast.NodeTransformer):
+    """The same names without `await`, `async for` and `async with`: symtable on Python 3.14
+    rejects them at the top level of a cell, where the kernel allows them."""
+
+    def visit_Await(self, node: ast.Await) -> ast.expr:
+        return self.visit(node.value)
+
+    def visit_AsyncFor(self, node: ast.AsyncFor) -> ast.For:
+        self.generic_visit(node)
+        return ast.copy_location(ast.For(node.target, node.iter, node.body, node.orelse), node)
+
+    def visit_AsyncWith(self, node: ast.AsyncWith) -> ast.With:
+        self.generic_visit(node)
+        return ast.copy_location(ast.With(node.items, node.body), node)
+
+    def visit_comprehension(self, node: ast.comprehension) -> ast.comprehension:
+        self.generic_visit(node)
+        node.is_async = 0
+        return node
+
+
 def analyze(source: str) -> tuple[set[str], set[str]]:
     """Return (defs, refs) for one cell, private names left out. Raises SyntaxError."""
     defs, refs = names(source)
@@ -81,8 +102,12 @@ def analyze(source: str) -> tuple[set[str], set[str]]:
 def names(source: str) -> tuple[set[str], set[str]]:
     """(defs, refs) for one cell, private names included: they still share the kernel's namespace."""
     source = strip_magics(source)
-    table = symtable.symtable(source, "<cell>", "exec")
-    _, comp_only = _module_stores(ast.parse(source))
+    tree = ast.parse(source)
+    try:
+        table = symtable.symtable(source, "<cell>", "exec")
+    except SyntaxError:
+        table = symtable.symtable(ast.unparse(_Awaitless().visit(ast.parse(source))), "<cell>", "exec")
+    _, comp_only = _module_stores(tree)
     defs: set[str] = set()
     refs: set[str] = set()
 
