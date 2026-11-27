@@ -68,6 +68,33 @@ gpy script.py              # gpy is a short alias for gpython; every form above 
 
 More options are on the [Command line](https://github.com/igaurab/gpython/wiki/Command-line) page.
 
+## Agents
+
+`:agent` opens a panel with a coding agent beside the notebook. The agent reads, changes and
+runs the cells on your kernel, and sees the same variables you do.
+
+```
+:agent              show or hide the panel (the first time starts the agent)
+:agent codex        claude · codex · opencode · gemini · pi, or a name from the config
+:agent new          a new conversation
+:agent link         let an agent in another terminal use the notebook
+```
+
+The agent must be installed and logged in already; gpython only starts it. Claude Code, Codex
+and pi are reached through a small adapter that `npx` gets on first use. Any program that
+speaks the [Agent Client Protocol](https://agentclientprotocol.com) can be added in
+`~/.config/gpython/config.toml`:
+
+```toml
+agent = "codex"
+
+[agents]
+mine = "my-agent --acp"
+```
+
+An agent in its own terminal gets the same notebook tools from `gpython mcp`
+(`claude mcp add gpython -- gpython mcp`, after `:agent link` in gpython).
+
 ## Documentation
 
 The full documentation is in the [wiki](https://github.com/igaurab/gpython/wiki):

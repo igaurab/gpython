@@ -200,6 +200,12 @@ KEYMAP: list[tuple[str, str, str]] = [
     ("vars", "a", "Hide / show modules, functions and classes (shown by default)"),
     ("vars", "q / escape", "Hide the panel / back to the notebook; the panel stays"),
     ("vars", "ctrl+w h / j / k", "Back to the notebook / to the outline below or above it"),
+    ("agent", "enter", "Send the line to the agent. A line typed while the agent starts is sent when it is ready"),
+    ("agent", "ctrl+c", "Stop the agent's turn"),
+    ("agent", "1 - 9", "Answer the agent's question about permission with that choice; escape or n refuses"),
+    ("agent", "pageup / pagedown", "Scroll the conversation"),
+    ("agent", "escape", "Back to the notebook; the panel and the conversation stay (:agent hide hides it)"),
+    ("agent", "ctrl+w h", "Back to the notebook (ctrl+w l from the rightmost window goes to the agent)"),
     ("debug", "n / s / r / c", "Next line / step into / run until return / continue"),
     ("debug", "q", "Stop the debugger: the cell stops (r i also stops it, r k restarts)"),
     ("debug", "] / } / )", "Run to the next iteration of the inner loop / of the outer loop / to the end of the inner loop"),
@@ -224,6 +230,7 @@ MODE_TITLES = {
     "files": "File explorer (ctrl+b)",
     "outline": "Outline (ctrl+o, :outline)",
     "vars": "Variables panel (ctrl+v, :vars)",
+    "agent": "Agent panel (:agent)",
     "debug": "Debugger (breakpoint(), r d, :debug; shown in the variables panel)",
 }
 

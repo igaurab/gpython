@@ -97,6 +97,17 @@ STATIC_ARGUMENTS: dict[str, Candidates] = {
         ("all metadata", "Copy the notebook and keep the # %% cell lines"),
     ],
     "foldclose": [("all", "Fold all cells")],
+    "agent": [
+        ("claude", "Start Claude Code"),
+        ("codex", "Start Codex"),
+        ("opencode", "Start OpenCode"),
+        ("gemini", "Start Gemini"),
+        ("pi", "Start pi"),
+        ("new", "Start a new conversation with the same agent"),
+        ("stop", "End the agent"),
+        ("hide", "Hide the panel; the conversation stays"),
+        ("link", "Let an agent in another terminal use the notebook (gpython mcp)"),
+    ],
     "update": [("stable", "The newest release on PyPI"), ("dev", "The newest code on GitHub")],
     "foldopen": [("all", "Unfold all cells")],
     "tabmove": [

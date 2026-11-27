@@ -8,6 +8,19 @@ this file as its notes.
 
 ## [Unreleased]
 
+### Added
+- The agent panel: a coding agent beside the notebook. `:agent` opens it and starts the agent;
+  type what you want and press enter. The agent reads the cells, changes them, runs them on
+  your kernel and looks at the variables, and you see each change at once (`u` takes a change
+  back). `:agent claude`, `:agent codex`, `:agent opencode`, `:agent gemini` and `:agent pi`
+  choose the agent; each must be installed and logged in already (Claude Code, Codex and pi
+  also need `npx`). `agent = "codex"` in the config sets the default, and
+  `[agents] mine = "command"` adds any program that speaks the Agent Client Protocol.
+  `ctrl+c` stops the agent, a number answers its question about permission, `escape` goes
+  back to the notebook.
+- `gpython mcp`: the open notebook as tools for an agent in another terminal (Model Context
+  Protocol). Type `:agent link` in gpython, then `claude mcp add gpython -- gpython mcp`.
+
 ## [0.2.3] - 2026-11-19
 
 ### Added
