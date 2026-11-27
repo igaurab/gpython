@@ -14,8 +14,14 @@ this file as its notes.
   your kernel and looks at the variables, and you see each change at once (`u` takes a change
   back). `:agent claude`, `:agent codex`, `:agent opencode`, `:agent gemini` and `:agent pi`
   choose the agent; each must be installed and logged in already (Claude Code, Codex and pi
-  also need `npx`). `agent = "codex"` in the config sets the default, and
-  `[agents] mine = "command"` adds any program that speaks the Agent Client Protocol.
+  also need `npx`). `:agent default codex` sets the agent that `:agent` starts (`[agent]
+  default = "codex"` in the config), and `[agents] mine = "command"` adds any program that
+  speaks the Agent Client Protocol.
+- The agent's tool calls and thoughts show while it works and leave when it is done; one line
+  says how many tool calls there were. `:agent tools keep` keeps them in the conversation,
+  `:agent tools hide` never shows them, and `:agent thoughts ...` does the same for thoughts
+  (`[agent] tools = "fold"` and `thoughts = "fold"` in the config). A long shell command is
+  one line, cut at the edge of the panel.
   `ctrl+c` stops the agent, a number answers its question about permission, `escape` goes
   back to the notebook.
 - `gpython mcp`: the open notebook as tools for an agent in another terminal (Model Context

@@ -29,6 +29,8 @@ from . import acp, agents
 FLUSH_SECONDS = 0.08
 DIFF_LINES = 12
 TOOL_TEXT_LINES = 6
+TITLE_CHARS = 300
+FOLDED_KINDS = {"tools": "tool", "thoughts": "thought"}
 THOUGHT_LINES = 8
 STATUS_MARKS = {"pending": "○", "in_progress": "◐", "completed": "●", "failed": "✗"}
 STATUS_STYLES = {"pending": "dim", "in_progress": "bold", "completed": "green", "failed": "red"}
@@ -52,6 +54,8 @@ class Entry:
         self.data: dict = {}
         self.widget = Static(classes=f"agent-entry agent-{kind}")
         self.dirty = True
+        self.shown = True
+        self.turn = 0
 
     def renderable(self):
         if self.kind == "agent":
@@ -74,16 +78,36 @@ class Entry:
         return Text(self.text, style="red" if self.kind == "error" else "dim")
 
 
-def tool_picture(call: dict) -> Text:
+class OneLine:
+    """A text drawn on one line and cut with … where the space ends."""
+
+    def __init__(self, text: Text) -> None:
+        self.text = text
+
+    @property
+    def plain(self) -> str:
+        return self.text.plain
+
+    def __rich_console__(self, console, options):
+        line = self.text.copy()
+        line.truncate(options.max_width, overflow="ellipsis")
+        yield line
+
+
+def tool_picture(call: dict) -> Group | OneLine:
+    """A tool call: its state and its title on one line, cut where the panel ends (a shell
+    command can be a page long), then the diff of an edit or the reason it failed."""
     status = call.get("status") or "pending"
-    title = " ".join(str(call.get("title") or call.get("name") or "tool").split())
-    picture = Text.assemble((f"{STATUS_MARKS.get(status, '○')} ", STATUS_STYLES.get(status, "dim")), (title, "" if status != "failed" else "red"))
-    for item in call.get("content") or []:
-        detail = tool_detail(item, status == "failed") if isinstance(item, dict) else None
-        if detail is not None:
-            picture.append("\n")
-            picture.append_text(detail)
-    return picture
+    failed = status == "failed"
+    line = OneLine(Text.assemble((f"{STATUS_MARKS.get(status, '○')} ", STATUS_STYLES.get(status, "dim")), (short_title(call, "tool"), "red" if failed else "")))
+    items = [item for item in call.get("content") or [] if isinstance(item, dict)]
+    details = [detail for detail in (tool_detail(item, failed) for item in items) if detail is not None]
+    return Group(line, *details) if details else line
+
+
+def short_title(call: dict, fallback: str) -> str:
+    """A tool call's title with its line breaks and runs of spaces as one space each, and no longer than a few lines of the panel."""
+    return " ".join(str(call.get("title") or call.get("name") or fallback).split())[:TITLE_CHARS]
 
 
 def tool_detail(item: dict, failed: bool) -> Text | None:
@@ -120,12 +144,12 @@ def plan_picture(entries: list[dict]) -> Text:
     return picture
 
 
-def permission_picture(data: dict) -> Group | Text:
+def permission_picture(data: dict) -> Group | OneLine:
     call = data.get("call") or {}
     answer = data.get("answer")
     title = " ".join(str(call.get("title") or "this action").split())
     if answer is not None:
-        return Text.assemble(("● ", "dim"), (f"{answer}: ", "bold"), (title, "dim"))
+        return OneLine(Text.assemble(("● ", "dim"), (f"{answer}: ", "bold"), (short_title(call, "this action"), "dim")))
     head = Text.assemble(("The agent asks: ", "bold yellow"), title)
     for item in call.get("content") or []:
         if isinstance(item, dict) and item.get("type") == "diff":
@@ -238,6 +262,8 @@ class AgentPanel(Vertical, acp.Listener):
         self._queued: list[str] = []
         self._introduced = False
         self._said = 0
+        self._turn_number = 0
+        self.step_modes: dict[str, str] = {}
         self._flush_timer = None
         self.title = Static(classes="agent-title")
         self.log_box = VerticalScroll(classes="agent-log")
@@ -274,6 +300,10 @@ class AgentPanel(Vertical, acp.Listener):
     def add(self, kind: str, text: str = "", data: dict | None = None) -> Entry:
         entry = Entry(kind, text)
         entry.data = data or {}
+        entry.turn = self._turn_number
+        if self.step_modes.get(kind) == "hide":
+            entry.shown = False
+            return entry
         self.entries.append(entry)
         at_end = self._at_end()
         self.log_box.mount(entry.widget)
@@ -293,6 +323,8 @@ class AgentPanel(Vertical, acp.Listener):
 
     def touch(self, entry: Entry) -> None:
         """`entry` changed: it is painted with the next flush."""
+        if not entry.shown:
+            return
         entry.dirty = True
         if self._flush_timer is None:
             self._flush_timer = self.set_timer(FLUSH_SECONDS, self.flush)
@@ -307,11 +339,44 @@ class AgentPanel(Vertical, acp.Listener):
         if at_end:
             self.log_box.scroll_end(animate=False)
 
+    def fold_turn(self) -> None:
+        """The turn is over: its tool calls and thoughts leave the conversation when their mode
+        is fold (`[agent] tools`, `thoughts`), and one line says how many calls there were."""
+        folded = [e for e in self.entries if self._folds(e)]
+        if not folded:
+            return
+        at = self.entries.index(folded[0])
+        self.entries = [e for e in self.entries if not self._folds(e)]
+        for entry in folded:
+            entry.shown = False
+            entry.widget.remove()
+        summary = calls_summary([e.data for e in folded if e.kind == "tool"])
+        if summary:
+            self._insert_note(at, summary)
+
+    def _folds(self, entry: Entry) -> bool:
+        return entry.turn == self._turn_number and self.step_modes.get(entry.kind) == "fold"
+
+    def _insert_note(self, at: int, text: str) -> None:
+        """A note at position `at` of the conversation, not at its end."""
+        note = Entry("note", text)
+        note.turn = self._turn_number
+        note.dirty = False
+        note.widget.update(note.renderable())
+        after = self.entries[at].widget if at < len(self.entries) else None
+        self.entries.insert(at, note)
+        self.log_box.mount(note.widget, before=after)
+
+    def read_step_modes(self, settings: dict) -> None:
+        """Take `[agent] tools` and `thoughts` from the config; they apply from the next step on."""
+        self.step_modes = {kind: agents.step_mode(settings, key) for key, kind in FOLDED_KINDS.items()}
+
     async def start(self, name: str | None = None) -> None:
         """Start the agent `name` (the default one when None) in a new session; a running one is closed first."""
         from . import config
 
         settings = config.load()
+        self.read_step_modes(settings)
         known = agents.known(settings)
         name = name or (self.agent.name if self.agent is not None else agents.default_name(settings))
         if name not in known:
@@ -376,6 +441,7 @@ class AgentPanel(Vertical, acp.Listener):
             self.run_worker(self.start(), group="agent-start", exit_on_error=False)
 
     def _send(self, text: str) -> None:
+        self._turn_number += 1
         self._set_state("working")
         self.run_worker(self._turn(self.session, text), group="agent-turn", exit_on_error=False)
 
@@ -386,6 +452,7 @@ class AgentPanel(Vertical, acp.Listener):
             reason = await session.prompt(blocks)
         except acp.AgentError as error:
             if self.session is session:
+                self.fold_turn()
                 self.note(str(error), error=True)
                 self._set_state("ready" if session.process.running else "stopped")
             return
@@ -393,6 +460,7 @@ class AgentPanel(Vertical, acp.Listener):
             return
         self.flush()
         self.streaming = None
+        self.fold_turn()
         if reason in STOP_NOTES:
             self.note(STOP_NOTES[reason])
         elif self._said == said_before:
@@ -520,6 +588,14 @@ class AgentPanel(Vertical, acp.Listener):
     async def on_unmount(self) -> None:
         if self.session is not None:
             await self.session.close()
+
+
+def calls_summary(calls: list[dict]) -> str:
+    """The line that stands for a turn's folded tool calls; empty when there were none."""
+    if not calls:
+        return ""
+    failed = sum(1 for call in calls if call.get("status") == "failed")
+    return f"{len(calls)} tool call{'s' if len(calls) != 1 else ''}" + (f", {failed} failed" if failed else "")
 
 
 def start_failure(agent: agents.Agent, error: Exception, stderr_tail: str) -> str:

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from textual.widgets import Input
 
-from gpython import agentlink, config, notebook
+from gpython import agentlink, agents, config, notebook
 from gpython.agent import AgentPanel, diff_picture, tool_picture
 from gpython.app import GPython
 from gpython.notebook import CellSpec
@@ -17,10 +17,10 @@ FAKE = f"{shlex.quote(sys.executable)} {shlex.quote(str(Path(__file__).parent / 
 CELLS = [CellSpec("a = 1"), CellSpec("b = a + 1"), CellSpec("print(b)")]
 
 
-def ui(tmp_path, test, agent=FAKE):
+def ui(tmp_path, test, agent=FAKE, steps="keep"):
     path = tmp_path / "nb.py"
     notebook.save(path, CELLS)
-    config.save({"agent": "fake", "agents.fake": agent})
+    config.save({"agent.default": "fake", "agents.fake": agent, "agent.tools": steps, "agent.thoughts": steps})
 
     async def main():
         app = GPython(path)
@@ -52,6 +52,16 @@ async def ask(pilot, panel, text):
     await pilot.press("enter")
     await until(pilot, lambda: panel.state == "ready" and panel.entries[-1].kind != "user")
     panel.flush()
+
+
+def drawn(renderable, width: int = 60) -> str:
+    from io import StringIO
+
+    from rich.console import Console
+
+    out = StringIO()
+    Console(file=out, width=width, color_system=None).print(renderable)
+    return "\n".join(line.rstrip() for line in out.getvalue().splitlines())
 
 
 def shown(panel) -> list[tuple[str, str]]:
@@ -126,7 +136,7 @@ def test_a_tool_call_is_one_entry_that_follows_its_state_and_shows_the_diff(tmp_
         await ask(pilot, panel, "tool")
         kinds = [entry.kind for entry in panel.entries]
         assert kinds == ["user", "tool", "agent"]
-        picture = tool_picture(panel.entries[1].data).plain
+        picture = drawn(tool_picture(panel.entries[1].data))
         assert picture.startswith("● Edit notes.txt") and "-two" in picture and "+three" in picture
         await ask(pilot, panel, "plan")
         assert panel.entries[-1].kind == "plan" and "☑ Read the cells" in panel.entries[-1].renderable().plain
@@ -256,6 +266,64 @@ def test_a_diff_shows_only_the_changed_lines_and_says_how_many_more():
     picture = diff_picture({"path": "/x/y/notes.py", "oldText": old, "newText": new}).plain
     assert picture.splitlines()[0].strip() == "notes.py" and "more lines" in picture
     assert tool_picture({"title": "Run\n  tests", "status": "failed"}).plain == "✗ Run tests"
+
+
+def test_a_long_command_is_one_line_cut_at_the_panel_edge():
+    command = "mkdir -p /tmp/check && cat > check.py <<'EOF'\n" + "import torch\n" * 80
+    assert drawn(tool_picture({"title": command, "status": "completed"}), width=40).splitlines() == ["● mkdir -p /tmp/check && cat > check.py…"]
+
+
+def test_folded_steps_show_while_the_agent_works_and_leave_one_line_after(tmp_path):
+    async def test(app, pilot):
+        panel = await open_panel(app, pilot)
+        await ask(pilot, panel, "echo hello")
+        assert shown(panel) == [("user", "echo hello"), ("agent", "hello")]
+        await ask(pilot, panel, "tool")
+        await pilot.pause()
+        assert shown(panel)[2:] == [("user", "tool"), ("note", "1 tool call"), ("agent", "edited")]
+        assert len(panel.log_box.children) == len(panel.entries) == 5
+        panel.input.value = "ask"
+        await pilot.press("enter")
+        await until(pilot, lambda: panel.waiting_permission is not None)
+        await pilot.press("1")
+        await until(pilot, lambda: panel.state == "ready")
+        assert panel.entries[-2].kind == "permission"
+
+    ui(tmp_path, test, steps="fold")
+
+
+def test_hidden_steps_never_show_and_a_bad_mode_is_fold(tmp_path):
+    async def test(app, pilot):
+        panel = await open_panel(app, pilot)
+        await ask(pilot, panel, "echo hello")
+        await ask(pilot, panel, "tool")
+        assert shown(panel) == [("user", "echo hello"), ("agent", "hello"), ("user", "tool"), ("agent", "edited")]
+        assert len(panel.log_box.children) == 4
+
+    ui(tmp_path, test, steps="hide")
+    assert agents.step_mode({"agent.tools": "sometimes"}, "tools") == "fold" and agents.step_mode({}, "thoughts") == "fold"
+
+
+def test_agent_default_and_the_step_modes_are_set_with_the_command_and_saved(tmp_path):
+    async def test(app, pilot):
+        await app._ex_agent("default opencode")
+        assert config.load()["agent.default"] == "opencode" and app.agent_panel is None
+        await app._ex_agent("default nobody")
+        assert config.load()["agent.default"] == "opencode"
+        await app._ex_agent("default fake")
+        panel = await open_panel(app, pilot)
+        assert panel.agent.name == "fake" and panel.step_modes == {"tool": "keep", "thought": "keep"}
+        await app._ex_agent("tools hide")
+        await app._ex_agent("thoughts fold")
+        await app._ex_agent("tools sometimes")
+        assert config.load()["agent.tools"] == "hide" and panel.step_modes == {"tool": "hide", "thought": "fold"}
+        await ask(pilot, panel, "tool")
+        assert shown(panel) == [("user", "tool"), ("agent", "edited")]
+        await app._ex_agent("default")
+        await app._ex_agent("tools")
+
+    ui(tmp_path, test)
+    assert agents.default_name({"agent.default": "pi"}) == "pi"
 
 
 def test_the_panel_is_not_imported_at_start_up():

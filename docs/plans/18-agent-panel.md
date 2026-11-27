@@ -18,8 +18,11 @@ open notebook, on the live kernel. gpython has one panel and no code for any one
   The server is a thin pass-through to the running app.
 - **Registry** (`agents.py`): name → command. Built in: claude and codex (npx adapters
   `@agentclientprotocol/claude-agent-acp`, `@agentclientprotocol/codex-acp`), opencode
-  (`opencode acp`), gemini (`gemini --acp`), pi (`npx pi-acp`). Config: `agent = "codex"`,
-  `[agents] mine = "cmd"`.
+  (`opencode acp`), gemini (`gemini --acp`), pi (`npx pi-acp`). Config: `[agent] default =
+  "codex"` (`:agent default codex`), `[agents] mine = "cmd"`.
+- **Steps**: `[agent] tools` and `thoughts` = keep | fold | hide (`:agent tools MODE`). fold,
+  the default: shown while the turn runs, removed when it ends, one line "N tool calls" in
+  their place. A tool title is one line, cut at the panel's edge.
 
 ## Tools
 
@@ -47,6 +50,7 @@ number. Answers are text; plots come back as PNG blocks (4 per answer). Output i
 ## Commands
 
 `:agent` show / hide · `:agent NAME` · `:agent new` · `:agent stop` · `:agent hide` ·
+`:agent default NAME` · `:agent tools|thoughts keep|fold|hide` ·
 `:agent link` (tools for an agent in another terminal: `claude mcp add gpython -- gpython mcp`).
 Keys in the panel: enter, ctrl+c, 1-9 for a permission, pgup/pgdn, escape, ctrl+w h.
 
@@ -56,7 +60,8 @@ Keys in the panel: enter, ctrl+c, 1-9 for a permission, pgup/pgdn, escape, ctrl+
   (the last one drives the real MCP server process against a running app).
 - By hand on 2026-11-26: `opencode acp` opens a session from the panel. Its turn ended with no
   text on the dev machine (no model set up for opencode); the panel now says so.
-- Not yet run from the panel with a real model: claude, codex, gemini, pi.
+- 2026-11-27: the user ran a real agent from the panel (tool calls on the notebook worked).
+- Not yet run from the panel with a real model by us: codex, gemini, pi.
 
 ## Not done
 

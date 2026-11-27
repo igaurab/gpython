@@ -77,6 +77,8 @@ runs the cells on your kernel, and sees the same variables you do.
 :agent              show or hide the panel (the first time starts the agent)
 :agent codex        claude · codex · opencode · gemini · pi, or a name from the config
 :agent new          a new conversation
+:agent default codex    the agent that :agent starts from now on
+:agent tools keep       keep the agent's tool calls in the conversation (fold · hide)
 :agent link         let an agent in another terminal use the notebook
 ```
 
@@ -86,7 +88,10 @@ speaks the [Agent Client Protocol](https://agentclientprotocol.com) can be added
 `~/.config/gpython/config.toml`:
 
 ```toml
-agent = "codex"
+[agent]
+default = "codex"     # the agent that :agent starts
+tools = "fold"        # tool calls: keep, fold (shown while it works, then one line) or hide
+thoughts = "fold"     # the same for the agent's thoughts
 
 [agents]
 mine = "my-agent --acp"

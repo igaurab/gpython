@@ -148,6 +148,6 @@ def test_the_registry_has_the_built_in_agents_and_the_ones_in_the_config():
     assert found["mine"].command == ("my-agent", "--acp", "--name", "two words")
     assert found["claude"].command == ("claude-agent-acp",) and found["claude"].title == "Claude Code"
     assert found["opencode"].command == ("opencode", "acp")
-    assert agents.default_name({"agent": "mine", "agents.mine": "x"}) == "mine"
+    assert agents.default_name({"agent.default": "mine", "agents.mine": "x"}) == "mine"
     assert agents.Agent("x", "X", ("gpython-no-such-agent-program",)).missing == "gpython-no-such-agent-program"
     assert agents.Agent("x", "X", (sys.executable,)).missing is None

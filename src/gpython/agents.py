@@ -4,11 +4,17 @@ An agent is any program that speaks the Agent Client Protocol on its standard in
 output (acp.py). OpenCode and Gemini speak it themselves; Claude Code, Codex and pi do
 through a small adapter that `npx` gets on first use. A line in the config adds another:
 
-    agent = "codex"                      the agent :agent starts when no name is given
+    [agent]
+    default = "codex"                    the agent :agent starts when no name is given
+    tools = "fold"                       the agent's tool calls in the conversation (STEP_MODES)
+    thoughts = "fold"                    the same for its thoughts
 
     [agents]
     mine = "my-agent --acp"              :agent mine
     claude = "claude-agent-acp"          a built-in name can be given another command
+
+`tools` and `thoughts` take keep (they stay in the conversation), fold (shown while the agent
+works, then one line says how many there were) or hide (never shown).
 """
 
 from __future__ import annotations
@@ -27,6 +33,8 @@ BUILT_IN = {
 }
 NEEDS = {"claude": "claude", "codex": "codex", "pi": "pi"}
 CONFIG_PREFIX = "agents."
+STEP_MODES = ("keep", "fold", "hide")
+DEFAULT_STEP_MODE = "fold"
 
 
 @dataclass(frozen=True)
@@ -63,9 +71,15 @@ def known(settings: dict) -> dict[str, Agent]:
 
 
 def default_name(settings: dict) -> str:
-    """The config's `agent`, else the first agent whose programs are installed."""
+    """The config's `[agent] default`, else the first agent whose programs are installed."""
     agents = known(settings)
-    chosen = settings.get("agent")
+    chosen = settings.get("agent.default")
     if isinstance(chosen, str) and chosen in agents:
         return chosen
     return next((name for name, agent in agents.items() if agent.missing is None), "claude")
+
+
+def step_mode(settings: dict, kind: str) -> str:
+    """How the conversation shows the agent's `kind` ("tools" or "thoughts"): keep, fold or hide."""
+    chosen = settings.get(f"agent.{kind}")
+    return chosen if chosen in STEP_MODES else DEFAULT_STEP_MODE

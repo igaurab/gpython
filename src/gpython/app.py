@@ -968,9 +968,13 @@ class GPython(App):
 
     async def _ex_agent(self, arg: str = "") -> None:
         """:agent: show or hide the panel. :agent NAME starts that agent, :agent new a new
-        conversation, :agent stop ends the agent, :agent link opens the tools to an agent in another terminal."""
+        conversation, :agent stop ends the agent, :agent link opens the tools to an agent in another
+        terminal. :agent default NAME, :agent tools MODE and :agent thoughts MODE change the config."""
         word = arg.strip()
-        if word == "link":
+        setting, _, value = word.partition(" ")
+        if setting in ("default", "tools", "thoughts"):
+            self._agent_option(setting, value.strip())
+        elif word == "link":
             await self._open_agent_link()
         elif word in ("hide", "close") or (not word and self.in_agent_panel):
             self.hide_agent()
@@ -987,6 +991,24 @@ class GPython(App):
         panel = await self.show_agent()
         if name is not None or panel.state != "starting":
             await panel.start(name)
+
+    def _agent_option(self, setting: str, value: str) -> None:
+        """:agent default NAME, :agent tools MODE, :agent thoughts MODE: saved in the config as
+        `[agent] <setting>`. With no value, the current one and the choices are shown."""
+        from . import agents
+
+        settings = config.load()
+        choices = tuple(agents.known(settings)) if setting == "default" else agents.STEP_MODES
+        if not value:
+            now = agents.default_name(settings) if setting == "default" else agents.step_mode(settings, setting)
+            self.notify(f"agent {setting} = {now}. Choices: {', '.join(choices)}")
+        elif value not in choices:
+            self.notify(f":agent {setting} takes one of: {', '.join(choices)}", severity="warning")
+        else:
+            config.save({f"agent.{setting}": value})
+            if self.agent_panel is not None:
+                self.agent_panel.read_step_modes(config.load())
+            self.notify(f":agent starts {value} from now on" if setting == "default" else f"The agent's {setting}: {value}")
 
     async def _open_agent_link(self) -> None:
         link = await self.agent_link()
@@ -1681,7 +1703,7 @@ class GPython(App):
             (("time", "timing"), "Show or hide the run time in each cell header (t in cell mode; gpython keeps the setting)", lambda arg="": self.set_timing(not Cell.show_timing)),
             (("outline", "tags"), "Outline panel: each cell, the names it defines, their types after a run and the cells it uses. Enter goes to the cell (ctrl+o)", lambda arg="": self.action_toggle_outline()),
             (("vars", "variables"), "Variables panel: name, type, shape, value and the cell that makes it. Enter shows the value, g goes to the cell, d deletes it (ctrl+v)", lambda arg="": self.action_toggle_variables()),
-            (("agent",), "Agent panel: a coding agent beside the notebook that reads, changes and runs the cells. :agent shows or hides it. :agent claude | codex | opencode | gemini | pi starts that agent (the config adds more). :agent new starts a new conversation, :agent stop ends it. :agent link lets an agent in another terminal use the notebook (gpython mcp)", self._ex_agent),
+            (("agent",), "Agent panel: a coding agent beside the notebook that reads, changes and runs the cells. :agent shows or hides it. :agent claude | codex | opencode | gemini | pi starts that agent (the config adds more). :agent new starts a new conversation, :agent stop ends it. :agent default NAME sets the agent that :agent starts. :agent tools keep|fold|hide and :agent thoughts keep|fold|hide set what stays in the conversation (fold: shown while the agent works, then one line). :agent link lets an agent in another terminal use the notebook (gpython mcp)", self._ex_agent),
             (("debug",), "Debugger: if this cell failed, show where it failed. If not, run it and pause on its first line (r d; breakpoint() in code)", self._ex_debug),
             (("stop",), "When the debugger is paused, :stop if EXPR runs until EXPR is true (b in the debugger)", self._ex_stop),
             (("lazy",), "Change the run mode (f3). Lazy: the cells that use this cell become out of date. Reactive: they run again", lambda arg="": self.action_toggle_lazy()),
