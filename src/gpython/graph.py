@@ -70,25 +70,22 @@ def _mutators() -> frozenset[str]:
     return frozenset(calls_table()["mutating_methods"])
 
 
-class _Awaitless(ast.NodeTransformer):
-    """The same names without `await`, `async for` and `async with`: symtable on Python 3.14
-    rejects them at the top level of a cell, where the kernel allows them."""
+def _without_async_keywords(source: str) -> str:
+    """`source` with each `await` and `async` keyword deleted where it stands, so `await f()` reads
+    `f()` and `async for` reads `for`. The names stay the same and every line keeps its number, so a
+    later SyntaxError points at the right line. symtable on Python 3.14 rejects the keywords at the
+    top level of a cell, where the kernel allows them."""
+    import io
+    import tokenize
 
-    def visit_Await(self, node: ast.Await) -> ast.expr:
-        return self.visit(node.value)
-
-    def visit_AsyncFor(self, node: ast.AsyncFor) -> ast.For:
-        self.generic_visit(node)
-        return ast.copy_location(ast.For(node.target, node.iter, node.body, node.orelse), node)
-
-    def visit_AsyncWith(self, node: ast.AsyncWith) -> ast.With:
-        self.generic_visit(node)
-        return ast.copy_location(ast.With(node.items, node.body), node)
-
-    def visit_comprehension(self, node: ast.comprehension) -> ast.comprehension:
-        self.generic_visit(node)
-        node.is_async = 0
-        return node
+    lines = source.splitlines(keepends=True)
+    tokens = tokenize.generate_tokens(io.StringIO(source).readline)
+    keywords = [t.start for t in tokens if t.type == tokenize.NAME and t.string in ("await", "async")]
+    for row, col in reversed(keywords):
+        line = lines[row - 1]
+        rest = line[col + 5:]
+        lines[row - 1] = line[:col] + rest.lstrip(" \t")
+    return "".join(lines)
 
 
 def analyze(source: str) -> tuple[set[str], set[str]]:
@@ -106,7 +103,10 @@ def names(source: str) -> tuple[set[str], set[str]]:
     try:
         table = symtable.symtable(source, "<cell>", "exec")
     except SyntaxError:
-        table = symtable.symtable(ast.unparse(_Awaitless().visit(ast.parse(source))), "<cell>", "exec")
+        plain = _without_async_keywords(source)
+        if plain == source:
+            raise
+        table = symtable.symtable(plain, "<cell>", "exec")
     _, comp_only = _module_stores(tree)
     defs: set[str] = set()
     refs: set[str] = set()

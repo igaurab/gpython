@@ -137,3 +137,19 @@ def test_analyze_keeps_the_real_error_of_an_invalid_cell():
         assert "never closed" in e.msg and e.lineno == 2
     else:
         raise AssertionError("an unclosed bracket was analyzed")
+
+
+def test_an_error_after_the_retry_keeps_its_line():
+    cases = [
+        ("# setup\nx = 1\n\n# then\n\nglobal x", 6),
+        ("a = (\n1\n)\nnonlocal a", 4),
+        ("res = await get(url)\n\n# later\nx = 1\nglobal x", 5),
+        ("async with session() as s:\n    # fetch\n\n    page = await s.get(url)\nnonlocal page", 5),
+    ]
+    for source, line in cases:
+        try:
+            analyze(source)
+        except SyntaxError as e:
+            assert (e.lineno, "await" in e.msg) == (line, False), source
+        else:
+            raise AssertionError(source)
