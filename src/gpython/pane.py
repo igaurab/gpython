@@ -1618,6 +1618,31 @@ class NotebookPane(Vertical):
         cell = await self._insert(self.current_cell(), above)
         self.select(cell, "insert")
 
+    async def split_cell(self) -> None:
+        """ctrl+shift+enter, :splitcell: the lines below the cursor line move to a new cell
+        under this one; the cursor stays. Blank lines at the cut go. Two undo steps: the new
+        cell, then the text."""
+        cell, row = self._cursor_position()
+        if cell is None or row is None or cell._editor is None:
+            self.notify("To split a cell, put the cursor in its editor, on the last line that stays", severity="warning")
+            return
+        editor = cell._editor
+        lines = editor.text.split("\n")
+        below = "\n".join(lines[row + 1 :]).strip("\n")
+        if not below.strip():
+            self.notify("No lines below the cursor to move to a new cell")
+            return
+        kept = "\n".join(lines[: row + 1]).rstrip()
+        column = editor.cursor_location[1]
+        editor.history.checkpoint()
+        editor.replace(kept, (0, 0), editor.document.end, maintain_selection_offset=False)
+        editor.history.checkpoint()
+        last = editor.document.line_count - 1
+        at = min(row, last)
+        editor.move_cursor((at, min(column, len(editor.document.get_line(at)))))
+        index = self.states.index(cell.state) + 1
+        await self._insert(cell, snapshot=CellSnapshot(index, below, cell.kind, False, []))
+
     async def delete_cell(self, count: int = 1) -> None:
         """Delete `count` cells from the current one; u in cell mode undoes."""
         cell = self.current_cell()

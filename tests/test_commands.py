@@ -241,7 +241,7 @@ def test_run_keys(tmp_path):
     async def test(app, pilot):
         first, second, third = app.cells()
         first.editor.focus()
-        await pilot.press("ctrl+shift+enter")
+        await pilot.press("ctrl+enter")
         await app.workers.wait_for_complete()
         assert first.status == "ok" and app.focused is first.editor
         assert first.exec_count == 1

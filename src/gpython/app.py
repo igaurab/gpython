@@ -242,7 +242,8 @@ class GPython(App):
     CSS_PATH = "app.tcss"
     TITLE = "gpython"
     BINDINGS = [
-        Binding("ctrl+enter,ctrl+shift+enter", "run_cell", "Run", priority=True),
+        Binding("ctrl+enter", "run_cell", "Run", priority=True),
+        Binding("ctrl+shift+enter", "split_cell", "Split cell", show=False, priority=True),
         Binding("ctrl+e", "run_cell_ctrl_e", "Run", show=False, priority=True),
         Binding("shift+enter", "run_cell('next')", "Run + next", priority=True),
         Binding("alt+enter", "run_cell('insert')", "Run + insert", priority=True),
@@ -1417,6 +1418,9 @@ class GPython(App):
     async def action_add_cell(self, above: bool = False) -> None:
         await self.pane.add_cell(above)
 
+    async def action_split_cell(self) -> None:
+        await self.pane.split_cell()
+
     async def action_delete_cell(self, count: int = 1) -> None:
         await self.pane.delete_cell(count)
 
@@ -1708,6 +1712,7 @@ class GPython(App):
             (("stop",), "When the debugger is paused, :stop if EXPR runs until EXPR is true (b in the debugger)", self._ex_stop),
             (("lazy",), "Change the run mode (f3). Lazy: the cells that use this cell become out of date. Reactive: they run again", lambda arg="": self.action_toggle_lazy()),
             (("new",), "Make a new cell below", lambda arg="": self.action_add_cell()),
+            (("splitcell",), "Split this cell: the lines below the cursor line move to a new cell under it (ctrl+shift+enter)", lambda arg="": self.action_split_cell()),
             (("delete", "del", "d"), "Delete the current cell (in cell mode; in the editor, :d deletes lines as in vim)", lambda arg="": self.action_delete_cell()),
             (("undo", "u"), "Undo the last change in the notebook: text in any cell, or a cell delete, move, add (u)", lambda arg="": self.action_undo()),
             (("redo", "red"), "Redo the change that was undone (ctrl+r)", lambda arg="": self.action_redo()),

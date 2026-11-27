@@ -13,7 +13,7 @@ from __future__ import annotations
 KEYMAP: list[tuple[str, str, str]] = [
     ("any", "shift+enter", "Run the cell (markdown: show it), then go to the next cell (or make one on the last cell)"),
     ("any", "ctrl+enter", "Run the cell (markdown: show it), stay"),
-    ("any", "ctrl+shift+enter", "Run cell, stay"),
+    ("any", "ctrl+shift+enter", "Split the cell: the lines below the cursor line move to a new cell under it (:splitcell)"),
     ("any", "ctrl+e", "Run the cell, stay (if the terminal has no ctrl+enter). In the editor, a vim key"),
     ("any", "alt+enter", "Run the cell and add a new cell below"),
     ("any", "f5", "Run all cells"),
