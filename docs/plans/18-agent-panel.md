@@ -53,6 +53,7 @@ number. Answers are text; plots come back as PNG blocks (4 per answer). Output i
 `:agent default NAME` · `:agent tools|thoughts keep|fold|hide` ·
 `:agent link` (tools for an agent in another terminal: `claude mcp add gpython -- gpython mcp`).
 Keys in the panel: enter, ctrl+c, 1-9 for a permission, pgup/pgdn, escape, ctrl+w h.
+The mouse drags the panel's left edge to resize it; the width is kept as `[agent] width`.
 
 ## Tested
 

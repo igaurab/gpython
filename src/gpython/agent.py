@@ -29,6 +29,8 @@ from . import acp, agents
 FLUSH_SECONDS = 0.08
 DIFF_LINES = 12
 TOOL_TEXT_LINES = 6
+MIN_WIDTH = 30
+NOTEBOOK_ROOM = 20
 TITLE_CHARS = 300
 FOLDED_KINDS = {"tools": "tool", "thoughts": "thought"}
 THOUGHT_LINES = 8
@@ -210,7 +212,7 @@ class AgentPanel(Vertical, acp.Listener):
     DEFAULT_CSS = """
     AgentPanel {
         width: 64;
-        max-width: 50%;
+        max-width: 85%;
         height: 1fr;
         border-left: vkey $panel;
         padding: 0 0 0 1;
@@ -262,6 +264,8 @@ class AgentPanel(Vertical, acp.Listener):
         self._queued: list[str] = []
         self._introduced = False
         self._said = 0
+        self._edge_held = False
+        self._width_set = 0
         self._turn_number = 0
         self.step_modes: dict[str, str] = {}
         self._flush_timer = None
@@ -277,8 +281,42 @@ class AgentPanel(Vertical, acp.Listener):
         yield self.keys
 
     def on_mount(self) -> None:
+        from . import config
+
         self.log_box.can_focus = False
         self._draw_title()
+        width = config.load().get("agent.width")
+        if isinstance(width, int) and not isinstance(width, bool):
+            self.set_width(width)
+
+    def set_width(self, columns: int) -> int:
+        """Make the panel `columns` wide, within what leaves room for the notebook and for a line of text."""
+        most = max(MIN_WIDTH, self.app.size.width - NOTEBOOK_ROOM)
+        columns = max(MIN_WIDTH, min(most, columns))
+        self.styles.width = columns
+        return columns
+
+    def on_mouse_down(self, event) -> None:
+        """Take hold of the panel's left edge; moving the mouse then makes the panel wider or narrower."""
+        if event.button == 1 and event.screen_x == self.region.x:
+            self._edge_held = True
+            self.capture_mouse()
+            event.stop()
+
+    def on_mouse_move(self, event) -> None:
+        if self._edge_held:
+            self._width_set = self.set_width(self.region.right - event.screen_x)
+            event.stop()
+
+    def on_mouse_up(self, event) -> None:
+        if self._edge_held:
+            self._edge_held = False
+            self.release_mouse()
+            event.stop()
+            if self._width_set:
+                from . import config
+
+                config.save({"agent.width": self._width_set})
 
     def _draw_title(self) -> None:
         name = self.agent.title if self.agent is not None else "Agent"

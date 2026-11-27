@@ -204,6 +204,7 @@ KEYMAP: list[tuple[str, str, str]] = [
     ("agent", "ctrl+c", "Stop the agent's turn"),
     ("agent", "1 - 9", "Answer the agent's question about permission with that choice; escape or n refuses"),
     ("agent", "pageup / pagedown", "Scroll the conversation"),
+    ("agent", "mouse", "Drag the left edge of the panel to make it wider or narrower; gpython keeps the width"),
     ("agent", "escape", "Back to the notebook; the panel and the conversation stay (:agent hide hides it)"),
     ("agent", "ctrl+w h", "Back to the notebook (ctrl+w l from the rightmost window goes to the agent)"),
     ("debug", "n / s / r / c", "Next line / step into / run until return / continue"),

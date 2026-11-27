@@ -251,6 +251,42 @@ def test_a_missing_program_a_login_and_an_unknown_name_are_explained(tmp_path):
     ui(tmp_path, test, agent="gpython-no-such-agent-program --acp")
 
 
+def test_the_mouse_drags_the_left_edge_to_resize_the_panel_and_the_width_is_kept(tmp_path):
+    async def test(app, pilot):
+        panel = await open_panel(app, pilot)
+        await pilot.pause()
+        assert panel.region.width == 64 and panel.region.right == 170
+        edge = panel.region.x
+        await pilot.mouse_down(offset=(edge, 10))
+        await pilot.hover(offset=(edge - 20, 10))
+        await pilot.mouse_up(offset=(edge - 20, 10))
+        await pilot.pause()
+        assert panel.region.width == 84 and panel.region.x == edge - 20
+        assert config.load()["agent.width"] == 84
+        await pilot.mouse_down(offset=(panel.region.x, 10))
+        await pilot.hover(offset=(169, 10))
+        await pilot.mouse_up(offset=(169, 10))
+        await pilot.pause()
+        assert panel.region.width == 30
+        await pilot.mouse_down(offset=(panel.region.x + 5, 10))
+        await pilot.hover(offset=(50, 10))
+        await pilot.mouse_up(offset=(50, 10))
+        await pilot.pause()
+        assert panel.region.width == 30
+
+    ui(tmp_path, test)
+
+
+def test_the_panel_opens_with_the_kept_width(tmp_path):
+    async def test(app, pilot):
+        config.save({"agent.width": 90})
+        panel = await open_panel(app, pilot)
+        await pilot.pause()
+        assert panel.region.width == 90
+
+    ui(tmp_path, test)
+
+
 def test_agent_link_opens_the_tools_without_the_panel(tmp_path):
     async def test(app, pilot):
         await app._ex_agent("link")
