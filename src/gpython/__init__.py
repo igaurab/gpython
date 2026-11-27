@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 USAGE = """usage: gpython [--version] [--no-vim] [--theme NAME] [--groups] [uv flags] [FILE | DIR ...]
+       gpython mcp
        gpython --update [stable|dev]
        gpython --scratchpad DIR
        gpython --install-completions
@@ -36,6 +37,10 @@ automatically; `# %%` markers and .ipynb files are honoured.
                      bash:  gpython --completions bash > ~/.gpython-completion.bash, then source it in ~/.bashrc
                      fish:  gpython --completions fish > ~/.config/fish/conf.d/gpython.fish
                      powershell:  gpython --completions powershell >> $PROFILE
+  mcp                the open notebook as tools for a coding agent (Model Context Protocol on
+                     stdin and stdout). gpython starts it for the agent in its own panel (:agent).
+                     For an agent in another terminal, type :agent link in gpython, then:
+                     claude mcp add gpython -- gpython mcp
 
 In a uv project (pyproject.toml) the kernel runs in the project's environment through
 `uv run --with ipykernel`; ipykernel comes from uv's cache, never into the project.
@@ -213,6 +218,11 @@ SETUP_COMMANDS = (
 
 
 def main() -> None:
+    if sys.argv[1:] == ["mcp"]:
+        from . import mcpserver
+
+        mcpserver.main()
+        return
     opts = parse_args(sys.argv[1:])
     if opts["help"]:
         print(USAGE)

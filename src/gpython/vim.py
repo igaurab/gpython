@@ -656,6 +656,9 @@ class VimTextArea(TextArea):
             super().__init__()
             self.editor = editor
 
+    class OpenAgent(Message):
+        """space a: the app shows the agent panel and goes to it."""
+
     class RunByNumber(Message):
         """space r (r alone is vim's replace here; r 6 is cell mode's): the app waits for a cell number and runs that cell."""
 
@@ -1470,6 +1473,8 @@ class VimTextArea(TextArea):
                 self.pending = " f"
             elif pending == " " and key == "r":
                 self.post_message(self.RunByNumber(self))
+            elif pending == " " and key == "a":
+                self.post_message(self.OpenAgent())
             elif pending == " f" and key == "f":
                 self.post_message(self.FindFiles(self))
             return True

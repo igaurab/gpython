@@ -62,6 +62,7 @@ _MODE_STYLES = {
     "cell": f"bold black on {CELL_MODE_COLOR}",
     "outline": "bold black on magenta",
     "vars": "bold black on magenta",
+    "agent": "bold black on magenta",
     "debug": f"bold white on {DEBUG_COLOR}",
     "visual": f"bold black on {MODE_CURSOR_COLORS['visual']}",
     "v-line": f"bold black on {MODE_CURSOR_COLORS['visual']}",
@@ -89,6 +90,7 @@ _VIM_OWNS = {
     "replace": _VIM_INSERT_OWNS,
 }
 _VIM_OWNED_ACTIONS = frozenset(_VIM_NORMAL_OWNS + _VIM_INSERT_OWNS)
+_AGENT_PANEL_ACTIONS = frozenset(("window_prefix", "toggle_explorer", "help", "pick_theme", "pick_env", "save", "quit", "command_palette"))
 
 _WINDOW_KEYS = {
     "s": "split", "S": "split", "ctrl+s": "split", "n": "split", "ctrl+n": "split",
@@ -240,7 +242,8 @@ class GPython(App):
     CSS_PATH = "app.tcss"
     TITLE = "gpython"
     BINDINGS = [
-        Binding("ctrl+enter,ctrl+shift+enter", "run_cell", "Run", priority=True),
+        Binding("ctrl+enter", "run_cell", "Run", priority=True),
+        Binding("ctrl+shift+enter", "split_cell", "Split cell", show=False, priority=True),
         Binding("ctrl+e", "run_cell_ctrl_e", "Run", show=False, priority=True),
         Binding("shift+enter", "run_cell('next')", "Run + next", priority=True),
         Binding("alt+enter", "run_cell('insert')", "Run + insert", priority=True),
@@ -332,6 +335,8 @@ class GPython(App):
         self._first_frame_callbacks: list = []
         self.workspace = Workspace()
         self.explorer: Explorer | None = None
+        self.agent_panel = None
+        self._agent_link = None
         self._tabbar = TabBar()
         self._kernel_chip: Static | None = None
         self._chip_key: tuple | None = None
@@ -446,6 +451,8 @@ class GPython(App):
     async def on_unmount(self) -> None:
         images.forget_all(self)
         write_to_terminal(self, RESET_CURSOR_SHAPE)
+        if self._agent_link is not None:
+            await self._agent_link.stop()
         await asyncio.gather(*(pane.kernel.shutdown() for pane in self.workspace.notebooks()), return_exceptions=True)
 
 
@@ -513,6 +520,8 @@ class GPython(App):
             return "files"
         if isinstance(focused, Tree):
             return "outline"
+        if self.in_agent_panel:
+            return "agent"
         pane = self.pane if self.workspace.tabs else None
         panel = pane._variables if pane is not None else None
         if panel is not None and focused is not None and panel in focused.ancestors:
@@ -603,15 +612,15 @@ class GPython(App):
             self._kernel_chip.update(
                 Text.assemble(("● ", _state_style(pane.kernel_state)), (version, "dim"), (f" · {env}" if env else "", "bold"), (state, "dim"), (" ▾", "dim"))
             )
-        chip_mode = mode if mode in ("cell", "outline", "vars", "debug") or VimTextArea.enabled else "edit"
+        chip_mode = mode if mode in ("cell", "outline", "vars", "debug", "agent") or VimTextArea.enabled else "edit"
         if self._mode_chip is not None and chip_mode != self._mode_chip_mode:
             self._mode_chip_mode = chip_mode
-            if chip_mode in ("cell", "outline", "edit", "vars", "debug"):
+            if chip_mode in ("cell", "outline", "edit", "vars", "debug", "agent"):
                 text = Text(f" {chip_mode.upper()} ", style=_MODE_STYLES.get(chip_mode, _MODE_STYLES["insert"]))
             else:
                 text = Text.assemble((" EDIT ", _MODE_STYLES["insert"]), (f" {chip_mode.upper()}", _CHIP_VIM_STYLES[chip_mode]))
             self._mode_chip.update(text, layout=False)
-        bar_mode = mode if VimTextArea.enabled or mode in ("cell", "outline", "vars", "debug") else ""
+        bar_mode = mode if VimTextArea.enabled or mode in ("cell", "outline", "vars", "debug", "agent") else ""
         if self._status is not None and (bar_mode, hint) != self._status_mode:
             self._status_mode = (bar_mode, hint)
             badge = Text(f" {bar_mode.upper()} ", style=_MODE_STYLES[bar_mode]) if bar_mode else Text("")
@@ -812,9 +821,16 @@ class GPython(App):
         in_explorer = isinstance(self.focused, Explorer)
         in_side = not in_explorer and self.focused is not None and any(node.id == "side" for node in self.focused.ancestors)
         panes = self.workspace.tab_panes()
+        if self.in_agent_panel:
+            if where in ("left", "next", "prev", "first", "last"):
+                current.focus_pane()
+            return
         if where in ("left", "right", "up", "down"):
             direction = {"left": "h", "right": "l", "up": "k", "down": "j"}[where]
             if in_side:
+                if direction == "l" and self.agent_visible:
+                    self.agent_panel.focus_input()
+                    return
                 if direction == "h":
                     current.focus_pane()
                 elif direction in "jk":
@@ -832,6 +848,9 @@ class GPython(App):
                 self.explorer.focus()
                 return
             if target is None and direction == "l" and current.focus_side():
+                return
+            if target is None and direction == "l" and self.agent_visible:
+                self.agent_panel.focus_input()
                 return
         elif where in ("next", "prev"):
             ring: list = ([self.explorer] if explorer_open else []) + panes
@@ -908,6 +927,104 @@ class GPython(App):
             self.explorer.display = False
         self.pane.focus_pane()
         self.update_status()
+
+    @property
+    def agent_visible(self) -> bool:
+        return self.agent_panel is not None and self.agent_panel.display
+
+    @property
+    def in_agent_panel(self) -> bool:
+        panel, focused = self.agent_panel, self.focused
+        return panel is not None and focused is not None and (focused is panel or panel in focused.ancestors)
+
+    async def agent_link(self):
+        """The door the agents' notebook tools come through (agentlink.py), opened on first use."""
+        if self._agent_link is None:
+            from .agentlink import AgentLink
+            from .notebooktools import NotebookTools
+
+            link = AgentLink(NotebookTools(self), Path.cwd())
+            await link.start()
+            self._agent_link = link
+        return self._agent_link
+
+    async def show_agent(self):
+        """Show and focus the agent panel; it is built, and its agent started, the first time."""
+        panel = self.agent_panel
+        if panel is None:
+            from .agent import AgentPanel
+
+            panel = self.agent_panel = AgentPanel(self.agent_link, Path.cwd())
+            await self.query_one("#body").mount(panel, after=self.workspace)
+            await panel.start()
+        panel.display = True
+        panel.focus_input()
+        self.update_status()
+        return panel
+
+    def hide_agent(self) -> None:
+        if self.agent_panel is not None:
+            self.agent_panel.display = False
+            self.pane.focus_pane()
+
+    async def _ex_agent(self, arg: str = "") -> None:
+        """:agent: show or hide the panel. :agent NAME starts that agent, :agent new a new
+        conversation, :agent stop ends the agent, :agent link opens the tools to an agent in another
+        terminal. :agent default NAME, :agent tools MODE and :agent thoughts MODE change the config."""
+        word = arg.strip()
+        setting, _, value = word.partition(" ")
+        if setting in ("default", "tools", "thoughts"):
+            self._agent_option(setting, value.strip())
+        elif setting in ("model", "models"):
+            (await self.show_agent()).choose_model(value.strip())
+        elif word == "link":
+            await self._open_agent_link()
+        else:
+            await self._agent_panel_command(word)
+
+    async def _agent_panel_command(self, word: str) -> None:
+        """:agent with no word (show, or hide from inside it), hide, stop, new, or an agent's name."""
+        if word in ("hide", "close") or (not word and self.in_agent_panel):
+            self.hide_agent()
+        elif not word:
+            await self.show_agent()
+        elif word == "stop":
+            if self.agent_panel is not None:
+                await self.agent_panel.close_session()
+        else:
+            await self._start_agent(None if word == "new" else word)
+
+    async def _start_agent(self, name: str | None) -> None:
+        """A new conversation with the agent `name`; None keeps the agent the panel has."""
+        panel = await self.show_agent()
+        if name is not None or panel.state != "starting":
+            await panel.start(name)
+
+    def _agent_option(self, setting: str, value: str) -> None:
+        """:agent default NAME, :agent tools MODE, :agent thoughts MODE: saved in the config as
+        `[agent] <setting>`. With no value, the current one and the choices are shown."""
+        from . import agents
+
+        settings = config.load()
+        choices = tuple(agents.known(settings)) if setting == "default" else agents.STEP_MODES
+        if not value:
+            now = agents.default_name(settings) if setting == "default" else agents.step_mode(settings, setting)
+            self.notify(f"agent {setting} = {now}. Choices: {', '.join(choices)}")
+        elif value not in choices:
+            self.notify(f":agent {setting} takes one of: {', '.join(choices)}", severity="warning")
+        else:
+            config.save({f"agent.{setting}": value})
+            if self.agent_panel is not None:
+                self.agent_panel.read_step_modes(config.load())
+            self.notify(f":agent starts {value} from now on" if setting == "default" else f"The agent's {setting}: {value}")
+
+    async def _open_agent_link(self) -> None:
+        link = await self.agent_link()
+        self.notify(
+            "The notebook tools are open to agents on this computer. In the agent's terminal:  "
+            f"claude mcp add gpython -- gpython mcp   (the same for codex). Port {link.port}",
+            timeout=15,
+        )
 
     async def action_toggle_explorer(self) -> None:
         """ctrl+b, in every mode: show the file tree (rooted at the notebook's folder) and focus it; hide it when shown."""
@@ -1308,6 +1425,9 @@ class GPython(App):
     async def action_add_cell(self, above: bool = False) -> None:
         await self.pane.add_cell(above)
 
+    async def action_split_cell(self) -> None:
+        await self.pane.split_cell()
+
     async def action_delete_cell(self, count: int = 1) -> None:
         await self.pane.delete_cell(count)
 
@@ -1512,6 +1632,10 @@ class GPython(App):
     def _find_files(self) -> None:
         self.action_find_files()
 
+    @on(VimTextArea.OpenAgent)
+    async def _open_agent(self) -> None:
+        await self.show_agent()
+
     @on(VimTextArea.RunByNumber)
     def _run_by_number(self) -> None:
         self.start_run_by_number()
@@ -1594,10 +1718,12 @@ class GPython(App):
             (("time", "timing"), "Show or hide the run time in each cell header (t in cell mode; gpython keeps the setting)", lambda arg="": self.set_timing(not Cell.show_timing)),
             (("outline", "tags"), "Outline panel: each cell, the names it defines, their types after a run and the cells it uses. Enter goes to the cell (ctrl+o)", lambda arg="": self.action_toggle_outline()),
             (("vars", "variables"), "Variables panel: name, type, shape, value and the cell that makes it. Enter shows the value, g goes to the cell, d deletes it (ctrl+v)", lambda arg="": self.action_toggle_variables()),
+            (("agent",), "Agent panel: a coding agent beside the notebook that reads, changes and runs the cells. :agent shows or hides it. :agent claude | codex | opencode | gemini | pi starts that agent (the config adds more). :agent new starts a new conversation, :agent stop ends it. :agent model shows the agent's models to choose from (/model in the panel; :agent model NAME chooses one). :agent default NAME sets the agent that :agent starts. :agent tools keep|fold|hide and :agent thoughts keep|fold|hide set what stays in the conversation (fold: shown while the agent works, then one line). :agent link lets an agent in another terminal use the notebook (gpython mcp)", self._ex_agent),
             (("debug",), "Debugger: if this cell failed, show where it failed. If not, run it and pause on its first line (r d; breakpoint() in code)", self._ex_debug),
             (("stop",), "When the debugger is paused, :stop if EXPR runs until EXPR is true (b in the debugger)", self._ex_stop),
             (("lazy",), "Change the run mode (f3). Lazy: the cells that use this cell become out of date. Reactive: they run again", lambda arg="": self.action_toggle_lazy()),
             (("new",), "Make a new cell below", lambda arg="": self.action_add_cell()),
+            (("splitcell",), "Split this cell: the lines below the cursor line move to a new cell under it (ctrl+shift+enter)", lambda arg="": self.action_split_cell()),
             (("delete", "del", "d"), "Delete the current cell (in cell mode; in the editor, :d deletes lines as in vim)", lambda arg="": self.action_delete_cell()),
             (("undo", "u"), "Undo the last change in the notebook: text in any cell, or a cell delete, move, add (u)", lambda arg="": self.action_undo()),
             (("redo", "red"), "Redo the change that was undone (ctrl+r)", lambda arg="": self.action_redo()),
@@ -2000,6 +2126,8 @@ class GPython(App):
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         if action in getattr(self.screen, "APP_ACTIONS_OFF", ()):
             return False
+        if self.agent_panel is not None and self.in_agent_panel and isinstance(self.screen, NotebookScreen):
+            return action in _AGENT_PANEL_ACTIONS or action not in self._bound_actions()
         if action in ("focus_left", "focus_right"):
             return self._window_keys_apply(action == "focus_left")
         if action in ("toggle_outline", "toggle_variables"):
@@ -2007,6 +2135,14 @@ class GPython(App):
         if action in _VIM_OWNED_ACTIONS and action in _VIM_OWNS.get(self.ui_mode, ()) and isinstance(self.screen, NotebookScreen):
             return parameters != () if action == "add_cell" else False
         return True
+
+    def _bound_actions(self) -> frozenset[str]:
+        """The actions the app's own keys run (run a cell, delete a cell, ...): in the agent
+        panel these keys belong to the text line."""
+        found = getattr(self, "_bound_action_names", None)
+        if found is None:
+            found = self._bound_action_names = frozenset(binding.action.partition("(")[0] for binding in self.BINDINGS)
+        return found
 
     def _window_keys_apply(self, needs_backspace: bool) -> bool:
         """ctrl+h, ctrl+l, ctrl+o and ctrl+v act only on the notebook screen, never in a text field;

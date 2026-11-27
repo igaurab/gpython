@@ -8,6 +8,34 @@ this file as its notes.
 
 ## [Unreleased]
 
+### Added
+- The agent panel: a coding agent beside the notebook. `:agent` (or `space a`) opens it and starts the agent;
+  type what you want and press enter. The agent reads the cells, changes them, runs them on
+  your kernel and looks at the variables, and you see each change at once (`u` takes a change
+  back). `:agent claude`, `:agent codex`, `:agent opencode`, `:agent gemini` and `:agent pi`
+  choose the agent; each must be installed and logged in already (Claude Code, Codex and pi
+  also need `npx`). `:agent default codex` sets the agent that `:agent` starts (`[agent]
+  default = "codex"` in the config), and `[agents] mine = "command"` adds any program that
+  speaks the Agent Client Protocol. `ctrl+c` stops the agent, a number answers its question
+  about permission, `escape` goes back to the notebook. Drag the panel's left edge with the
+  mouse to make it wider or narrower; gpython keeps the width.
+- The agent's tool calls and thoughts show while it works and leave when it is done; one line
+  says how many tool calls there were. `:agent tools keep` keeps them in the conversation,
+  `:agent tools hide` never shows them, and `:agent thoughts ...` does the same for thoughts
+  (`[agent] tools = "fold"` and `thoughts = "fold"` in the config). A long shell command is
+  one line, cut at the edge of the panel.
+- The agent panel shows the model in use at the right of its title. `/model` in the panel (or
+  `:agent model`) lists the agent's models: `j` / `k` move, `enter` chooses. `/model NAME`
+  chooses one by name. The choice is for this conversation.
+- `gpython mcp`: the open notebook as tools for an agent in another terminal (Model Context
+  Protocol). Type `:agent link` in gpython, then `claude mcp add gpython -- gpython mcp`.
+- `ctrl+shift+enter` splits a cell: the lines below the cursor line move to a new cell under
+  it, and the cursor stays where it is. Blank lines at the cut go. `:splitcell` does the same.
+  `u` takes the new cell back, a second `u` the text.
+
+### Changed
+- `ctrl+shift+enter` no longer runs the cell; `ctrl+enter` does.
+
 ## [0.2.3] - 2026-11-19
 
 ### Added
