@@ -5,6 +5,8 @@ What it does with a prompt depends on the prompt's first word:
   tool           reports a tool call that edits a file, then completes it
   ask            asks for permission, then says which option was chosen
   plan           sends a plan
+  model          says which model is in use
+  switch         changes its own model to big and reports the change
   mcp            says which MCP servers the session was opened with
   wait           does nothing until the turn is cancelled
   silent         ends the turn without a word
@@ -14,7 +16,25 @@ What it does with a prompt depends on the prompt's first word:
 import json
 import sys
 
-state = {"servers": [], "cancelled": False, "next": 100, "pending": None}
+state = {"servers": [], "cancelled": False, "next": 100, "pending": None, "model": "small"}
+MODELS = [("small", "Small 1", "fast"), ("big", "Big 2", "careful")]
+
+
+def model_options():
+    choices = [{"value": value, "name": name, "description": description} for value, name, description in MODELS]
+    return [
+        {"id": "mode", "name": "Mode", "category": "mode", "type": "select", "currentValue": "ask", "options": [{"value": "ask", "name": "Ask"}]},
+        {"id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": state["model"], "options": [{"group": "all", "name": "All", "options": choices}]},
+    ]
+
+
+def new_session():
+    if "--legacy-models" in sys.argv:
+        listed = [{"modelId": value, "name": name} for value, name, _ in MODELS]
+        return {"sessionId": "s1", "models": {"availableModels": listed, "currentModelId": state["model"]}}
+    if "--no-models" in sys.argv:
+        return {"sessionId": "s1"}
+    return {"sessionId": "s1", "configOptions": model_options()}
 
 
 def send(message):
@@ -63,6 +83,12 @@ def prompt(request_id, text):
             {"content": "Read the cells", "priority": "high", "status": "completed"},
             {"content": "Fix the loop", "priority": "high", "status": "in_progress"},
         ]})
+    elif word == "model":
+        say(f"model is {state['model']}")
+    elif word == "switch":
+        state["model"] = "big"
+        update({"sessionUpdate": "config_option_update", "configOptions": model_options()})
+        say("switched")
     elif word == "mcp":
         say(json.dumps(state["servers"]))
     elif word == "wait":
@@ -92,7 +118,13 @@ for line in sys.stdin:
             send({"jsonrpc": "2.0", "id": request_id, "error": {"code": -32000, "message": "Authentication required"}})
         else:
             state["servers"] = params.get("mcpServers")
-            send({"jsonrpc": "2.0", "id": request_id, "result": {"sessionId": "s1"}})
+            send({"jsonrpc": "2.0", "id": request_id, "result": new_session()})
+    elif method == "session/set_config_option" and params.get("configId") == "model":
+        state["model"] = params.get("value")
+        send({"jsonrpc": "2.0", "id": request_id, "result": {"configOptions": model_options()}})
+    elif method == "session/set_model":
+        state["model"] = params.get("modelId")
+        send({"jsonrpc": "2.0", "id": request_id, "result": {}})
     elif method == "session/prompt":
         blocks = params.get("prompt") or []
         if "--context" in sys.argv:

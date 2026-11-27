@@ -9,7 +9,7 @@ this file as its notes.
 ## [Unreleased]
 
 ### Added
-- The agent panel: a coding agent beside the notebook. `:agent` opens it and starts the agent;
+- The agent panel: a coding agent beside the notebook. `:agent` (or `space a`) opens it and starts the agent;
   type what you want and press enter. The agent reads the cells, changes them, runs them on
   your kernel and looks at the variables, and you see each change at once (`u` takes a change
   back). `:agent claude`, `:agent codex`, `:agent opencode`, `:agent gemini` and `:agent pi`
@@ -24,6 +24,9 @@ this file as its notes.
   `:agent tools hide` never shows them, and `:agent thoughts ...` does the same for thoughts
   (`[agent] tools = "fold"` and `thoughts = "fold"` in the config). A long shell command is
   one line, cut at the edge of the panel.
+- The agent panel shows the model in use at the right of its title. `/model` in the panel (or
+  `:agent model`) lists the agent's models: `j` / `k` move, `enter` chooses. `/model NAME`
+  chooses one by name. The choice is for this conversation.
 - `gpython mcp`: the open notebook as tools for an agent in another terminal (Model Context
   Protocol). Type `:agent link` in gpython, then `claude mcp add gpython -- gpython mcp`.
 - `ctrl+shift+enter` splits a cell: the lines below the cursor line move to a new cell under

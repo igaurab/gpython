@@ -975,9 +975,16 @@ class GPython(App):
         setting, _, value = word.partition(" ")
         if setting in ("default", "tools", "thoughts"):
             self._agent_option(setting, value.strip())
+        elif setting in ("model", "models"):
+            (await self.show_agent()).choose_model(value.strip())
         elif word == "link":
             await self._open_agent_link()
-        elif word in ("hide", "close") or (not word and self.in_agent_panel):
+        else:
+            await self._agent_panel_command(word)
+
+    async def _agent_panel_command(self, word: str) -> None:
+        """:agent with no word (show, or hide from inside it), hide, stop, new, or an agent's name."""
+        if word in ("hide", "close") or (not word and self.in_agent_panel):
             self.hide_agent()
         elif not word:
             await self.show_agent()
@@ -1625,6 +1632,10 @@ class GPython(App):
     def _find_files(self) -> None:
         self.action_find_files()
 
+    @on(VimTextArea.OpenAgent)
+    async def _open_agent(self) -> None:
+        await self.show_agent()
+
     @on(VimTextArea.RunByNumber)
     def _run_by_number(self) -> None:
         self.start_run_by_number()
@@ -1707,7 +1718,7 @@ class GPython(App):
             (("time", "timing"), "Show or hide the run time in each cell header (t in cell mode; gpython keeps the setting)", lambda arg="": self.set_timing(not Cell.show_timing)),
             (("outline", "tags"), "Outline panel: each cell, the names it defines, their types after a run and the cells it uses. Enter goes to the cell (ctrl+o)", lambda arg="": self.action_toggle_outline()),
             (("vars", "variables"), "Variables panel: name, type, shape, value and the cell that makes it. Enter shows the value, g goes to the cell, d deletes it (ctrl+v)", lambda arg="": self.action_toggle_variables()),
-            (("agent",), "Agent panel: a coding agent beside the notebook that reads, changes and runs the cells. :agent shows or hides it. :agent claude | codex | opencode | gemini | pi starts that agent (the config adds more). :agent new starts a new conversation, :agent stop ends it. :agent default NAME sets the agent that :agent starts. :agent tools keep|fold|hide and :agent thoughts keep|fold|hide set what stays in the conversation (fold: shown while the agent works, then one line). :agent link lets an agent in another terminal use the notebook (gpython mcp)", self._ex_agent),
+            (("agent",), "Agent panel: a coding agent beside the notebook that reads, changes and runs the cells. :agent shows or hides it. :agent claude | codex | opencode | gemini | pi starts that agent (the config adds more). :agent new starts a new conversation, :agent stop ends it. :agent model shows the agent's models to choose from (/model in the panel; :agent model NAME chooses one). :agent default NAME sets the agent that :agent starts. :agent tools keep|fold|hide and :agent thoughts keep|fold|hide set what stays in the conversation (fold: shown while the agent works, then one line). :agent link lets an agent in another terminal use the notebook (gpython mcp)", self._ex_agent),
             (("debug",), "Debugger: if this cell failed, show where it failed. If not, run it and pause on its first line (r d; breakpoint() in code)", self._ex_debug),
             (("stop",), "When the debugger is paused, :stop if EXPR runs until EXPR is true (b in the debugger)", self._ex_stop),
             (("lazy",), "Change the run mode (f3). Lazy: the cells that use this cell become out of date. Reactive: they run again", lambda arg="": self.action_toggle_lazy()),

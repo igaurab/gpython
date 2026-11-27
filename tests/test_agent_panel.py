@@ -9,7 +9,7 @@ from pathlib import Path
 from textual.widgets import Input
 
 from gpython import agentlink, agents, config, notebook
-from gpython.agent import AgentPanel, diff_picture, tool_picture
+from gpython.agent import AgentPanel, ModelPicker, diff_picture, tool_picture
 from gpython.app import GPython
 from gpython.notebook import CellSpec
 
@@ -283,6 +283,97 @@ def test_the_panel_opens_with_the_kept_width(tmp_path):
         panel = await open_panel(app, pilot)
         await pilot.pause()
         assert panel.region.width == 90
+
+    ui(tmp_path, test)
+
+
+def test_the_title_shows_the_model_and_slash_model_changes_it(tmp_path):
+    async def test(app, pilot):
+        panel = await open_panel(app, pilot)
+        assert panel.model_name == "Small 1" and [m.value for m in panel.session.models()] == ["small", "big"]
+        await pilot.pause()
+        assert panel.model_label.render().plain == "Small 1"
+        assert panel.model_label.region.right == panel.region.right - 2 and panel.model_label.region.y == panel.title.region.y
+        panel.input.value = "/model big"
+        await pilot.press("enter")
+        await until(pilot, lambda: panel.model_name == "Big 2")
+        assert panel.entries[-1].text == "Model: Big 2" and panel.input.value == ""
+        await ask(pilot, panel, "model")
+        assert panel.entries[-1].text == "model is big"
+        panel.submit("/model nothing-like-it")
+        assert "No model named nothing-like-it" in panel.entries[-1].text and "Small 1, Big 2" in panel.entries[-1].text
+        await ask(pilot, panel, "switch")
+        assert panel.model_name == "Big 2"
+
+    ui(tmp_path, test)
+
+
+def test_slash_models_opens_a_list_and_enter_chooses(tmp_path):
+    async def test(app, pilot):
+        panel = await open_panel(app, pilot)
+        panel.input.value = "/models"
+        await pilot.press("enter")
+        await pilot.pause()
+        picker = app.screen
+        assert isinstance(picker, ModelPicker) and picker.query_one("OptionList").highlighted == 0
+        await pilot.press("j", "enter")
+        await until(pilot, lambda: panel.model_name == "Big 2")
+        assert not isinstance(app.screen, ModelPicker)
+        await app._ex_agent("model")
+        await pilot.pause()
+        assert isinstance(app.screen, ModelPicker) and app.screen.query_one("OptionList").highlighted == 1
+        await pilot.press("escape")
+        await pilot.pause()
+        assert panel.model_name == "Big 2" and not isinstance(app.screen, ModelPicker)
+        await app._ex_agent("model small")
+        await until(pilot, lambda: panel.model_name == "Small 1")
+
+    ui(tmp_path, test)
+
+
+def test_an_older_agent_lists_its_models_another_way_and_one_may_list_none(tmp_path):
+    async def test(app, pilot):
+        panel = await open_panel(app, pilot)
+        assert panel.model_name == "Small 1"
+        panel.submit("/model Big")
+        await until(pilot, lambda: panel.model_name == "Big 2")
+        await ask(pilot, panel, "model")
+        assert panel.entries[-1].text == "model is big"
+        config.save({"agents.plain": FAKE + " --no-models"})
+        await app._ex_agent("plain")
+        await until(pilot, lambda: panel.state == "ready")
+        assert panel.model_name == ""
+        panel.submit("/models")
+        assert "gives no list of models" in panel.entries[-1].text
+
+    ui(tmp_path, test, agent=FAKE + " --legacy-models")
+
+
+def test_a_model_asked_for_while_the_agent_starts_is_set_when_it_is_ready(tmp_path):
+    async def test(app, pilot):
+        await app._ex_agent("")
+        panel = app.agent_panel
+        if panel.state == "starting":
+            await app._ex_agent("model big")
+        await until(pilot, lambda: panel.state == "ready")
+        if panel.model_name != "Big 2":
+            await app._ex_agent("model big")
+        await until(pilot, lambda: panel.model_name == "Big 2")
+
+    ui(tmp_path, test)
+
+
+def test_space_a_opens_the_panel_from_the_editor_and_from_cell_mode(tmp_path):
+    async def test(app, pilot):
+        await pilot.press("space", "a")
+        await until(pilot, lambda: app.agent_panel is not None and app.in_agent_panel)
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.press("escape", "escape")
+        await pilot.pause()
+        assert app.ui_mode == "cell"
+        await pilot.press("space", "a")
+        await until(pilot, lambda: app.in_agent_panel)
 
     ui(tmp_path, test)
 

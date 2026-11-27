@@ -53,6 +53,9 @@ number. Answers are text; plots come back as PNG blocks (4 per answer). Output i
 `:agent default NAME` · `:agent tools|thoughts keep|fold|hide` ·
 `:agent link` (tools for an agent in another terminal: `claude mcp add gpython -- gpython mcp`).
 Keys in the panel: enter, ctrl+c, 1-9 for a permission, pgup/pgdn, escape, ctrl+w h.
+`space a` (normal and cell mode) opens the panel. `/model` or `:agent model [NAME]` chooses
+the model: the session's config option of category `model` (`session/set_config_option`), or
+the older `models` list (`session/set_model`); the title shows the current one at the right.
 The mouse drags the panel's left edge to resize it; the width is kept as `[agent] width`.
 
 ## Tested
@@ -70,9 +73,9 @@ The mouse drags the panel's left edge to resize it; the width is kept as `[agent
   `agent-experiments`).
 - The debugger for the agent (stop-if, post-mortem as data) is on `agent-experiments`
   (`gpython debug`); not a tool here yet.
-- Model and mode pickers (ACP `session/set_mode`, config options), slash commands the agent
-  lists, `session/load` (resume), images in a prompt, multi-line input.
-- A key for the panel (only `:agent` and ctrl+w l today).
+- The chosen model is not kept for the next conversation. Mode picker (ACP modes, the other
+  config options), slash commands the agent lists, `session/load` (resume), images in a
+  prompt, multi-line input.
 - The agent's own file diffs are shown in the transcript only, a few lines.
 
 ## Unresolved questions
@@ -80,5 +83,4 @@ The mouse drags the panel's left edge to resize it; the width is kept as `[agent
 - Diff to accept per cell before an edit lands, or keep "apply at once + undo"?
 - Own kernel for the agent as an option?
 - Merge the debugger tools and autoread from `agent-experiments`?
-- Which key opens the panel? (`space a`?)
 - Should `:agent link` be on at start (a config key), so an outside agent always finds gpython?

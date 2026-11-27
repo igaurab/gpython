@@ -107,6 +107,7 @@ STATIC_ARGUMENTS: dict[str, Candidates] = {
         ("stop", "End the agent"),
         ("hide", "Hide the panel; the conversation stays"),
         ("link", "Let an agent in another terminal use the notebook (gpython mcp)"),
+        ("model", "Choose the agent's model from a list (/model in the panel)"),
         ("default claude", "The agent that :agent starts (also codex, opencode, gemini, pi, or a name from the config)"),
         ("tools fold", "Tool calls show while the agent works, then one line says how many (the default)"),
         ("tools keep", "Tool calls stay in the conversation"),

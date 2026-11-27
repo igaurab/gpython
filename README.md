@@ -70,13 +70,14 @@ More options are on the [Command line](https://github.com/igaurab/gpython/wiki/C
 
 ## Agents
 
-`:agent` opens a panel with a coding agent beside the notebook. The agent reads, changes and
+`:agent` (or `space a`) opens a panel with a coding agent beside the notebook. The agent reads, changes and
 runs the cells on your kernel, and sees the same variables you do.
 
 ```
 :agent              show or hide the panel (the first time starts the agent)
 :agent codex        claude · codex · opencode · gemini · pi, or a name from the config
 :agent new          a new conversation
+:agent model        choose the agent's model from a list (/model in the panel)
 :agent default codex    the agent that :agent starts from now on
 :agent tools keep       keep the agent's tool calls in the conversation (fold · hide)
 :agent link         let an agent in another terminal use the notebook

@@ -14,7 +14,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, NamedTuple
 
 PROTOCOL_VERSION = 1
 LINE_LIMIT = 64 * 1024 * 1024
@@ -187,6 +187,30 @@ def error_text(error) -> str:
     return message
 
 
+class Model(NamedTuple):
+    """One model an agent offers: `value` is what the agent is told, `name` what the user reads."""
+
+    value: str
+    name: str
+    description: str = ""
+
+
+def model_of(item: dict, key: str) -> Model:
+    value = str(item.get(key))
+    return Model(value, str(item.get("name") or value), str(item.get("description") or ""))
+
+
+def flat_options(options: list) -> list[dict]:
+    """The choices of a select option; an agent may send them in named groups."""
+    found: list[dict] = []
+    for item in options:
+        if isinstance(item, dict) and isinstance(item.get("options"), list):
+            found.extend(inner for inner in item["options"] if isinstance(inner, dict))
+        elif isinstance(item, dict):
+            found.append(item)
+    return found
+
+
 class Listener:
     """What a session tells its owner. The panel overrides these; the defaults do nothing."""
 
@@ -212,6 +236,8 @@ class AgentSession:
         self.process.on_request = self._asked
         self.process.on_exit = self._exited
         self.session_id: str | None = None
+        self.config_options: list[dict] = []
+        self.model_list: dict = {}
         self.agent_name = ""
         self.prompting = False
 
@@ -226,8 +252,43 @@ class AgentSession:
         hello = hello or {}
         info = hello.get("agentInfo") or {}
         self.agent_name = info.get("title") or info.get("name") or ""
-        created = await self.process.request("session/new", {"cwd": str(self.cwd), "mcpServers": mcp_servers})
-        self.session_id = (created or {}).get("sessionId")
+        created = await self.process.request("session/new", {"cwd": str(self.cwd), "mcpServers": mcp_servers}) or {}
+        self.session_id = created.get("sessionId")
+        self.config_options = created.get("configOptions") or []
+        self.model_list = created.get("models") or {}
+
+    def _model_option(self) -> dict | None:
+        """The session's config option that chooses the model, when the agent has one."""
+        for option in self.config_options:
+            if isinstance(option, dict) and option.get("type") == "select" and "model" in (option.get("category"), option.get("id")):
+                return option
+        return None
+
+    def models(self) -> list[Model]:
+        """The models the agent lets the user choose from; empty when it gives no choice.
+        Agents name them in a config option of category "model", older ones in `models`."""
+        option = self._model_option()
+        if option is not None:
+            return [model_of(item, "value") for item in flat_options(option.get("options") or [])]
+        return [model_of(item, "modelId") for item in flat_options(self.model_list.get("availableModels") or [])]
+
+    def current_model(self) -> Model | None:
+        option = self._model_option()
+        current = option.get("currentValue") if option is not None else self.model_list.get("currentModelId")
+        return next((model for model in self.models() if model.value == current), None)
+
+    async def set_model(self, value: str) -> None:
+        """Use the model `value` (a `Model.value`) from the next prompt on."""
+        option = self._model_option()
+        if option is not None:
+            changed = await self.process.request("session/set_config_option", {"sessionId": self.session_id, "configId": option.get("id"), "value": value})
+            if isinstance(changed, dict) and changed.get("configOptions"):
+                self.config_options = changed["configOptions"]
+            else:
+                option["currentValue"] = value
+        else:
+            await self.process.request("session/set_model", {"sessionId": self.session_id, "modelId": value})
+            self.model_list["currentModelId"] = value
 
     async def prompt(self, blocks: list[dict]) -> str:
         """Send one user turn and wait for the agent to end it. Returns the stop reason."""
@@ -249,6 +310,8 @@ class AgentSession:
     def _notified(self, method: str, params: dict) -> None:
         update = params.get("update")
         if method == "session/update" and isinstance(update, dict):
+            if update.get("sessionUpdate") == "config_option_update" and isinstance(update.get("configOptions"), list):
+                self.config_options = update["configOptions"]
             self.listener.session_update(update)
 
     async def _asked(self, method: str, params: dict):

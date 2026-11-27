@@ -21,14 +21,16 @@ from rich.console import Group
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical, VerticalScroll
-from textual.widgets import Input, Static
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.screen import ModalScreen
+from textual.widgets import Input, OptionList, Static
 
 from . import acp, agents
 
 FLUSH_SECONDS = 0.08
 DIFF_LINES = 12
 TOOL_TEXT_LINES = 6
+ASK_FOR_MODEL = "?"
 MIN_WIDTH = 30
 NOTEBOOK_ROOM = 20
 TITLE_CHARS = 300
@@ -43,7 +45,7 @@ STOP_NOTES = {
     "max_turn_requests": "The agent stopped: it reached its limit of steps for one turn.",
     "refusal": "The agent refused this request.",
 }
-AGENT_KEYS = "enter send · ctrl+c stop · esc notebook · pgup/pgdn scroll"
+AGENT_KEYS = "enter send · /model · ctrl+c stop · esc notebook"
 PERMISSION_KEYS = "press the number · esc refuse"
 
 
@@ -206,6 +208,60 @@ class AgentInput(Input):
         log.scroll_to(y=log.scroll_y + step * max(1, log.size.height - 2), animate=False)
 
 
+class ModelPicker(ModalScreen[str | None]):
+    """/model: the agent's models in a list at the bottom; enter chooses one, escape keeps the current one."""
+
+    DEFAULT_CSS = """
+    ModelPicker {
+        align: center bottom;
+    }
+    ModelPicker > Vertical {
+        height: auto;
+        max-height: 60%;
+        border-top: solid $accent;
+        background: $surface;
+        padding: 0 1;
+    }
+    ModelPicker OptionList, ModelPicker OptionList:focus {
+        height: auto;
+        max-height: 100%;
+        border: none;
+        padding: 0;
+        background: $surface;
+    }
+    """
+    BINDINGS = [Binding("escape,q", "dismiss(None)", show=False), Binding("j", "move(1)", show=False), Binding("k", "move(-1)", show=False)]
+    APP_ACTIONS_OFF = {"add_cell", "delete_cell", "run_cell", "split_cell", "interrupt", "command_palette", "window_prefix"}
+
+    def __init__(self, models: list[acp.Model], current: str) -> None:
+        super().__init__()
+        self.models = models
+        self.current = current
+
+    def compose(self) -> ComposeResult:
+        from textual.widgets.option_list import Option
+
+        rows = [
+            Option(Text.assemble(("● " if model.value == self.current else "  ", "green"), (model.name, "bold"), (f"  {model.description}" if model.description else "", "dim")), id=str(index))
+            for index, model in enumerate(self.models)
+        ]
+        with Vertical():
+            yield Static(Text.assemble(("Model", "bold"), ("   enter choose · esc keep", "dim")))
+            yield OptionList(*rows)
+
+    def on_mount(self) -> None:
+        options = self.query_one(OptionList)
+        options.highlighted = next((index for index, model in enumerate(self.models) if model.value == self.current), 0)
+        options.focus()
+
+    def action_move(self, step: int) -> None:
+        options = self.query_one(OptionList)
+        options.highlighted = max(0, min(len(self.models) - 1, (options.highlighted or 0) + step))
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        self.dismiss(self.models[int(event.option.id)].value)
+
+
 class AgentPanel(Vertical, acp.Listener):
     """The right column of the app: the transcript above, the input line below."""
 
@@ -220,9 +276,19 @@ class AgentPanel(Vertical, acp.Listener):
     AgentPanel:focus-within {
         border-left: vkey $accent;
     }
+    AgentPanel .agent-head {
+        height: 1;
+    }
     AgentPanel .agent-title {
         height: 1;
+        width: 1fr;
         text-style: bold;
+    }
+    AgentPanel .agent-model {
+        height: 1;
+        width: auto;
+        max-width: 60%;
+        margin: 0 2 0 1;
     }
     AgentPanel .agent-log {
         height: 1fr;
@@ -264,18 +330,23 @@ class AgentPanel(Vertical, acp.Listener):
         self._queued: list[str] = []
         self._introduced = False
         self._said = 0
+        self._model_wanted = ""
         self._edge_held = False
         self._width_set = 0
         self._turn_number = 0
         self.step_modes: dict[str, str] = {}
         self._flush_timer = None
         self.title = Static(classes="agent-title")
+        self.model_label = Static(classes="agent-model")
+        self._model_shown = ""
         self.log_box = VerticalScroll(classes="agent-log")
         self.input = AgentInput(self)
         self.keys = Static(AGENT_KEYS, classes="agent-keys")
 
     def compose(self) -> ComposeResult:
-        yield self.title
+        with Horizontal(classes="agent-head"):
+            yield self.title
+            yield self.model_label
         yield self.log_box
         yield self.input
         yield self.keys
@@ -319,10 +390,54 @@ class AgentPanel(Vertical, acp.Listener):
                 config.save({"agent.width": self._width_set})
 
     def _draw_title(self) -> None:
+        """The agent's name and state on the left, the model in use on the right."""
         name = self.agent.title if self.agent is not None else "Agent"
         notes = {"off": "not started", "starting": "starting…", "ready": "", "working": "working…", "stopped": "stopped"}
         note = notes.get(self.state, "")
         self.title.update(Text.assemble((name, "bold"), (f"  {note}" if note else "", "dim")), layout=False)
+        model = self.model_name
+        if model != self._model_shown:
+            self._model_shown = model
+            self.model_label.update(Text(model, style="dim"))
+
+    @property
+    def model_name(self) -> str:
+        """The name of the model the agent uses now; empty when the agent does not say."""
+        model = self.session.current_model() if self.session is not None and self.session.session_id else None
+        return model.name if model is not None else ""
+
+    def choose_model(self, wanted: str = "") -> None:
+        """/model, :agent model: with a name, use that model; with none, show the list to choose from."""
+        session = self.session
+        models = session.models() if session is not None and self.state in ("ready", "working") else []
+        if self.state == "starting":
+            self._model_wanted = wanted or ASK_FOR_MODEL
+            return
+        if not models:
+            self.note("This agent gives no list of models. Choose the model in the agent's own program")
+            return
+        if not wanted:
+            current = session.current_model()
+            self.app.push_screen(ModelPicker(models, current.value if current is not None else ""), self._model_chosen)
+            return
+        match = model_named(models, wanted)
+        if match is None:
+            self.note(f"No model named {wanted}. Models: {', '.join(m.name for m in models)}", error=True)
+        else:
+            self._model_chosen(match.value)
+
+    def _model_chosen(self, value: str | None) -> None:
+        if value is not None and self.session is not None:
+            self.run_worker(self._set_model(self.session, value), group="agent-model", exit_on_error=False)
+
+    async def _set_model(self, session: acp.AgentSession, value: str) -> None:
+        try:
+            await session.set_model(value)
+        except acp.AgentError as error:
+            self.note(f"The agent did not change the model: {error}", error=True)
+            return
+        self._draw_title()
+        self.note(f"Model: {self.model_name or value}")
 
     def _set_state(self, state: str) -> None:
         self.state = state
@@ -446,6 +561,9 @@ class AgentPanel(Vertical, acp.Listener):
             await session.close()
             return
         self._set_state("ready")
+        if self._model_wanted:
+            wanted, self._model_wanted = self._model_wanted, ""
+            self.choose_model("" if wanted == ASK_FOR_MODEL else wanted)
         queued, self._queued = self._queued, []
         for text in queued:
             self._send(text)
@@ -462,6 +580,11 @@ class AgentPanel(Vertical, acp.Listener):
         """The user's line: shown at once, sent now or as soon as the agent is ready."""
         text = text.strip()
         if not text:
+            return
+        word, _, rest = text.partition(" ")
+        if word in ("/model", "/models"):
+            self.input.value = ""
+            self.choose_model(rest.strip())
             return
         if self.state == "working":
             self.app.notify("The agent is working. ctrl+c stops it", severity="warning")
@@ -529,6 +652,8 @@ class AgentPanel(Vertical, acp.Listener):
             self.session.cancel()
 
     def session_update(self, update: dict) -> None:
+        if update.get("sessionUpdate") == "config_option_update":
+            self._draw_title()
         shows = self.UPDATE_SHOWN.get(str(update.get("sessionUpdate")))
         if shows is not None:
             self._said += 1
@@ -626,6 +751,14 @@ class AgentPanel(Vertical, acp.Listener):
     async def on_unmount(self) -> None:
         if self.session is not None:
             await self.session.close()
+
+
+def model_named(models: list[acp.Model], wanted: str) -> acp.Model | None:
+    """The model whose id or name is `wanted`, else the first one that has `wanted` in either; case does not count."""
+    low = wanted.lower()
+    exact = [m for m in models if low in (m.value.lower(), m.name.lower())]
+    partial = [m for m in models if low in m.value.lower() or low in m.name.lower()]
+    return next(iter(exact + partial), None)
 
 
 def calls_summary(calls: list[dict]) -> str:

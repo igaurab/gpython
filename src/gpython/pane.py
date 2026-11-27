@@ -2125,6 +2125,8 @@ class NotebookPane(Vertical):
                 self._cmd_pending = " f"
             elif pending == " " and key == "r":
                 app.start_run_by_number(self)
+            elif pending == " " and key == "a":
+                await app.show_agent()
             elif pending == " f" and key == "f":
                 app.action_find_files()
             return True
