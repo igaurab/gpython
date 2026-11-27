@@ -70,6 +70,24 @@ def _mutators() -> frozenset[str]:
     return frozenset(calls_table()["mutating_methods"])
 
 
+def _without_async_keywords(source: str) -> str:
+    """`source` with each `await` and `async` keyword deleted where it stands, so `await f()` reads
+    `f()` and `async for` reads `for`. The names stay the same and every line keeps its number, so a
+    later SyntaxError points at the right line. symtable on Python 3.14 rejects the keywords at the
+    top level of a cell, where the kernel allows them."""
+    import io
+    import tokenize
+
+    lines = source.splitlines(keepends=True)
+    tokens = tokenize.generate_tokens(io.StringIO(source).readline)
+    keywords = [t.start for t in tokens if t.type == tokenize.NAME and t.string in ("await", "async")]
+    for row, col in reversed(keywords):
+        line = lines[row - 1]
+        rest = line[col + 5:]
+        lines[row - 1] = line[:col] + rest.lstrip(" \t")
+    return "".join(lines)
+
+
 def analyze(source: str) -> tuple[set[str], set[str]]:
     """Return (defs, refs) for one cell, private names left out. Raises SyntaxError."""
     defs, refs = names(source)
@@ -81,8 +99,15 @@ def analyze(source: str) -> tuple[set[str], set[str]]:
 def names(source: str) -> tuple[set[str], set[str]]:
     """(defs, refs) for one cell, private names included: they still share the kernel's namespace."""
     source = strip_magics(source)
-    table = symtable.symtable(source, "<cell>", "exec")
-    _, comp_only = _module_stores(ast.parse(source))
+    tree = ast.parse(source)
+    try:
+        table = symtable.symtable(source, "<cell>", "exec")
+    except SyntaxError:
+        plain = _without_async_keywords(source)
+        if plain == source:
+            raise
+        table = symtable.symtable(plain, "<cell>", "exec")
+    _, comp_only = _module_stores(tree)
     defs: set[str] = set()
     refs: set[str] = set()
 
